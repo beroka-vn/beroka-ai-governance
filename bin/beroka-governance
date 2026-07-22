@@ -23,7 +23,10 @@ die() {
 usage() {
   printf '%s\n' \
     'Usage:' \
+    '  beroka-governance install VERSION' \
     '  beroka-governance register REPO --version VERSION [--dry-run]' \
+    '  beroka-governance update REPO --to VERSION [--dry-run]' \
+    '  beroka-governance rollback REPO --to VERSION [--dry-run]' \
     '  beroka-governance doctor REPO' \
     '  beroka-governance context REPO' \
     '  beroka-governance show REPO governance|handbook|workflow' \
@@ -147,6 +150,43 @@ release_for_version() {
   RELEASE_COMMIT=$(git -C "$RELEASE_DIR" rev-parse "$version^{commit}" 2>/dev/null) || die VERSION_MISMATCH "Installed tag is missing: $version"
   [ "$(git -C "$RELEASE_DIR" rev-parse HEAD)" = "$RELEASE_COMMIT" ] || die VERSION_MISMATCH 'Installed checkout is not at its tag commit'
   [ -z "$(git -C "$RELEASE_DIR" status --porcelain --untracked-files=all)" ] || die VERSION_MISMATCH 'Installed release contains local modifications'
+}
+
+cmd_install() {
+  version=$1
+  printf '%s\n' "$version" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$' || die GOVERNANCE_NOT_READY "Invalid version: $version"
+  mkdir -p "$DATA_ROOT/releases" "$BIN_DIR"
+  target=$DATA_ROOT/releases/$version
+  if [ -e "$target" ]; then
+    release_for_version "$version"
+  else
+    stage=$(mktemp -d "$DATA_ROOT/releases/.install.XXXXXX")
+    if ! git clone -q --depth 1 --single-branch --branch "$version" "$REMOTE_URL" "$stage/checkout"; then
+      rm -rf "$stage"
+      die GOVERNANCE_ACCESS_DENIED "Cannot clone $SOURCE_SLUG at $version"
+    fi
+    installed_version=$(sed -n '1p' "$stage/checkout/VERSION" 2>/dev/null || true)
+    [ "$installed_version" = "$version" ] || { rm -rf "$stage"; die VERSION_MISMATCH 'Cloned VERSION differs from requested tag'; }
+    tag_type=$(git -C "$stage/checkout" cat-file -t "$version" 2>/dev/null || true)
+    [ "$tag_type" = tag ] || { rm -rf "$stage"; die VERSION_MISMATCH 'Cloned tag is not annotated'; }
+    tag_commit=$(git -C "$stage/checkout" rev-parse "$version^{commit}" 2>/dev/null || true)
+    head=$(git -C "$stage/checkout" rev-parse HEAD 2>/dev/null || true)
+    [ -n "$tag_commit" ] && [ "$head" = "$tag_commit" ] || { rm -rf "$stage"; die VERSION_MISMATCH 'Cloned checkout differs from tag commit'; }
+    [ -z "$(git -C "$stage/checkout" status --porcelain --untracked-files=all)" ] || { rm -rf "$stage"; die VERSION_MISMATCH 'Cloned release contains local modifications'; }
+    if ! mv "$stage/checkout" "$target"; then
+      rm -rf "$stage"
+      die GOVERNANCE_NOT_READY 'Cannot install the release checkout'
+    fi
+    rmdir "$stage" || die GOVERNANCE_NOT_READY 'Cannot finalize the release checkout'
+    release_for_version "$version"
+  fi
+  [ -f "$target/bin/beroka-governance" ] || die GOVERNANCE_NOT_READY 'Release does not contain the CLI'
+  temp_cli=$(mktemp "$BIN_DIR/.beroka-governance.XXXXXX")
+  if ! cp "$target/bin/beroka-governance" "$temp_cli" || ! chmod 755 "$temp_cli" || ! mv "$temp_cli" "$BIN_DIR/beroka-governance"; then
+    rm -f "$temp_cli"
+    die GOVERNANCE_NOT_READY 'Cannot install the user CLI'
+  fi
+  printf '%s\n' "Installed: $version" 'Result: PASS'
 }
 
 write_lock_file() {
@@ -287,6 +327,66 @@ cmd_register() {
   printf '%s\n' "Repository: $repository" "Version: $version" 'Result: PASS'
 }
 
+cmd_repin() {
+  mode=$1 requested=$2 to_flag=$3 version=$4 dry_run=${5:-}
+  [ "$to_flag" = --to ] || { usage >&2; exit 2; }
+  [ -n "$version" ] || { usage >&2; exit 2; }
+  [ -z "$dry_run" ] || [ "$dry_run" = --dry-run ] || { usage >&2; exit 2; }
+  printf '%s\n' "$version" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$' || die GOVERNANCE_NOT_READY "Invalid version: $version"
+
+  verify_registration "$requested"
+  repository=$LOCK_REPOSITORY
+  current_major=${LOCK_VERSION#v}
+  current_major=${current_major%%.*}
+  target_major=${version#v}
+  target_major=${target_major%%.*}
+  [ "$current_major" = "$target_major" ] || die VERSION_MISMATCH 'Target version has a different major version'
+
+  target=$DATA_ROOT/releases/$version
+  if [ ! -e "$target" ]; then
+    if [ "$dry_run" = --dry-run ]; then
+      printf '%s\n' "INSTALL $version" 'Result: PASS'
+      return
+    fi
+    cmd_install "$version"
+  fi
+  release_for_version "$version"
+  agents_template=$RELEASE_DIR/templates/agent-entrypoints/AGENTS.md
+  claude_template=$RELEASE_DIR/templates/agent-entrypoints/CLAUDE.md
+  cursor_template=$RELEASE_DIR/templates/agent-entrypoints/team-dev-ai-workflow.mdc
+  assert_valid_template "$agents_template"
+  assert_valid_template "$claude_template"
+  [ -f "$cursor_template" ] || die ENTRYPOINT_DRIFT "Missing Cursor rule in $RELEASE_DIR"
+
+  tx_begin "$REPO"
+  write_lock_file "$TX_DIR/work/lock" "$repository" "$version" "$RELEASE_COMMIT"
+  tx_stage_write .beroka-governance.lock "$TX_DIR/work/lock"
+  write_entrypoint "$REPO/AGENTS.md" "$agents_template" "$TX_DIR/work/agents"
+  tx_stage_write AGENTS.md "$TX_DIR/work/agents"
+  write_claude_entrypoint "$REPO/CLAUDE.md" "$claude_template" "$TX_DIR/work/claude"
+  tx_stage_write CLAUDE.md "$TX_DIR/work/claude"
+  tx_stage_write .cursor/rules/beroka-governance.mdc "$cursor_template"
+
+  changed=
+  for relative in .beroka-governance.lock AGENTS.md CLAUDE.md .cursor/rules/beroka-governance.mdc; do
+    if ! same_target "$REPO/$relative" "$TX_DIR/staged/$relative"; then
+      changed=1
+      target_dirty "$REPO" "$relative" || die WORKTREE_CONFLICT "Dirty target entrypoint: $relative"
+    fi
+  done
+
+  if [ "$dry_run" = --dry-run ]; then
+    tx_commit
+    printf '%s\n' "Mode: $mode" "Version: $version" "$REPO/.beroka-governance.lock" "$REPO/AGENTS.md" "$REPO/CLAUDE.md" "$REPO/.cursor/rules/beroka-governance.mdc" 'Result: PASS'
+    return
+  fi
+
+  if [ -n "$changed" ]; then tx_apply; fi
+  tx_commit
+  replace_registry_row "$REPO" "$repository" "$version"
+  printf '%s\n' "Repository: $repository" "Version: $version" 'Result: PASS'
+}
+
 cmd_doctor() {
   verify_registration "$1"
   printf '%s\n' "Repository: $LOCK_REPOSITORY" "Version: $LOCK_VERSION" "Commit: $LOCK_COMMIT" 'Result: PASS'
@@ -314,7 +414,10 @@ cmd_show() {
 main() {
   command=${1:-}
   case "$command" in
+    install) [ "$#" -eq 2 ] || { usage >&2; exit 2; }; cmd_install "$2" ;;
     register) [ "$#" -ge 4 ] && [ "$#" -le 5 ] || { usage >&2; exit 2; }; cmd_register "${2:-}" "${3:-}" "${4:-}" "${5:-}" ;;
+    update) [ "$#" -ge 4 ] && [ "$#" -le 5 ] || { usage >&2; exit 2; }; cmd_repin update "${2:-}" "${3:-}" "${4:-}" "${5:-}" ;;
+    rollback) [ "$#" -ge 4 ] && [ "$#" -le 5 ] || { usage >&2; exit 2; }; cmd_repin rollback "${2:-}" "${3:-}" "${4:-}" "${5:-}" ;;
     doctor) [ "$#" -eq 2 ] || { usage >&2; exit 2; }; cmd_doctor "$2" ;;
     context) [ "$#" -eq 2 ] || { usage >&2; exit 2; }; cmd_context "$2" ;;
     show) [ "$#" -ge 3 ] && [ "$#" -le 4 ] || { usage >&2; exit 2; }; cmd_show "$2" "$3" "${4:-}" ;;

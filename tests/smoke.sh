@@ -53,6 +53,16 @@ make_release_fixture() {
   git -C "$source_repo" add .
   git -C "$source_repo" commit -qm 'test: create v1 fixture'
   git -C "$source_repo" tag -a v1.0.0 -m 'v1.0.0'
+  printf 'v1.1.0\n' >"$source_repo/VERSION"
+  printf 'PINNED ENTRYPOINT v1.1.0\n' >"$source_repo/runtime/entrypoint.md"
+  printf 'GOVERNANCE v1.1.0\n' >"$source_repo/governance.md"
+  mkdir -p "$source_repo/bin"
+  cp "$CLI" "$source_repo/bin/beroka-governance"
+  chmod 755 "$source_repo/bin/beroka-governance"
+  git -C "$source_repo" add .
+  git -C "$source_repo" commit -qm 'test: create v1.1 fixture'
+  git -C "$source_repo" tag -a v1.1.0 -m 'v1.1.0'
+  export BEROKA_GOV_REMOTE_URL=file://$source_repo
   release_dir=$XDG_DATA_HOME/beroka-ai-governance/releases/v1.0.0
   mkdir -p "$(dirname -- "$release_dir")"
   git clone -q --depth 1 --branch v1.0.0 "file://$source_repo" "$release_dir"
@@ -154,6 +164,30 @@ printf 'uncommitted rules\n' >"$dirty_repo/AGENTS.md"
 if $CLI register "$dirty_repo" --version v1.0.0 >/dev/null 2>&1; then fail 'register accepted a dirty target entrypoint'; fi
 [ "$(cat "$dirty_repo/AGENTS.md")" = 'uncommitted rules' ] || fail 'failed preflight modified AGENTS.md'
 
+git -C "$register_repo" add .
+git -C "$register_repo" commit -qm 'test: commit v1.0 registration'
+
+$CLI install v1.1.0
+[ -d "$XDG_DATA_HOME/beroka-ai-governance/releases/v1.1.0/.git" ] || fail 'install did not create v1.1.0'
+[ -x "$BEROKA_GOV_BIN_DIR/beroka-governance" ] || fail 'install did not update the user CLI'
+
+$CLI update "$register_repo" --to v1.1.0
+assert_contains "$(cat "$register_repo/.beroka-governance.lock")" 'VERSION=v1.1.0'
+assert_contains "$($CLI context "$register_repo")" 'PINNED ENTRYPOINT v1.1.0'
+git -C "$register_repo" add .
+git -C "$register_repo" commit -qm 'test: commit v1.1 update'
+
+$CLI rollback "$register_repo" --to v1.0.0
+assert_contains "$(cat "$register_repo/.beroka-governance.lock")" 'VERSION=v1.0.0'
+assert_contains "$($CLI context "$register_repo")" 'PINNED ENTRYPOINT v1.0.0'
+git -C "$register_repo" add .
+git -C "$register_repo" commit -qm 'test: commit v1.0 rollback'
+
+before_dry_update=$(git -C "$register_repo" hash-object .beroka-governance.lock)
+$CLI update "$register_repo" --to v1.1.0 --dry-run >/dev/null
+after_dry_update=$(git -C "$register_repo" hash-object .beroka-governance.lock)
+[ "$before_dry_update" = "$after_dry_update" ] || fail 'update dry-run changed the lock'
+
 printf '%s\n' '<!-- BEROKA-GOVERNANCE:END -->' '<!-- BEROKA-GOVERNANCE:START -->' >"$release_dir/templates/agent-entrypoints/AGENTS.md"
 git -C "$release_dir" add templates/agent-entrypoints/AGENTS.md
 git -C "$release_dir" commit -qm 'test: corrupt template marker order'
@@ -168,3 +202,4 @@ fi
 [ ! -e "$marker_repo/.beroka-governance.lock" ] || fail 'malformed template wrote a lock'
 
 printf 'PASS: repository registration\n'
+printf 'PASS: release lifecycle\n'
