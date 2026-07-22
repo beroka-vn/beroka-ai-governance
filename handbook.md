@@ -36,8 +36,8 @@ và hỏi developer; không tự chọn từ organization list.
 
 Package chỉ áp dụng cho repository được đăng ký rõ ràng. V1 pilot chỉ đăng ký
 một Backend repository do coordinator chỉ định; **không đăng ký Frontend
-repository**. Hỗ trợ Linux, macOS và Windows qua WSL; native Windows PowerShell
-không thuộc V1.
+repository**. Linux, macOS và Windows qua WSL là target environments; native
+Windows PowerShell không thuộc V1.
 
 ### Điều kiện trước khi cài
 
@@ -50,6 +50,9 @@ không thuộc V1.
 - Repository đích là Git repository có `origin` GitHub chính xác. Review diff
   của repository đích bằng PR trước khi merge; không đăng ký trực tiếp vào
   production branch chỉ để thử nghiệm.
+- macOS, WSL và fresh-session checks của Codex IDE, Claude Code, Cursor vẫn
+  **UNVERIFIED** cho đến khi release-gate evidence được ghi nhận. Linux
+  automated shell smoke không thay thế các manual checks này.
 
 ### Bootstrap và install
 
