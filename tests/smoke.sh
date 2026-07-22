@@ -233,6 +233,29 @@ $CLI update "$register_repo" --to v1.1.0 --dry-run >/dev/null
 after_dry_update=$(git -C "$register_repo" hash-object .beroka-governance.lock)
 [ "$before_dry_update" = "$after_dry_update" ] || fail 'update dry-run changed the lock'
 
+printf 'PASS: repository registration\n'
+printf 'PASS: release lifecycle\n'
+
+$CLI update "$register_repo" --to v1.1.0
+git -C "$register_repo" add .
+git -C "$register_repo" commit -qm 'test: commit v1.1 registration'
+awk '{ if ($0 == "## Beroka AI Governance") print "## Manual mutation"; else print }' "$register_repo/AGENTS.md" >"$TMP_ROOT/register-agents.mutated"
+cp "$TMP_ROOT/register-agents.mutated" "$register_repo/AGENTS.md"
+if $CLI doctor "$register_repo" >/dev/null 2>&1; then fail 'doctor accepted entrypoint drift'; fi
+git -C "$register_repo" checkout -- AGENTS.md
+
+if $CLI uninstall >/dev/null 2>&1; then fail 'uninstall accepted a registered repository'; fi
+
+unregister_dry_hash=$(git -C "$register_repo" hash-object AGENTS.md CLAUDE.md .beroka-governance.lock)
+$CLI unregister "$register_repo" --dry-run >/dev/null
+[ "$unregister_dry_hash" = "$(git -C "$register_repo" hash-object AGENTS.md CLAUDE.md .beroka-governance.lock)" ] || fail 'unregister dry-run modified files'
+
+$CLI unregister "$register_repo"
+[ ! -e "$register_repo/.beroka-governance.lock" ] || fail 'unregister kept the lock'
+[ ! -e "$register_repo/.cursor/rules/beroka-governance.mdc" ] || fail 'unregister kept Cursor rule'
+assert_contains "$(cat "$register_repo/AGENTS.md")" 'Keep this line.'
+assert_contains "$(cat "$register_repo/CLAUDE.md")" 'Keep this Claude line.'
+
 printf '%s\n' '<!-- BEROKA-GOVERNANCE:END -->' '<!-- BEROKA-GOVERNANCE:START -->' >"$release_dir/templates/agent-entrypoints/AGENTS.md"
 git -C "$release_dir" add templates/agent-entrypoints/AGENTS.md
 git -C "$release_dir" commit -qm 'test: corrupt template marker order'
@@ -246,5 +269,17 @@ if $CLI register "$marker_repo" --version v1.0.0 >/dev/null 2>&1; then
 fi
 [ ! -e "$marker_repo/.beroka-governance.lock" ] || fail 'malformed template wrote a lock'
 
-printf 'PASS: repository registration\n'
-printf 'PASS: release lifecycle\n'
+$CLI uninstall
+[ ! -e "$BEROKA_GOV_BIN_DIR/beroka-governance" ] || fail 'uninstall kept user CLI'
+[ ! -e "$XDG_DATA_HOME/beroka-ai-governance" ] || fail 'uninstall kept release data'
+
+$CLI install v1.1.0
+force_repo=$TMP_ROOT/force-consumer
+new_repo "$force_repo"
+git -C "$force_repo" remote add origin https://github.com/beroka-vn/force-backend.git
+$CLI register "$force_repo" --version v1.1.0
+$CLI uninstall --force
+[ -e "$force_repo/.beroka-governance.lock" ] || fail 'force uninstall edited application repository'
+if $CLI doctor "$force_repo" >/dev/null 2>&1; then fail 'force-uninstalled repository did not fail closed'; fi
+
+printf 'PASS: safe removal and drift detection\n'
