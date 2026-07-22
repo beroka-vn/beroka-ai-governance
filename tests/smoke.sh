@@ -17,6 +17,9 @@ fail() {
   exit 1
 }
 
+grep -F "trap 'tx_abort; exit 1' HUP INT TERM" "$CLI" >/dev/null ||
+  fail 'signal trap does not abort with a non-zero exit'
+
 assert_contains() {
   haystack=$1
   needle=$2
@@ -96,6 +99,18 @@ if $CLI doctor "$consumer" >/dev/null 2>&1; then
   fail 'doctor accepted lightweight tag'
 fi
 
+lightweight_repo=$TMP_ROOT/lightweight-consumer
+new_repo "$lightweight_repo"
+git -C "$lightweight_repo" remote add origin https://github.com/beroka-vn/lightweight-backend.git
+if $CLI register "$lightweight_repo" --version v1.0.0 >/dev/null 2>&1; then
+  fail 'register accepted lightweight tag'
+fi
+[ ! -e "$lightweight_repo/.beroka-governance.lock" ] || fail 'lightweight tag wrote a lock'
+git -C "$release_dir" tag -d v1.0.0
+git -C "$release_dir" config user.name test-user
+git -C "$release_dir" config user.email test@example.invalid
+git -C "$release_dir" tag -a v1.0.0 -m 'v1.0.0' "$RELEASE_COMMIT"
+
 if $CLI show "$consumer" ../../etc/passwd >/dev/null 2>&1; then
   fail 'show accepted path traversal'
 fi
@@ -118,6 +133,13 @@ second_hash=$(git -C "$register_repo" hash-object AGENTS.md CLAUDE.md .beroka-go
 assert_contains "$(cat "$register_repo/AGENTS.md")" 'Keep this line.'
 assert_contains "$(cat "$register_repo/CLAUDE.md")" 'Keep this Claude line.'
 assert_contains "$(cat "$register_repo/.beroka-governance.lock")" 'REPOSITORY=beroka-vn/register-backend'
+idempotent_dry_output=$($CLI register "$register_repo" --version v1.0.0 --dry-run)
+assert_contains "$idempotent_dry_output" "$register_repo/.beroka-governance.lock"
+assert_contains "$idempotent_dry_output" "$register_repo/AGENTS.md"
+assert_contains "$idempotent_dry_output" "$register_repo/CLAUDE.md"
+assert_contains "$idempotent_dry_output" "$register_repo/.cursor/rules/beroka-governance.mdc"
+third_hash=$(git -C "$register_repo" hash-object AGENTS.md CLAUDE.md .beroka-governance.lock .cursor/rules/beroka-governance.mdc)
+[ "$second_hash" = "$third_hash" ] || fail 'idempotent dry-run changed managed files'
 
 dry_repo=$TMP_ROOT/dry-consumer
 new_repo "$dry_repo"
@@ -131,5 +153,18 @@ git -C "$dirty_repo" remote add origin https://github.com/beroka-vn/dirty-backen
 printf 'uncommitted rules\n' >"$dirty_repo/AGENTS.md"
 if $CLI register "$dirty_repo" --version v1.0.0 >/dev/null 2>&1; then fail 'register accepted a dirty target entrypoint'; fi
 [ "$(cat "$dirty_repo/AGENTS.md")" = 'uncommitted rules' ] || fail 'failed preflight modified AGENTS.md'
+
+printf '%s\n' '<!-- BEROKA-GOVERNANCE:END -->' '<!-- BEROKA-GOVERNANCE:START -->' >"$release_dir/templates/agent-entrypoints/AGENTS.md"
+git -C "$release_dir" add templates/agent-entrypoints/AGENTS.md
+git -C "$release_dir" commit -qm 'test: corrupt template marker order'
+git -C "$release_dir" tag -d v1.0.0
+git -C "$release_dir" tag -a v1.0.0 -m 'v1.0.0' HEAD
+marker_repo=$TMP_ROOT/marker-consumer
+new_repo "$marker_repo"
+git -C "$marker_repo" remote add origin https://github.com/beroka-vn/marker-backend.git
+if $CLI register "$marker_repo" --version v1.0.0 >/dev/null 2>&1; then
+  fail 'register accepted end-before-start template markers'
+fi
+[ ! -e "$marker_repo/.beroka-governance.lock" ] || fail 'malformed template wrote a lock'
 
 printf 'PASS: repository registration\n'

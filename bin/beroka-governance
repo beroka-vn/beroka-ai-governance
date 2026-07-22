@@ -57,8 +57,11 @@ target_dirty() { [ -z "$(git -C "$1" status --porcelain -- "$2")" ]; }
 
 assert_valid_template() {
   template=$1
-  [ "$(grep -Fxc "$START_MARKER" "$template")" -eq 1 ] || die ENTRYPOINT_DRIFT "Invalid start marker in $template"
-  [ "$(grep -Fxc "$END_MARKER" "$template")" -eq 1 ] || die ENTRYPOINT_DRIFT "Invalid end marker in $template"
+  awk -v start="$START_MARKER" -v end="$END_MARKER" '
+    $0 == start { if (started || ended) invalid=1; started=1; next }
+    $0 == end { if (!started || ended) invalid=1; ended=1 }
+    END { exit (invalid || !started || !ended) }
+  ' "$template" >/dev/null || die ENTRYPOINT_DRIFT "Invalid managed block in $template"
 }
 
 strip_managed_block() {
@@ -77,7 +80,8 @@ tx_begin() {
   mkdir -p "$TX_DIR/staged" "$TX_DIR/backup" "$TX_DIR/work"
   : >"$TX_DIR/manifest"
   TX_COMMITTED=0
-  trap 'tx_abort' EXIT HUP INT TERM
+  trap 'tx_abort' EXIT
+  trap 'tx_abort; exit 1' HUP INT TERM
 }
 
 tx_stage_write() {
@@ -139,6 +143,7 @@ release_for_version() {
   RELEASE_DIR=$DATA_ROOT/releases/$version
   [ -d "$RELEASE_DIR/.git" ] || die GOVERNANCE_NOT_READY "Release is not installed: $version"
   [ "$(sed -n '1p' "$RELEASE_DIR/VERSION")" = "$version" ] || die VERSION_MISMATCH 'Installed VERSION does not match requested version'
+  [ "$(git -C "$RELEASE_DIR" cat-file -t "$version" 2>/dev/null)" = tag ] || die VERSION_MISMATCH 'Installed tag is not annotated'
   RELEASE_COMMIT=$(git -C "$RELEASE_DIR" rev-parse "$version^{commit}" 2>/dev/null) || die VERSION_MISMATCH "Installed tag is missing: $version"
   [ "$(git -C "$RELEASE_DIR" rev-parse HEAD)" = "$RELEASE_COMMIT" ] || die VERSION_MISMATCH 'Installed checkout is not at its tag commit'
   [ -z "$(git -C "$RELEASE_DIR" status --porcelain --untracked-files=all)" ] || die VERSION_MISMATCH 'Installed release contains local modifications'
@@ -264,15 +269,15 @@ cmd_register() {
     fi
   done
 
-  if [ -z "$changed" ]; then
-    tx_commit
-    printf '%s\n' "Repository: $repository" "Version: $version" 'Result: PASS'
-    return
-  fi
-
   if [ "$dry_run" = --dry-run ]; then
     tx_commit
     printf '%s\n' "Version: $version" "$REPO/.beroka-governance.lock" "$REPO/AGENTS.md" "$REPO/CLAUDE.md" "$REPO/.cursor/rules/beroka-governance.mdc" 'Result: PASS'
+    return
+  fi
+
+  if [ -z "$changed" ]; then
+    tx_commit
+    printf '%s\n' "Repository: $repository" "Version: $version" 'Result: PASS'
     return
   fi
 
