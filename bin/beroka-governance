@@ -6,11 +6,12 @@ SOURCE_SLUG=beroka-vn/beroka-ai-governance
 DATA_ROOT=${XDG_DATA_HOME:-$HOME/.local/share}/beroka-ai-governance
 CONFIG_ROOT=${XDG_CONFIG_HOME:-$HOME/.config}/beroka-ai-governance
 BIN_DIR=${BEROKA_GOV_BIN_DIR:-$HOME/.local/bin}
-REMOTE_URL=${BEROKA_GOV_REMOTE_URL:-https://github.com/beroka-vn/beroka-ai-governance.git}
+REMOTE_URL=https://github.com/beroka-vn/beroka-ai-governance.git
 START_MARKER='<!-- BEROKA-GOVERNANCE:START -->'
 END_MARKER='<!-- BEROKA-GOVERNANCE:END -->'
 REGISTRY=$CONFIG_ROOT/registered-repos
-TX_DIR= TX_REPO= TX_COMMITTED=0
+TX_DIR= TX_REPO= TX_COMMITTED=0 TX_RELEASE_NEW=0 TX_RELEASE_TARGET= TX_RELEASE_PROMOTED=0
+TX_CLI_PATH= TX_CLI_SNAPSHOT=0 TX_REGISTRY_SNAPSHOT=0 TX_REGISTRY_ACTION=none
 
 die() {
   code=$1
@@ -39,7 +40,71 @@ canonical_repo() {
   requested=$1
   root=$(git -C "$requested" rev-parse --show-toplevel 2>/dev/null) ||
     die REPOSITORY_NOT_REGISTERED "Not a Git repository: $requested"
-  (CDPATH= cd -- "$root" && pwd -P)
+  (CDPATH= cd -- "$root" && pwd -P) || die REPOSITORY_NOT_REGISTERED "Cannot resolve Git repository: $requested"
+}
+
+assert_safe_user_path() {
+  # ponytail: POSIX cannot lock path topology; use dirfd/openat if hostile concurrent local mutation enters scope.
+  candidate=$1 label=$2
+  case "$candidate" in
+    /*) ;;
+    *) die GOVERNANCE_NOT_READY "Unsafe $label path: $candidate" ;;
+  esac
+
+  physical_home=$(CDPATH= cd -- "$HOME" && pwd -P) || die GOVERNANCE_NOT_READY 'Cannot resolve HOME'
+  tmp_root=${TMPDIR:-/tmp}
+  physical_tmp=$(CDPATH= cd -- "$tmp_root" && pwd -P) || die GOVERNANCE_NOT_READY 'Cannot resolve TMPDIR'
+  [ "$physical_home" != / ] || die GOVERNANCE_NOT_READY 'HOME cannot be the filesystem root'
+  [ "$physical_tmp" != / ] || die GOVERNANCE_NOT_READY 'TMPDIR cannot be the filesystem root'
+  case "$candidate" in
+    "$HOME"/*) current=$HOME; rest=${candidate#"$HOME"/} ;;
+    "$tmp_root"/*) current=$tmp_root; rest=${candidate#"$tmp_root"/} ;;
+    "$HOME"|"$tmp_root") die GOVERNANCE_NOT_READY "Unsafe $label path: $candidate" ;;
+    *) current=; rest=${candidate#/} ;;
+  esac
+  while [ -n "$rest" ]; do
+    component=${rest%%/*}
+    if [ "$component" = "$rest" ]; then rest=; else rest=${rest#*/}; fi
+    case "$component" in
+      ''|.|..) die GOVERNANCE_NOT_READY "Unsafe $label path: $candidate" ;;
+    esac
+    current=${current:-}/$component
+    [ ! -L "$current" ] || die GOVERNANCE_NOT_READY "Symlinked $label path: $current"
+    if [ -n "$rest" ] && [ -e "$current" ] && [ ! -d "$current" ]; then
+      die GOVERNANCE_NOT_READY "Non-directory $label path component: $current"
+    fi
+  done
+
+  ancestor=$candidate
+  while [ ! -e "$ancestor" ]; do ancestor=$(dirname -- "$ancestor"); done
+  if [ -d "$ancestor" ]; then
+    physical_ancestor=$(CDPATH= cd -- "$ancestor" && pwd -P) || die GOVERNANCE_NOT_READY "Cannot resolve $label path"
+  else
+    ancestor_parent=$(dirname -- "$ancestor")
+    physical_ancestor=$(CDPATH= cd -- "$ancestor_parent" && pwd -P) || die GOVERNANCE_NOT_READY "Cannot resolve $label path parent"
+  fi
+  case "$physical_ancestor" in
+    "$physical_home"|"$physical_home"/*|"$physical_tmp"|"$physical_tmp"/*) ;;
+    *) die GOVERNANCE_NOT_READY "$label path is outside HOME and TMPDIR: $candidate" ;;
+  esac
+}
+
+assert_install_paths() {
+  assert_safe_user_path "$DATA_ROOT" data
+  assert_safe_user_path "$DATA_ROOT/releases" release
+  assert_safe_user_path "$BIN_DIR" bin
+  assert_safe_user_path "$BIN_DIR/$PROGRAM" CLI
+  [ ! -e "$DATA_ROOT" ] || [ -d "$DATA_ROOT" ] || die GOVERNANCE_NOT_READY "Data root is not a directory: $DATA_ROOT"
+  [ ! -e "$BIN_DIR" ] || [ -d "$BIN_DIR" ] || die GOVERNANCE_NOT_READY "Bin path is not a directory: $BIN_DIR"
+  [ ! -e "$BIN_DIR/$PROGRAM" ] || [ -f "$BIN_DIR/$PROGRAM" ] || die GOVERNANCE_NOT_READY "CLI is not a regular file: $BIN_DIR/$PROGRAM"
+}
+
+assert_registry_path() {
+  assert_safe_user_path "$CONFIG_ROOT" config
+  assert_safe_user_path "$REGISTRY" registry
+  [ ! -e "$CONFIG_ROOT" ] || [ -d "$CONFIG_ROOT" ] || die GOVERNANCE_NOT_READY "Config root is not a directory: $CONFIG_ROOT"
+  [ ! -L "$REGISTRY" ] || die GOVERNANCE_NOT_READY "Registry is a symlink: $REGISTRY"
+  [ ! -e "$REGISTRY" ] || [ -f "$REGISTRY" ] || die GOVERNANCE_NOT_READY "Registry is not a regular file: $REGISTRY"
 }
 
 assert_safe_managed_paths() {
@@ -67,14 +132,18 @@ normalize_origin() {
     ssh://git@github.com/*) slug=${url#ssh://git@github.com/} ;;
     *) die REMOTE_MISMATCH "Unsupported GitHub origin: $url" ;;
   esac
+  while [ "${slug%/}" != "$slug" ]; do slug=${slug%/}; done
   slug=${slug%.git}
-  slug=${slug%/}
   printf '%s\n' "$slug" | grep -Eq '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' ||
     die REMOTE_MISMATCH "Invalid GitHub repository slug: $slug"
   printf '%s\n' "$slug"
 }
 
-target_dirty() { [ -z "$(git -C "$1" status --porcelain -- "$2")" ]; }
+target_dirty() {
+  td_status=$(git -C "$1" status --porcelain --untracked-files=all --ignored=matching -- "$2" 2>/dev/null) ||
+    die GOVERNANCE_NOT_READY "Cannot inspect target entrypoint: $2"
+  [ -z "$td_status" ]
+}
 
 assert_valid_template() {
   template=$1
@@ -107,46 +176,59 @@ extract_managed_block() {
 
 tx_begin() {
   TX_REPO=$1
-  TX_DIR=$(mktemp -d "${TMPDIR:-/tmp}/beroka-governance-tx.XXXXXX")
-  mkdir -p "$TX_DIR/staged" "$TX_DIR/backup" "$TX_DIR/work"
-  : >"$TX_DIR/manifest"
-  TX_COMMITTED=0
+  TX_DIR=$(mktemp -d "${TMPDIR:-/tmp}/beroka-governance-tx.XXXXXX") || die GOVERNANCE_NOT_READY 'Cannot create transaction directory'
+  TX_COMMITTED=0 TX_RELEASE_NEW=0 TX_RELEASE_TARGET= TX_RELEASE_PROMOTED=0
+  TX_CLI_PATH= TX_CLI_SNAPSHOT=0 TX_REGISTRY_SNAPSHOT=0 TX_REGISTRY_ACTION=none
   trap 'tx_abort' EXIT
   trap 'tx_abort; exit 1' HUP INT TERM
+  mkdir -p "$TX_DIR/staged" "$TX_DIR/backup" "$TX_DIR/work" || die GOVERNANCE_NOT_READY 'Cannot initialize transaction directory'
+  : >"$TX_DIR/manifest" || die GOVERNANCE_NOT_READY 'Cannot initialize transaction manifest'
 }
 
 tx_stage_write() {
   relative=$1 source_file=$2
-  mkdir -p "$TX_DIR/staged/$(dirname -- "$relative")"
-  cp "$source_file" "$TX_DIR/staged/$relative"
-  printf 'W\t%s\n' "$relative" >>"$TX_DIR/manifest"
+  same_target "$TX_REPO/$relative" "$source_file" && return 0
+  target_dirty "$TX_REPO" "$relative" || die WORKTREE_CONFLICT "Dirty target entrypoint: $relative"
+  mkdir -p "$TX_DIR/staged/$(dirname -- "$relative")" || die GOVERNANCE_NOT_READY "Cannot stage directory: $relative"
+  cp "$source_file" "$TX_DIR/staged/$relative" || die GOVERNANCE_NOT_READY "Cannot stage file: $relative"
+  printf 'W\t%s\n' "$relative" >>"$TX_DIR/manifest" || die GOVERNANCE_NOT_READY 'Cannot update transaction manifest'
 }
 
-tx_stage_delete() { printf 'D\t%s\n' "$1" >>"$TX_DIR/manifest"; }
+tx_stage_delete() {
+  [ -e "$TX_REPO/$1" ] || return 0
+  target_dirty "$TX_REPO" "$1" || die WORKTREE_CONFLICT "Dirty target entrypoint: $1"
+  printf 'D\t%s\n' "$1" >>"$TX_DIR/manifest" || die GOVERNANCE_NOT_READY 'Cannot update transaction manifest'
+}
 
 tx_snapshot() {
   relative=$1
   if [ -e "$TX_REPO/$relative" ]; then
-    mkdir -p "$TX_DIR/backup/$(dirname -- "$relative")"
-    cp -p "$TX_REPO/$relative" "$TX_DIR/backup/$relative"
-    printf 'E\t%s\n' "$relative" >>"$TX_DIR/originals"
+    mkdir -p "$TX_DIR/backup/$(dirname -- "$relative")" || die GOVERNANCE_NOT_READY "Cannot snapshot directory: $relative"
+    cp -p "$TX_REPO/$relative" "$TX_DIR/backup/$relative" || die GOVERNANCE_NOT_READY "Cannot snapshot file: $relative"
+    printf 'E\t%s\n' "$relative" >>"$TX_DIR/originals" || die GOVERNANCE_NOT_READY 'Cannot update transaction snapshot'
   else
-    printf 'M\t%s\n' "$relative" >>"$TX_DIR/originals"
+    printf 'M\t%s\n' "$relative" >>"$TX_DIR/originals" || die GOVERNANCE_NOT_READY 'Cannot update transaction snapshot'
   fi
 }
 
 tx_apply() {
-  : >"$TX_DIR/originals"
+  : >"$TX_DIR/originals" || die GOVERNANCE_NOT_READY 'Cannot initialize transaction snapshot'
   while IFS="$(printf '\t')" read -r operation relative; do
     tx_snapshot "$relative"
     case "$operation" in
       W)
-        mkdir -p "$TX_REPO/$(dirname -- "$relative")"
-        temp_file=$(mktemp "$TX_REPO/$(dirname -- "$relative")/.beroka-write.XXXXXX")
-        cp "$TX_DIR/staged/$relative" "$temp_file"
-        mv "$temp_file" "$TX_REPO/$relative"
+        mkdir -p "$TX_REPO/$(dirname -- "$relative")" || die GOVERNANCE_NOT_READY "Cannot create target directory: $relative"
+        temp_file=$(mktemp "$TX_REPO/$(dirname -- "$relative")/.beroka-write.XXXXXX") || die GOVERNANCE_NOT_READY "Cannot create target temporary file: $relative"
+        if ! cp "$TX_DIR/staged/$relative" "$temp_file"; then
+          rm -f "$temp_file" || :
+          die GOVERNANCE_NOT_READY "Cannot prepare target file: $relative"
+        fi
+        if ! mv "$temp_file" "$TX_REPO/$relative"; then
+          rm -f "$temp_file" || :
+          die GOVERNANCE_NOT_READY "Cannot replace target file: $relative"
+        fi
         ;;
-      D) rm -f "$TX_REPO/$relative" ;;
+      D) rm -f "$TX_REPO/$relative" || die GOVERNANCE_NOT_READY "Cannot delete target file: $relative" ;;
       *) die GOVERNANCE_NOT_READY "Unknown transaction operation: $operation" ;;
     esac
   done <"$TX_DIR/manifest"
@@ -154,19 +236,66 @@ tx_apply() {
 
 tx_abort() {
   [ -n "$TX_DIR" ] || return 0
-  if [ "$TX_COMMITTED" -eq 0 ] && [ -f "$TX_DIR/originals" ]; then
-    while IFS="$(printf '\t')" read -r state relative; do
-      case "$state" in
-        E) mkdir -p "$TX_REPO/$(dirname -- "$relative")"; cp -p "$TX_DIR/backup/$relative" "$TX_REPO/$relative" ;;
-        M) rm -f "$TX_REPO/$relative" ;;
-      esac
-    done <"$TX_DIR/originals"
+  set +e
+  if [ "$TX_COMMITTED" -eq 0 ]; then
+    if [ "$TX_REGISTRY_SNAPSHOT" -eq 1 ]; then tx_restore_user_file "$REGISTRY" registry; fi
+    if [ -f "$TX_DIR/originals" ]; then
+      while IFS="$(printf '\t')" read -r state relative; do
+        case "$state" in
+          E) mkdir -p "$TX_REPO/$(dirname -- "$relative")"; cp -p "$TX_DIR/backup/$relative" "$TX_REPO/$relative" ;;
+          M) rm -f "$TX_REPO/$relative" ;;
+        esac
+      done <"$TX_DIR/originals"
+    fi
+    if [ "$TX_CLI_SNAPSHOT" -eq 1 ]; then tx_restore_user_file "$TX_CLI_PATH" cli; fi
+    if [ "$TX_RELEASE_PROMOTED" -eq 1 ] && [ -n "$TX_RELEASE_TARGET" ]; then rm -rf "$TX_RELEASE_TARGET"; fi
   fi
   rm -rf "$TX_DIR"
   TX_DIR=
 }
 
-tx_commit() { TX_COMMITTED=1; rm -rf "$TX_DIR"; TX_DIR=; trap - EXIT HUP INT TERM; }
+tx_commit() {
+  TX_COMMITTED=1
+  rm -rf "$TX_DIR" || die GOVERNANCE_NOT_READY 'Cannot finalize transaction'
+  TX_DIR=
+  trap - EXIT HUP INT TERM
+}
+
+tx_snapshot_user_file() {
+  tsu_path=$1 tsu_name=$2
+  if [ -e "$tsu_path" ]; then
+    [ ! -L "$tsu_path" ] && [ -f "$tsu_path" ] || die GOVERNANCE_NOT_READY "Unsafe user file: $tsu_path"
+    cp -p "$tsu_path" "$TX_DIR/backup/$tsu_name" || die GOVERNANCE_NOT_READY "Cannot snapshot user file: $tsu_path"
+    printf 'E\n' >"$TX_DIR/backup/$tsu_name.state" || die GOVERNANCE_NOT_READY 'Cannot record user-file snapshot'
+  else
+    printf 'M\n' >"$TX_DIR/backup/$tsu_name.state" || die GOVERNANCE_NOT_READY 'Cannot record user-file snapshot'
+  fi
+}
+
+tx_restore_user_file() {
+  tru_path=$1 tru_name=$2
+  [ -f "$TX_DIR/backup/$tru_name.state" ] || return 0
+  tru_state=$(sed -n '1p' "$TX_DIR/backup/$tru_name.state")
+  case "$tru_state" in
+    E) mkdir -p "$(dirname -- "$tru_path")" && cp -p "$TX_DIR/backup/$tru_name" "$tru_path" ;;
+    M) rm -f "$tru_path" ;;
+  esac
+}
+
+apply_user_file() {
+  auf_source=$1 auf_destination=$2 auf_label=$3
+  auf_parent=$(dirname -- "$auf_destination")
+  mkdir -p "$auf_parent" || die GOVERNANCE_NOT_READY "Cannot create $auf_label directory"
+  auf_temp=$(mktemp "$auf_parent/.beroka-$auf_label.XXXXXX") || die GOVERNANCE_NOT_READY "Cannot create temporary $auf_label"
+  if ! cp -p "$auf_source" "$auf_temp"; then
+    rm -f "$auf_temp" || :
+    die GOVERNANCE_NOT_READY "Cannot prepare $auf_label"
+  fi
+  if ! mv "$auf_temp" "$auf_destination"; then
+    rm -f "$auf_temp" || :
+    die GOVERNANCE_NOT_READY "Cannot replace $auf_label"
+  fi
+}
 
 assert_detached_release() {
   if git -C "$1" symbolic-ref -q HEAD >/dev/null 2>&1; then
@@ -174,77 +303,151 @@ assert_detached_release() {
   fi
 }
 
+assert_release_file() {
+  arf_root=$1 arf_relative=$2
+  arf_current=$arf_root
+  arf_rest=$arf_relative
+  while [ -n "$arf_rest" ]; do
+    arf_component=${arf_rest%%/*}
+    if [ "$arf_component" = "$arf_rest" ]; then arf_rest=; else arf_rest=${arf_rest#*/}; fi
+    arf_current=$arf_current/$arf_component
+    [ ! -L "$arf_current" ] || die GOVERNANCE_NOT_READY "Release path is a symlink: $arf_relative"
+    if [ -n "$arf_rest" ]; then
+      [ -d "$arf_current" ] || die GOVERNANCE_NOT_READY "Missing release directory: $arf_relative"
+    else
+      [ -f "$arf_current" ] || die GOVERNANCE_NOT_READY "Missing release file: $arf_relative"
+    fi
+  done
+  arf_parent=$(dirname -- "$arf_root/$arf_relative")
+  arf_physical_parent=$(CDPATH= cd -- "$arf_parent" && pwd -P) || die GOVERNANCE_NOT_READY "Cannot resolve release path: $arf_relative"
+  case "$arf_physical_parent" in
+    "$RELEASE_PHYSICAL"|"$RELEASE_PHYSICAL"/*) ;;
+    *) die GOVERNANCE_NOT_READY "Release path escapes checkout: $arf_relative" ;;
+  esac
+}
+
+validate_release_checkout() {
+  vrc_checkout=$1 vrc_version=$2
+  [ ! -L "$vrc_checkout" ] && [ -d "$vrc_checkout" ] || die GOVERNANCE_NOT_READY "Release is not a regular directory: $vrc_version"
+  [ ! -L "$vrc_checkout/.git" ] && [ -d "$vrc_checkout/.git" ] || die GOVERNANCE_NOT_READY "Release Git metadata is unsafe: $vrc_version"
+  RELEASE_PHYSICAL=$(CDPATH= cd -- "$vrc_checkout" && pwd -P) || die GOVERNANCE_NOT_READY "Cannot resolve release: $vrc_version"
+  vrc_origin=$(git -C "$vrc_checkout" config --get remote.origin.url 2>/dev/null) || die VERSION_MISMATCH 'Installed release origin is missing'
+  [ "$vrc_origin" = "$REMOTE_URL" ] || die VERSION_MISMATCH "Installed release origin is not trusted: $vrc_origin"
+  for vrc_required in \
+    VERSION bin/beroka-governance runtime/entrypoint.md governance.md handbook.md workflow.md \
+    templates/agent-entrypoints/AGENTS.md templates/agent-entrypoints/CLAUDE.md \
+    templates/agent-entrypoints/team-dev-ai-workflow.mdc templates/ai-agent-assignment.md \
+    templates/github-issue.md templates/jira-confluence.md templates/pull-request.md
+  do
+    assert_release_file "$vrc_checkout" "$vrc_required"
+  done
+  [ "$(sed -n '1p' "$vrc_checkout/VERSION" 2>/dev/null)" = "$vrc_version" ] || die VERSION_MISMATCH 'Installed VERSION does not match requested version'
+  [ "$(git -C "$vrc_checkout" cat-file -t "$vrc_version" 2>/dev/null)" = tag ] || die VERSION_MISMATCH 'Installed tag is not annotated'
+  RELEASE_COMMIT=$(git -C "$vrc_checkout" rev-parse "$vrc_version^{commit}" 2>/dev/null) || die VERSION_MISMATCH "Installed tag is missing: $vrc_version"
+  [ "$(git -C "$vrc_checkout" rev-parse HEAD 2>/dev/null)" = "$RELEASE_COMMIT" ] || die VERSION_MISMATCH 'Installed checkout is not at its tag commit'
+  assert_detached_release "$vrc_checkout"
+  vrc_status=$(git -C "$vrc_checkout" status --porcelain --untracked-files=all 2>/dev/null) || die VERSION_MISMATCH 'Cannot inspect installed release status'
+  [ -z "$vrc_status" ] || die VERSION_MISMATCH 'Installed release contains local modifications'
+}
+
 release_for_version() {
-  version=$1
-  printf '%s\n' "$version" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$' || die GOVERNANCE_NOT_READY "Invalid version: $version"
-  RELEASE_DIR=$DATA_ROOT/releases/$version
-  [ -d "$RELEASE_DIR/.git" ] || die GOVERNANCE_NOT_READY "Release is not installed: $version"
-  [ "$(sed -n '1p' "$RELEASE_DIR/VERSION")" = "$version" ] || die VERSION_MISMATCH 'Installed VERSION does not match requested version'
-  [ "$(git -C "$RELEASE_DIR" cat-file -t "$version" 2>/dev/null)" = tag ] || die VERSION_MISMATCH 'Installed tag is not annotated'
-  RELEASE_COMMIT=$(git -C "$RELEASE_DIR" rev-parse "$version^{commit}" 2>/dev/null) || die VERSION_MISMATCH "Installed tag is missing: $version"
-  [ "$(git -C "$RELEASE_DIR" rev-parse HEAD)" = "$RELEASE_COMMIT" ] || die VERSION_MISMATCH 'Installed checkout is not at its tag commit'
-  assert_detached_release "$RELEASE_DIR"
-  [ -z "$(git -C "$RELEASE_DIR" status --porcelain --untracked-files=all)" ] || die VERSION_MISMATCH 'Installed release contains local modifications'
+  rfv_version=$1
+  printf '%s\n' "$rfv_version" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$' || die GOVERNANCE_NOT_READY "Invalid version: $rfv_version"
+  RELEASE_DIR=$DATA_ROOT/releases/$rfv_version
+  [ -d "$RELEASE_DIR/.git" ] || die GOVERNANCE_NOT_READY "Release is not installed: $rfv_version"
+  validate_release_checkout "$RELEASE_DIR" "$rfv_version"
+}
+
+prepare_release() {
+  pr_version=$1
+  assert_install_paths
+  TX_RELEASE_TARGET=$DATA_ROOT/releases/$pr_version
+  [ ! -L "$TX_RELEASE_TARGET" ] || die GOVERNANCE_NOT_READY "Release target is a symlink: $pr_version"
+  if [ -e "$TX_RELEASE_TARGET" ]; then
+    release_for_version "$pr_version"
+    TX_RELEASE_NEW=0
+  else
+    if ! git -c advice.detachedHead=false clone -q --depth 1 --single-branch --branch "$pr_version" "$REMOTE_URL" "$TX_DIR/release"; then
+      die GOVERNANCE_ACCESS_DENIED "Cannot clone $SOURCE_SLUG at $pr_version"
+    fi
+    RELEASE_DIR=$TX_DIR/release
+    validate_release_checkout "$RELEASE_DIR" "$pr_version"
+    TX_RELEASE_NEW=1
+  fi
+}
+
+prepare_cli() {
+  cp "$RELEASE_DIR/bin/beroka-governance" "$TX_DIR/work/cli" || die GOVERNANCE_NOT_READY 'Cannot stage the user CLI'
+  chmod 755 "$TX_DIR/work/cli" || die GOVERNANCE_NOT_READY 'Cannot prepare the user CLI'
+  TX_CLI_PATH=$BIN_DIR/$PROGRAM
+  tx_snapshot_user_file "$TX_CLI_PATH" cli
+  TX_CLI_SNAPSHOT=1
+}
+
+activate_release() {
+  [ "$TX_RELEASE_NEW" -eq 1 ] || return 0
+  assert_install_paths
+  mkdir -p "$DATA_ROOT/releases" || die GOVERNANCE_NOT_READY 'Cannot create releases directory'
+  [ ! -e "$TX_RELEASE_TARGET" ] && [ ! -L "$TX_RELEASE_TARGET" ] || die VERSION_MISMATCH 'Release target appeared during installation'
+  mv "$RELEASE_DIR" "$TX_RELEASE_TARGET" || die GOVERNANCE_NOT_READY 'Cannot install the release checkout'
+  TX_RELEASE_PROMOTED=1
+  RELEASE_DIR=$TX_RELEASE_TARGET
+}
+
+activate_cli() {
+  assert_install_paths
+  apply_user_file "$TX_DIR/work/cli" "$TX_CLI_PATH" CLI
+  chmod 755 "$TX_CLI_PATH" || die GOVERNANCE_NOT_READY 'Cannot make the user CLI executable'
 }
 
 cmd_install() {
-  version=$1
-  printf '%s\n' "$version" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$' || die GOVERNANCE_NOT_READY "Invalid version: $version"
-  mkdir -p "$DATA_ROOT/releases" "$BIN_DIR"
-  target=$DATA_ROOT/releases/$version
-  if [ -e "$target" ]; then
-    release_for_version "$version"
-  else
-    stage=$(mktemp -d "$DATA_ROOT/releases/.install.XXXXXX")
-    if ! git clone -q --depth 1 --single-branch --branch "$version" "$REMOTE_URL" "$stage/checkout"; then
-      rm -rf "$stage"
-      die GOVERNANCE_ACCESS_DENIED "Cannot clone $SOURCE_SLUG at $version"
-    fi
-    installed_version=$(sed -n '1p' "$stage/checkout/VERSION" 2>/dev/null || true)
-    [ "$installed_version" = "$version" ] || { rm -rf "$stage"; die VERSION_MISMATCH 'Cloned VERSION differs from requested tag'; }
-    tag_type=$(git -C "$stage/checkout" cat-file -t "$version" 2>/dev/null || true)
-    [ "$tag_type" = tag ] || { rm -rf "$stage"; die VERSION_MISMATCH 'Cloned tag is not annotated'; }
-    tag_commit=$(git -C "$stage/checkout" rev-parse "$version^{commit}" 2>/dev/null || true)
-    head=$(git -C "$stage/checkout" rev-parse HEAD 2>/dev/null || true)
-    [ -n "$tag_commit" ] && [ "$head" = "$tag_commit" ] || { rm -rf "$stage"; die VERSION_MISMATCH 'Cloned checkout differs from tag commit'; }
-    [ -z "$(git -C "$stage/checkout" status --porcelain --untracked-files=all)" ] || { rm -rf "$stage"; die VERSION_MISMATCH 'Cloned release contains local modifications'; }
-    [ -f "$stage/checkout/bin/beroka-governance" ] || { rm -rf "$stage"; die GOVERNANCE_NOT_READY 'Release does not contain the CLI'; }
-    if ! mv "$stage/checkout" "$target"; then
-      rm -rf "$stage"
-      die GOVERNANCE_NOT_READY 'Cannot install the release checkout'
-    fi
-    rmdir "$stage" || die GOVERNANCE_NOT_READY 'Cannot finalize the release checkout'
-    release_for_version "$version"
-  fi
-  [ -f "$target/bin/beroka-governance" ] || die GOVERNANCE_NOT_READY 'Release does not contain the CLI'
-  temp_cli=$(mktemp "$BIN_DIR/.beroka-governance.XXXXXX")
-  if ! cp "$target/bin/beroka-governance" "$temp_cli" || ! chmod 755 "$temp_cli" || ! mv "$temp_cli" "$BIN_DIR/beroka-governance"; then
-    rm -f "$temp_cli"
-    die GOVERNANCE_NOT_READY 'Cannot install the user CLI'
-  fi
-  printf '%s\n' "Installed: $version" 'Result: PASS'
+  ci_version=$1
+  printf '%s\n' "$ci_version" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$' || die GOVERNANCE_NOT_READY "Invalid version: $ci_version"
+  tx_begin ''
+  prepare_release "$ci_version"
+  prepare_cli
+  activate_release
+  activate_cli
+  tx_commit
+  printf '%s\n' "Installed: $ci_version" 'Result: PASS'
 }
 
 write_lock_file() {
   destination=$1 repository=$2 version=$3 commit=$4
-  printf '%s\n' "SOURCE=$SOURCE_SLUG" "REPOSITORY=$repository" "VERSION=$version" "COMMIT=$commit" >"$destination"
+  printf '%s\n' "SOURCE=$SOURCE_SLUG" "REPOSITORY=$repository" "VERSION=$version" "COMMIT=$commit" >"$destination" ||
+    die GOVERNANCE_NOT_READY 'Cannot stage governance lock'
 }
 
-replace_registry_row() {
+prepare_registry_row() {
   repo=$1 repository=$2 version=$3
-  mkdir -p "$CONFIG_ROOT"
-  temp_registry=$(mktemp "$CONFIG_ROOT/.registered-repos.XXXXXX")
-  if [ -f "$REGISTRY" ]; then awk -F '\t' -v repo="$repo" '$1 != repo' "$REGISTRY" >"$temp_registry"; fi
-  printf '%s\t%s\t%s\n' "$repo" "$repository" "$version" >>"$temp_registry"
-  mv "$temp_registry" "$REGISTRY"
+  assert_registry_path
+  : >"$TX_DIR/work/registry" || die GOVERNANCE_NOT_READY 'Cannot stage registry'
+  if [ -f "$REGISTRY" ]; then
+    awk -F '\t' -v repo="$repo" '$1 != repo' "$REGISTRY" >"$TX_DIR/work/registry" || die GOVERNANCE_NOT_READY 'Cannot read registry'
+  fi
+  printf '%s\t%s\t%s\n' "$repo" "$repository" "$version" >>"$TX_DIR/work/registry" || die GOVERNANCE_NOT_READY 'Cannot stage registry row'
+  TX_REGISTRY_ACTION=write
 }
 
-remove_registry_row() {
+prepare_registry_removal() {
   repo=$1
-  [ -f "$REGISTRY" ] || return 0
-  temp_registry=$(mktemp "$CONFIG_ROOT/.registered-repos.XXXXXX")
-  awk -F '\t' -v repo="$repo" '$1 != repo' "$REGISTRY" >"$temp_registry"
-  mv "$temp_registry" "$REGISTRY"
+  assert_registry_path
+  [ -f "$REGISTRY" ] || { TX_REGISTRY_ACTION=none; return 0; }
+  awk -F '\t' -v repo="$repo" '$1 != repo' "$REGISTRY" >"$TX_DIR/work/registry" || die GOVERNANCE_NOT_READY 'Cannot stage registry removal'
+  TX_REGISTRY_ACTION=write
+}
+
+snapshot_registry() {
+  [ "$TX_REGISTRY_ACTION" = write ] || return 0
+  assert_registry_path
+  tx_snapshot_user_file "$REGISTRY" registry
+  TX_REGISTRY_SNAPSHOT=1
+}
+
+apply_registry() {
+  [ "$TX_REGISTRY_ACTION" = write ] || return 0
+  assert_registry_path
+  apply_user_file "$TX_DIR/work/registry" "$REGISTRY" registry
 }
 
 tx_print_actions() {
@@ -253,7 +456,7 @@ tx_print_actions() {
       W) printf '%s\n' "WRITE $TX_REPO/$relative" ;;
       D) printf '%s\n' "DELETE $TX_REPO/$relative" ;;
     esac
-  done <"$TX_DIR/manifest"
+  done <"$TX_DIR/manifest" || die GOVERNANCE_NOT_READY 'Cannot print transaction actions'
 }
 
 write_entrypoint() {
@@ -262,9 +465,9 @@ write_entrypoint() {
     [ -f "$existing" ] || die ENTRYPOINT_DRIFT "Entrypoint is not a file: $existing"
     strip_managed_block "$existing" "$TX_DIR/work/base"
   else
-    : >"$TX_DIR/work/base"
+    : >"$TX_DIR/work/base" || die GOVERNANCE_NOT_READY 'Cannot stage AGENTS.md base content'
   fi
-  cat "$TX_DIR/work/base" "$template" >"$destination"
+  cat "$TX_DIR/work/base" "$template" >"$destination" || die GOVERNANCE_NOT_READY 'Cannot stage AGENTS.md'
 }
 
 write_claude_entrypoint() {
@@ -273,12 +476,12 @@ write_claude_entrypoint() {
     [ -f "$existing" ] || die ENTRYPOINT_DRIFT "Entrypoint is not a file: $existing"
     strip_managed_block "$existing" "$TX_DIR/work/base"
   else
-    : >"$TX_DIR/work/base"
+    : >"$TX_DIR/work/base" || die GOVERNANCE_NOT_READY 'Cannot stage CLAUDE.md base content'
   fi
   if grep -Fqx '@AGENTS.md' "$TX_DIR/work/base"; then
-    cp "$TX_DIR/work/base" "$destination"
+    cp "$TX_DIR/work/base" "$destination" || die GOVERNANCE_NOT_READY 'Cannot stage CLAUDE.md'
   else
-    cat "$TX_DIR/work/base" "$template" >"$destination"
+    cat "$TX_DIR/work/base" "$template" >"$destination" || die GOVERNANCE_NOT_READY 'Cannot stage CLAUDE.md'
   fi
 }
 
@@ -292,16 +495,20 @@ read_lock() {
   [ -f "$lock" ] || die REPOSITORY_NOT_REGISTERED "Missing $lock"
   LOCK_SOURCE= LOCK_REPOSITORY= LOCK_VERSION= LOCK_COMMIT=
   seen_source= seen_repository= seen_version= seen_commit=
-  while IFS='=' read -r key value; do
-    [ -n "$key" ] || continue
-    case "$key" in
-      SOURCE) [ -z "$seen_source" ] || die GOVERNANCE_NOT_READY 'Duplicate SOURCE'; LOCK_SOURCE=$value; seen_source=1 ;;
-      REPOSITORY) [ -z "$seen_repository" ] || die GOVERNANCE_NOT_READY 'Duplicate REPOSITORY'; LOCK_REPOSITORY=$value; seen_repository=1 ;;
-      VERSION) [ -z "$seen_version" ] || die GOVERNANCE_NOT_READY 'Duplicate VERSION'; LOCK_VERSION=$value; seen_version=1 ;;
-      COMMIT) [ -z "$seen_commit" ] || die GOVERNANCE_NOT_READY 'Duplicate COMMIT'; LOCK_COMMIT=$value; seen_commit=1 ;;
-      *) die GOVERNANCE_NOT_READY "Unknown lock key: $key" ;;
-    esac
-  done <"$lock"
+  if ! {
+    while IFS='=' read -r key value; do
+      [ -n "$key" ] || continue
+      case "$key" in
+        SOURCE) [ -z "$seen_source" ] || die GOVERNANCE_NOT_READY 'Duplicate SOURCE'; LOCK_SOURCE=$value; seen_source=1 ;;
+        REPOSITORY) [ -z "$seen_repository" ] || die GOVERNANCE_NOT_READY 'Duplicate REPOSITORY'; LOCK_REPOSITORY=$value; seen_repository=1 ;;
+        VERSION) [ -z "$seen_version" ] || die GOVERNANCE_NOT_READY 'Duplicate VERSION'; LOCK_VERSION=$value; seen_version=1 ;;
+        COMMIT) [ -z "$seen_commit" ] || die GOVERNANCE_NOT_READY 'Duplicate COMMIT'; LOCK_COMMIT=$value; seen_commit=1 ;;
+        *) die GOVERNANCE_NOT_READY "Unknown lock key: $key" ;;
+      esac
+    done <"$lock"
+  }; then
+    die GOVERNANCE_NOT_READY "Cannot read governance lock: $lock"
+  fi
   [ "$LOCK_SOURCE" = "$SOURCE_SLUG" ] || die GOVERNANCE_NOT_READY 'Unexpected SOURCE'
   printf '%s\n' "$LOCK_REPOSITORY" | grep -Eq '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' || die GOVERNANCE_NOT_READY 'Invalid REPOSITORY'
   printf '%s\n' "$LOCK_VERSION" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$' || die GOVERNANCE_NOT_READY 'Invalid VERSION'
@@ -309,17 +516,8 @@ read_lock() {
 }
 
 verify_release() {
-  RELEASE_DIR=$DATA_ROOT/releases/$LOCK_VERSION
-  [ -d "$RELEASE_DIR/.git" ] || die GOVERNANCE_NOT_READY "Release is not installed: $LOCK_VERSION"
-  head=$(git -C "$RELEASE_DIR" rev-parse HEAD 2>/dev/null) || die VERSION_MISMATCH 'Installed release has no commit'
-  [ "$head" = "$LOCK_COMMIT" ] || die VERSION_MISMATCH 'Installed commit differs from lock'
-  tag_type=$(git -C "$RELEASE_DIR" cat-file -t "$LOCK_VERSION" 2>/dev/null) || die VERSION_MISMATCH 'Installed tag is missing'
-  [ "$tag_type" = tag ] || die VERSION_MISMATCH 'Installed tag is not annotated'
-  tag_commit=$(git -C "$RELEASE_DIR" rev-parse "$LOCK_VERSION^{commit}" 2>/dev/null) || die VERSION_MISMATCH 'Installed tag is missing'
-  [ "$tag_commit" = "$LOCK_COMMIT" ] || die VERSION_MISMATCH 'Tag commit differs from lock'
-  [ "$(sed -n '1p' "$RELEASE_DIR/VERSION")" = "$LOCK_VERSION" ] || die VERSION_MISMATCH 'VERSION file differs from lock'
-  assert_detached_release "$RELEASE_DIR"
-  [ -z "$(git -C "$RELEASE_DIR" status --porcelain --untracked-files=all)" ] || die VERSION_MISMATCH 'Installed release contains local modifications'
+  release_for_version "$LOCK_VERSION"
+  [ "$RELEASE_COMMIT" = "$LOCK_COMMIT" ] || die VERSION_MISMATCH 'Installed commit differs from lock'
 }
 
 verify_entrypoints() {
@@ -332,25 +530,25 @@ verify_entrypoints() {
   [ -f "$cursor_template" ] || die ENTRYPOINT_DRIFT "Missing Cursor rule in $entrypoints_release"
   [ -f "$entrypoints_repo/AGENTS.md" ] || die ENTRYPOINT_DRIFT 'Missing AGENTS.md'
   [ -f "$entrypoints_repo/.cursor/rules/beroka-governance.mdc" ] || die ENTRYPOINT_DRIFT 'Missing Cursor rule'
-  entrypoints_dir=$(mktemp -d "${TMPDIR:-/tmp}/beroka-governance-entrypoints.XXXXXX")
+  entrypoints_dir=$(mktemp -d "${TMPDIR:-/tmp}/beroka-governance-entrypoints.XXXXXX") || die GOVERNANCE_NOT_READY 'Cannot create entrypoint verification directory'
   if ! extract_managed_block "$entrypoints_repo/AGENTS.md" "$entrypoints_dir/agents" || ! cmp -s "$entrypoints_dir/agents" "$agents_template"; then
-    rm -rf "$entrypoints_dir"
+    rm -rf "$entrypoints_dir" || :
     die ENTRYPOINT_DRIFT 'AGENTS.md managed block differs from the release'
   fi
   if grep -Fq "$START_MARKER" "$entrypoints_repo/CLAUDE.md" 2>/dev/null || grep -Fq "$END_MARKER" "$entrypoints_repo/CLAUDE.md" 2>/dev/null; then
     if ! extract_managed_block "$entrypoints_repo/CLAUDE.md" "$entrypoints_dir/claude" || ! cmp -s "$entrypoints_dir/claude" "$claude_template"; then
-      rm -rf "$entrypoints_dir"
+      rm -rf "$entrypoints_dir" || :
       die ENTRYPOINT_DRIFT 'CLAUDE.md managed block differs from the release'
     fi
   elif ! grep -Fqx '@AGENTS.md' "$entrypoints_repo/CLAUDE.md" 2>/dev/null; then
-    rm -rf "$entrypoints_dir"
+    rm -rf "$entrypoints_dir" || :
     die ENTRYPOINT_DRIFT 'Missing managed CLAUDE.md content'
   fi
   if ! cmp -s "$entrypoints_repo/.cursor/rules/beroka-governance.mdc" "$cursor_template"; then
-    rm -rf "$entrypoints_dir"
+    rm -rf "$entrypoints_dir" || :
     die ENTRYPOINT_DRIFT 'Cursor rule differs from the release'
   fi
-  rm -rf "$entrypoints_dir"
+  rm -rf "$entrypoints_dir" || die GOVERNANCE_NOT_READY 'Cannot remove entrypoint verification directory'
 }
 
 verify_registration() {
@@ -371,6 +569,7 @@ cmd_register() {
 
   REPO=$(canonical_repo "$requested")
   assert_safe_managed_paths "$REPO"
+  assert_registry_path
   repository=$(normalize_origin "$REPO")
   release_for_version "$version"
   agents_template=$RELEASE_DIR/templates/agent-entrypoints/AGENTS.md
@@ -388,14 +587,7 @@ cmd_register() {
   write_claude_entrypoint "$REPO/CLAUDE.md" "$claude_template" "$TX_DIR/work/claude"
   tx_stage_write CLAUDE.md "$TX_DIR/work/claude"
   tx_stage_write .cursor/rules/beroka-governance.mdc "$cursor_template"
-
-  changed=
-  for relative in .beroka-governance.lock AGENTS.md CLAUDE.md .cursor/rules/beroka-governance.mdc; do
-    if ! same_target "$REPO/$relative" "$TX_DIR/staged/$relative"; then
-      changed=1
-      target_dirty "$REPO" "$relative" || die WORKTREE_CONFLICT "Dirty target entrypoint: $relative"
-    fi
-  done
+  prepare_registry_row "$REPO" "$repository" "$version"
 
   if [ "$dry_run" = --dry-run ]; then
     tx_commit
@@ -403,14 +595,9 @@ cmd_register() {
     return
   fi
 
-  if [ -z "$changed" ]; then
-    tx_commit
-    printf '%s\n' "Repository: $repository" "Version: $version" 'Result: PASS'
-    return
-  fi
-
+  snapshot_registry
   tx_apply
-  replace_registry_row "$REPO" "$repository" "$version"
+  apply_registry
   tx_commit
   printf '%s\n' "Repository: $repository" "Version: $version" 'Result: PASS'
 }
@@ -423,6 +610,7 @@ cmd_repin() {
   printf '%s\n' "$version" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$' || die GOVERNANCE_NOT_READY "Invalid version: $version"
 
   verify_registration "$requested"
+  assert_registry_path
   repository=$LOCK_REPOSITORY
   current_major=${LOCK_VERSION#v}
   current_major=${current_major%%.*}
@@ -431,14 +619,13 @@ cmd_repin() {
   [ "$current_major" = "$target_major" ] || die VERSION_MISMATCH 'Target version has a different major version'
 
   target=$DATA_ROOT/releases/$version
-  if [ ! -e "$target" ]; then
-    if [ "$dry_run" = --dry-run ]; then
-      printf '%s\n' "INSTALL $version" 'Result: PASS'
-      return
-    fi
-    cmd_install "$version"
+  if [ ! -e "$target" ] && [ ! -L "$target" ] && [ "$dry_run" = --dry-run ]; then
+    printf '%s\n' "INSTALL $version" 'Result: PASS'
+    return
   fi
-  release_for_version "$version"
+
+  tx_begin "$REPO"
+  prepare_release "$version"
   agents_template=$RELEASE_DIR/templates/agent-entrypoints/AGENTS.md
   claude_template=$RELEASE_DIR/templates/agent-entrypoints/CLAUDE.md
   cursor_template=$RELEASE_DIR/templates/agent-entrypoints/team-dev-ai-workflow.mdc
@@ -446,7 +633,6 @@ cmd_repin() {
   assert_valid_template "$claude_template"
   [ -f "$cursor_template" ] || die ENTRYPOINT_DRIFT "Missing Cursor rule in $RELEASE_DIR"
 
-  tx_begin "$REPO"
   write_lock_file "$TX_DIR/work/lock" "$repository" "$version" "$RELEASE_COMMIT"
   tx_stage_write .beroka-governance.lock "$TX_DIR/work/lock"
   write_entrypoint "$REPO/AGENTS.md" "$agents_template" "$TX_DIR/work/agents"
@@ -454,14 +640,7 @@ cmd_repin() {
   write_claude_entrypoint "$REPO/CLAUDE.md" "$claude_template" "$TX_DIR/work/claude"
   tx_stage_write CLAUDE.md "$TX_DIR/work/claude"
   tx_stage_write .cursor/rules/beroka-governance.mdc "$cursor_template"
-
-  changed=
-  for relative in .beroka-governance.lock AGENTS.md CLAUDE.md .cursor/rules/beroka-governance.mdc; do
-    if ! same_target "$REPO/$relative" "$TX_DIR/staged/$relative"; then
-      changed=1
-      target_dirty "$REPO" "$relative" || die WORKTREE_CONFLICT "Dirty target entrypoint: $relative"
-    fi
-  done
+  prepare_registry_row "$REPO" "$repository" "$version"
 
   if [ "$dry_run" = --dry-run ]; then
     tx_commit
@@ -469,9 +648,13 @@ cmd_repin() {
     return
   fi
 
-  if [ -n "$changed" ]; then tx_apply; fi
+  if [ "$TX_RELEASE_NEW" -eq 1 ]; then prepare_cli; fi
+  snapshot_registry
+  tx_apply
+  activate_release
+  if [ "$TX_RELEASE_NEW" -eq 1 ]; then activate_cli; fi
+  apply_registry
   tx_commit
-  replace_registry_row "$REPO" "$repository" "$version"
   printf '%s\n' "Repository: $repository" "Version: $version" 'Result: PASS'
 }
 
@@ -480,6 +663,7 @@ cmd_unregister() {
   [ -z "$dry_run" ] || [ "$dry_run" = --dry-run ] || { usage >&2; exit 2; }
 
   verify_registration "$requested"
+  assert_registry_path
   tx_begin "$REPO"
 
   strip_managed_block "$REPO/AGENTS.md" "$TX_DIR/work/agents.unmanaged"
@@ -499,6 +683,7 @@ cmd_unregister() {
   fi
   tx_stage_delete .beroka-governance.lock
   tx_stage_delete .cursor/rules/beroka-governance.mdc
+  prepare_registry_removal "$REPO"
 
   if [ "$dry_run" = --dry-run ]; then
     tx_print_actions
@@ -507,24 +692,11 @@ cmd_unregister() {
     return
   fi
 
+  snapshot_registry
   tx_apply
-  remove_registry_row "$REPO"
+  apply_registry
   tx_commit
   printf '%s\n' "Repository: $LOCK_REPOSITORY" 'Result: PASS'
-}
-
-safe_user_path() {
-  candidate=$1
-  [ -n "$candidate" ] || return 1
-  [ "$candidate" != / ] || return 1
-  [ "$candidate" != "$HOME" ] || return 1
-  case "$candidate" in
-    *'/../'*|../*|*/..|*'/./'*|.) return 1 ;;
-  esac
-  case "$candidate" in
-    "$HOME"/*|"${TMPDIR:-/tmp}"/*) return 0 ;;
-    *) return 1 ;;
-  esac
 }
 
 cmd_uninstall() {
@@ -533,12 +705,11 @@ cmd_uninstall() {
   if [ -z "$force" ] && [ -s "$REGISTRY" ]; then
     die GOVERNANCE_NOT_READY 'Registered repositories must be unregistered first'
   fi
-  safe_user_path "$DATA_ROOT" || die GOVERNANCE_NOT_READY "Unsafe data path: $DATA_ROOT"
-  safe_user_path "$CONFIG_ROOT" || die GOVERNANCE_NOT_READY "Unsafe config path: $CONFIG_ROOT"
-  safe_user_path "$BIN_DIR/$PROGRAM" || die GOVERNANCE_NOT_READY "Unsafe CLI path: $BIN_DIR/$PROGRAM"
-  rm -f "$BIN_DIR/$PROGRAM"
-  rm -rf "$DATA_ROOT"
-  rm -rf "$CONFIG_ROOT"
+  assert_install_paths
+  assert_registry_path
+  rm -f "$BIN_DIR/$PROGRAM" || die GOVERNANCE_NOT_READY 'Cannot remove the user CLI'
+  rm -rf "$DATA_ROOT" || die GOVERNANCE_NOT_READY 'Cannot remove package data'
+  rm -rf "$CONFIG_ROOT" || die GOVERNANCE_NOT_READY 'Cannot remove package configuration'
   printf '%s\n' 'Result: PASS'
 }
 
@@ -547,7 +718,10 @@ cmd_doctor() {
   printf '%s\n' "Repository: $LOCK_REPOSITORY" "Version: $LOCK_VERSION" "Commit: $LOCK_COMMIT" 'Result: PASS'
 }
 
-cmd_context() { verify_registration "$1"; cat "$RELEASE_DIR/runtime/entrypoint.md"; }
+cmd_context() {
+  verify_registration "$1"
+  cat "$RELEASE_DIR/runtime/entrypoint.md" || die GOVERNANCE_NOT_READY 'Cannot read runtime entrypoint'
+}
 
 cmd_show() {
   repo=$1 kind=$2 name=${3:-}
@@ -563,7 +737,7 @@ cmd_show() {
     *) die GOVERNANCE_NOT_READY "Unknown document selection: $kind ${name}" ;;
   esac
   [ -f "$RELEASE_DIR/$file" ] || die GOVERNANCE_NOT_READY "Missing package file: $file"
-  cat "$RELEASE_DIR/$file"
+  cat "$RELEASE_DIR/$file" || die GOVERNANCE_NOT_READY "Cannot read package file: $file"
 }
 
 main() {
