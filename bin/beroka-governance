@@ -27,6 +27,8 @@ usage() {
     '  beroka-governance register REPO --version VERSION [--dry-run]' \
     '  beroka-governance update REPO --to VERSION [--dry-run]' \
     '  beroka-governance rollback REPO --to VERSION [--dry-run]' \
+    '  beroka-governance unregister REPO [--dry-run]' \
+    '  beroka-governance uninstall [--force]' \
     '  beroka-governance doctor REPO' \
     '  beroka-governance context REPO' \
     '  beroka-governance show REPO governance|handbook|workflow' \
@@ -219,6 +221,23 @@ replace_registry_row() {
   if [ -f "$REGISTRY" ]; then awk -F '\t' -v repo="$repo" '$1 != repo' "$REGISTRY" >"$temp_registry"; fi
   printf '%s\t%s\t%s\n' "$repo" "$repository" "$version" >>"$temp_registry"
   mv "$temp_registry" "$REGISTRY"
+}
+
+remove_registry_row() {
+  repo=$1
+  [ -f "$REGISTRY" ] || return 0
+  temp_registry=$(mktemp "$CONFIG_ROOT/.registered-repos.XXXXXX")
+  awk -F '\t' -v repo="$repo" '$1 != repo' "$REGISTRY" >"$temp_registry"
+  mv "$temp_registry" "$REGISTRY"
+}
+
+tx_print_actions() {
+  while IFS="$(printf '\t')" read -r operation relative; do
+    case "$operation" in
+      W) printf '%s\n' "WRITE $TX_REPO/$relative" ;;
+      D) printf '%s\n' "DELETE $TX_REPO/$relative" ;;
+    esac
+  done <"$TX_DIR/manifest"
 }
 
 write_entrypoint() {
@@ -438,6 +457,73 @@ cmd_repin() {
   printf '%s\n' "Repository: $repository" "Version: $version" 'Result: PASS'
 }
 
+cmd_unregister() {
+  requested=$1 dry_run=${2:-}
+  [ -z "$dry_run" ] || [ "$dry_run" = --dry-run ] || { usage >&2; exit 2; }
+
+  verify_registration "$requested"
+  tx_begin "$REPO"
+
+  strip_managed_block "$REPO/AGENTS.md" "$TX_DIR/work/agents.unmanaged"
+  if grep -q '[^[:space:]]' "$TX_DIR/work/agents.unmanaged"; then
+    tx_stage_write AGENTS.md "$TX_DIR/work/agents.unmanaged"
+  else
+    tx_stage_delete AGENTS.md
+  fi
+
+  if grep -Fq "$START_MARKER" "$REPO/CLAUDE.md" 2>/dev/null || grep -Fq "$END_MARKER" "$REPO/CLAUDE.md" 2>/dev/null; then
+    strip_managed_block "$REPO/CLAUDE.md" "$TX_DIR/work/claude.unmanaged"
+    if grep -q '[^[:space:]]' "$TX_DIR/work/claude.unmanaged"; then
+      tx_stage_write CLAUDE.md "$TX_DIR/work/claude.unmanaged"
+    else
+      tx_stage_delete CLAUDE.md
+    fi
+  fi
+  tx_stage_delete .beroka-governance.lock
+  tx_stage_delete .cursor/rules/beroka-governance.mdc
+
+  if [ "$dry_run" = --dry-run ]; then
+    tx_print_actions
+    printf '%s\n' "DELETE registry row $REGISTRY: $REPO" 'Result: PASS'
+    tx_commit
+    return
+  fi
+
+  tx_apply
+  remove_registry_row "$REPO"
+  tx_commit
+  printf '%s\n' "Repository: $LOCK_REPOSITORY" 'Result: PASS'
+}
+
+safe_user_path() {
+  candidate=$1
+  [ -n "$candidate" ] || return 1
+  [ "$candidate" != / ] || return 1
+  [ "$candidate" != "$HOME" ] || return 1
+  case "$candidate" in
+    *'/../'*|../*|*/..|*'/./'*|.) return 1 ;;
+  esac
+  case "$candidate" in
+    "$HOME"/*|"${TMPDIR:-/tmp}"/*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+cmd_uninstall() {
+  force=${1:-}
+  [ -z "$force" ] || [ "$force" = --force ] || { usage >&2; exit 2; }
+  if [ -z "$force" ] && [ -s "$REGISTRY" ]; then
+    die GOVERNANCE_NOT_READY 'Registered repositories must be unregistered first'
+  fi
+  safe_user_path "$DATA_ROOT" || die GOVERNANCE_NOT_READY "Unsafe data path: $DATA_ROOT"
+  safe_user_path "$CONFIG_ROOT" || die GOVERNANCE_NOT_READY "Unsafe config path: $CONFIG_ROOT"
+  safe_user_path "$BIN_DIR/$PROGRAM" || die GOVERNANCE_NOT_READY "Unsafe CLI path: $BIN_DIR/$PROGRAM"
+  rm -f "$BIN_DIR/$PROGRAM"
+  rm -rf "$DATA_ROOT"
+  rm -rf "$CONFIG_ROOT"
+  printf '%s\n' 'Result: PASS'
+}
+
 cmd_doctor() {
   verify_registration "$1"
   printf '%s\n' "Repository: $LOCK_REPOSITORY" "Version: $LOCK_VERSION" "Commit: $LOCK_COMMIT" 'Result: PASS'
@@ -469,6 +555,8 @@ main() {
     register) [ "$#" -ge 4 ] && [ "$#" -le 5 ] || { usage >&2; exit 2; }; cmd_register "${2:-}" "${3:-}" "${4:-}" "${5:-}" ;;
     update) [ "$#" -ge 4 ] && [ "$#" -le 5 ] || { usage >&2; exit 2; }; cmd_repin update "${2:-}" "${3:-}" "${4:-}" "${5:-}" ;;
     rollback) [ "$#" -ge 4 ] && [ "$#" -le 5 ] || { usage >&2; exit 2; }; cmd_repin rollback "${2:-}" "${3:-}" "${4:-}" "${5:-}" ;;
+    unregister) [ "$#" -ge 2 ] && [ "$#" -le 3 ] || { usage >&2; exit 2; }; cmd_unregister "${2:-}" "${3:-}" ;;
+    uninstall) [ "$#" -le 2 ] || { usage >&2; exit 2; }; cmd_uninstall "${2:-}" ;;
     doctor) [ "$#" -eq 2 ] || { usage >&2; exit 2; }; cmd_doctor "$2" ;;
     context) [ "$#" -eq 2 ] || { usage >&2; exit 2; }; cmd_context "$2" ;;
     show) [ "$#" -ge 3 ] && [ "$#" -le 4 ] || { usage >&2; exit 2; }; cmd_show "$2" "$3" "${4:-}" ;;
