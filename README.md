@@ -6,11 +6,13 @@ to Confluence.
 
 ## Quick start
 
-Use a published, reviewed package tag. The bootstrap checkout is temporary;
-`install` places the pinned release and user CLI in the developer's local
-package directories. Review the resulting application-repository diff in its
-normal pull request before merging, then start a fresh agent session so the
-client loads the registered entrypoint.
+This is a post-authorization, post-publication procedure. `v1.0.0` is
+currently unpublished, so these commands will not work until its annotated tag
+is authorized and pushed. Once published, use the reviewed tag below. The
+bootstrap checkout is temporary; `install` places the pinned release and user
+CLI in the developer's local package directories. Review the resulting
+application-repository diff in its normal pull request before merging, then
+start a fresh agent session so the client loads the registered entrypoint.
 
 ```bash
 release=v1.0.0
