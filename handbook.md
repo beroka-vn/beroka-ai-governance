@@ -244,37 +244,61 @@ Integration blocked
 Không diễn giải `AUTH_REQUIRED` hoặc `PERMISSION_DENIED` thành record không tồn
 tại. Sau khi developer sửa kết nối, agent phải chạy lại preflight.
 
-## Deployment checklist
+## Release gate trước khi publish tag
 
-- [ ] Một Backend pilot repository chính xác đã được coordinator chỉ định;
-      Frontend repository chưa được register.
-- [ ] Reviewed annotated tag đã được publish và `install` đã pass trên client.
-- [ ] `register` application-repository diff đã được review và merge bằng PR.
-- [ ] Fresh agent session xác nhận lock/version đã pin và entrypoint client đã load.
-- [ ] `beroka-governance doctor <repo>` trả `Result: PASS`.
-- [ ] GitHub Backend và exact Frontend repository routing đã được xác nhận.
-- [ ] Jira có Epic/Feature/Story/Task/Bug, backlog được enable và status map đúng
-      trên `BB/34` và `BF/35`.
-- [ ] Account có quyền browse/create/edit/assign/link theo scope; Jira link types
-      `Relates` và `Blocks` khả dụng.
-- [ ] Hai Confluence spaces có native Folder/page permissions và FE mở được
-      shared Integration Hub trong owning BE Folder.
-- [ ] Plugin/MCP dùng đúng account, không cấu hình duplicate và không chứa secret
-      trong repository.
-- [ ] Một pilot task thật đã pass các scenarios bên dưới trước team-wide rollout.
+Tất cả manual gate bên dưới hiện là **UNVERIFIED**. Không được xem source-tree
+smoke trên Linux là bằng chứng thay thế, không được claim `v1.0.0` đã release,
+và không được publish tag trước khi hoàn tất đúng thứ tự này:
 
-Chỉ đăng ký thêm repository sau Backend pilot và release gate được coordinator
-review. Không thêm automation đồng bộ nếu manual drift chưa thực sự lặp lại.
+- [ ] **UNVERIFIED** — Coordinator chỉ định một exact Backend pilot repository
+      và exact reviewed release-candidate commit; Frontend chưa được register.
+- [ ] **UNVERIFIED** — Tạo annotated candidate tag chỉ ở local trên đúng commit
+      để chạy gate; không push hoặc tái sử dụng tag nếu candidate thất bại.
+- [ ] **UNVERIFIED** — Chạy `sh -n bin/beroka-governance`,
+      `sh -n tests/smoke.sh` và `sh tests/smoke.sh` trên Linux, macOS và WSL từ
+      cùng candidate; lưu exact command, commit và output của từng môi trường.
+- [ ] **UNVERIFIED** — Cài candidate trong isolated test environment, tạo
+      reviewed registration diff cho Backend pilot, và xác nhận
+      `beroka-governance doctor <repo>` trả `Result: PASS`.
+- [ ] **UNVERIFIED** — Fresh Codex IDE session load `AGENTS.md` và đúng candidate.
+- [ ] **UNVERIFIED** — Fresh Claude Code session `/memory` hiển thị project import
+      và đúng candidate.
+- [ ] **UNVERIFIED** — Fresh Cursor session áp dụng dedicated project rule và
+      đúng candidate.
+- [ ] **UNVERIFIED** — Coordinator review toàn bộ automated/manual evidence và
+      đưa ra authorization rõ ràng cho việc publish annotated tag.
+- [ ] **UNVERIFIED** — Chỉ sau authorization, publish annotated `v1.0.0` từ chính
+      candidate commit đã pass; không move hoặc reuse tag.
 
-## Rollout pilot
+Nếu bất kỳ candidate gate nào fail, chỉ xóa local unpublished tag, sửa qua một
+reviewed implementation PR mới và chạy lại toàn bộ gate trên commit mới.
 
-Dùng một task Backend thật, nhỏ; không tạo fake issue/page chỉ để test. Ghi
-client, authenticated accounts, exact repository, reviewed PR, pinned tag,
-commands/checks và kết quả. Pilot chỉ đạt khi Codex, Claude Code và Cursor đều
-load entrypoint/lock release đã pin trong session mới, `doctor` trả
-`Result: PASS`, và connector preflight đạt cho action thực tế. Không register
-Frontend hoặc mở team-wide rollout trước khi coordinator xử lý blocker và cho
-phép release gate.
+## Deployment checklist sau khi publish
+
+Các bước này cũng đang **UNVERIFIED** và chỉ bắt đầu sau khi annotated tag đã
+được publish hợp lệ:
+
+- [ ] **UNVERIFIED** — Install published tag từ canonical central repository
+      trên client rollout.
+- [ ] **UNVERIFIED** — Chạy `register` cho exact Backend pilot; review và merge
+      application-repository diff bằng PR.
+- [ ] **UNVERIFIED** — Mở fresh agent session, xác nhận pinned published version,
+      entrypoint đã load và `doctor` trả `Result: PASS`.
+- [ ] **UNVERIFIED** — GitHub Backend và exact Frontend repository routing đã
+      được xác nhận nhưng Frontend vẫn chưa được register.
+- [ ] **UNVERIFIED** — Jira có Epic/Feature/Story/Task/Bug, backlog được enable,
+      status map đúng trên `BB/34` và `BF/35`, và link types `Relates`/`Blocks`
+      khả dụng trong required scope.
+- [ ] **UNVERIFIED** — Hai Confluence spaces có native Folder/page permissions;
+      FE mở được shared Integration Hub trong owning BE Folder.
+- [ ] **UNVERIFIED** — Plugin/MCP dùng đúng account, không duplicate, không chứa
+      secret trong repository, và connector preflight pass cho action thực tế.
+- [ ] **UNVERIFIED** — Một Backend pilot task thật, nhỏ đã pass trước team-wide
+      rollout; không tạo fake issue/page chỉ để test.
+
+Chỉ đăng ký thêm repository sau Backend pilot và post-publication evidence được
+coordinator review. Không register Frontend trước authorization riêng và không
+thêm automation đồng bộ nếu manual drift chưa thực sự lặp lại.
 
 ## Troubleshooting nhanh
 
