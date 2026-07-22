@@ -281,6 +281,8 @@ mkdir -p "$fail_mv_dir"
 printf '%s\n' \
   '#!/bin/sh' \
   'for last_arg do :; done' \
+  'if [ "${FAIL_PROMOTION_PATH:-}" = "$last_arg" ]; then printf "%s\n" "$1" >"$PROMOTION_SOURCE_FILE"; exit 1; fi' \
+  'if [ "${INTERRUPT_AFTER_PROMOTION_PATH:-}" = "$last_arg" ]; then "$SYSTEM_MV" "$@"; kill -TERM "$PPID"; sleep 1; exit 1; fi' \
   'if [ "${FAIL_REGISTRY_PATH:-}" = "$last_arg" ]; then exit 1; fi' \
   'exec "$SYSTEM_MV" "$@"' >"$fail_mv_dir/mv"
 chmod 755 "$fail_mv_dir/mv"
@@ -296,6 +298,39 @@ assert_contains "$rollback_repin_output" 'Result: GOVERNANCE_NOT_READY'
 [ ! -e "$BEROKA_GOV_BIN_DIR/beroka-governance" ] || fail 'rolled-back repin kept the new CLI'
 [ "$rollback_repin_hash" = "$(git -C "$register_repo" hash-object AGENTS.md CLAUDE.md .beroka-governance.lock .cursor/rules/beroka-governance.mdc)" ] || fail 'rolled-back repin kept repository changes'
 [ "$rollback_repin_registry" = "$(cat "$registry_path")" ] || fail 'rolled-back repin changed registry'
+
+promotion_source_file=$TMP_ROOT/promotion-source
+promotion_target=$XDG_DATA_HOME/beroka-ai-governance/releases/v1.4.0
+failed_promotion_hash=$(git -C "$register_repo" hash-object AGENTS.md CLAUDE.md .beroka-governance.lock .cursor/rules/beroka-governance.mdc)
+failed_promotion_registry=$(cat "$registry_path")
+if failed_promotion_output=$(PATH=$fail_mv_dir:$PATH FAIL_PROMOTION_PATH=$promotion_target PROMOTION_SOURCE_FILE=$promotion_source_file $CLI update "$register_repo" --to v1.4.0 2>&1); then
+  fail 'update ignored a release-promotion failure'
+fi
+assert_contains "$failed_promotion_output" 'Result: GOVERNANCE_NOT_READY'
+case "$(cat "$promotion_source_file")" in
+  "$XDG_DATA_HOME/beroka-ai-governance/releases/.install."*) ;;
+  *) fail 'release stage was not a sibling beneath releases' ;;
+esac
+[ ! -e "$promotion_target" ] || fail 'failed promotion left the target release'
+[ ! -e "$BEROKA_GOV_BIN_DIR/beroka-governance" ] || fail 'failed promotion changed the user CLI'
+[ "$failed_promotion_hash" = "$(git -C "$register_repo" hash-object AGENTS.md CLAUDE.md .beroka-governance.lock .cursor/rules/beroka-governance.mdc)" ] || fail 'failed promotion changed repository files'
+[ "$failed_promotion_registry" = "$(cat "$registry_path")" ] || fail 'failed promotion changed registry'
+for release_stage in "$XDG_DATA_HOME/beroka-ai-governance/releases"/.install.*; do
+  [ ! -e "$release_stage" ] || fail 'failed promotion left its release stage'
+done
+
+interrupted_promotion_hash=$(git -C "$register_repo" hash-object AGENTS.md CLAUDE.md .beroka-governance.lock .cursor/rules/beroka-governance.mdc)
+interrupted_promotion_registry=$(cat "$registry_path")
+if PATH=$fail_mv_dir:$PATH INTERRUPT_AFTER_PROMOTION_PATH=$promotion_target $CLI update "$register_repo" --to v1.4.0 >/dev/null 2>&1; then
+  fail 'update survived an interruption immediately after release promotion'
+fi
+[ ! -e "$promotion_target" ] || fail 'interrupted promotion leaked the target release'
+[ ! -e "$BEROKA_GOV_BIN_DIR/beroka-governance" ] || fail 'interrupted promotion changed the user CLI'
+[ "$interrupted_promotion_hash" = "$(git -C "$register_repo" hash-object AGENTS.md CLAUDE.md .beroka-governance.lock .cursor/rules/beroka-governance.mdc)" ] || fail 'interrupted promotion changed repository files'
+[ "$interrupted_promotion_registry" = "$(cat "$registry_path")" ] || fail 'interrupted promotion changed registry'
+for release_stage in "$XDG_DATA_HOME/beroka-ai-governance/releases"/.install.*; do
+  [ ! -e "$release_stage" ] || fail 'interrupted promotion left its release stage'
+done
 
 absent_dry_hash=$(git -C "$register_repo" hash-object AGENTS.md CLAUDE.md .beroka-governance.lock .cursor/rules/beroka-governance.mdc)
 absent_dry_registry=$(cat "$XDG_CONFIG_HOME/beroka-ai-governance/registered-repos")

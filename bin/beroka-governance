@@ -10,7 +10,7 @@ REMOTE_URL=https://github.com/beroka-vn/beroka-ai-governance.git
 START_MARKER='<!-- BEROKA-GOVERNANCE:START -->'
 END_MARKER='<!-- BEROKA-GOVERNANCE:END -->'
 REGISTRY=$CONFIG_ROOT/registered-repos
-TX_DIR= TX_REPO= TX_COMMITTED=0 TX_RELEASE_NEW=0 TX_RELEASE_TARGET= TX_RELEASE_PROMOTED=0
+TX_DIR= TX_REPO= TX_COMMITTED=0 TX_RELEASE_NEW=0 TX_RELEASE_TARGET= TX_RELEASE_STAGE= TX_RELEASE_OWNED=0
 TX_CLI_PATH= TX_CLI_SNAPSHOT=0 TX_REGISTRY_SNAPSHOT=0 TX_REGISTRY_ACTION=none
 
 die() {
@@ -177,7 +177,7 @@ extract_managed_block() {
 tx_begin() {
   TX_REPO=$1
   TX_DIR=$(mktemp -d "${TMPDIR:-/tmp}/beroka-governance-tx.XXXXXX") || die GOVERNANCE_NOT_READY 'Cannot create transaction directory'
-  TX_COMMITTED=0 TX_RELEASE_NEW=0 TX_RELEASE_TARGET= TX_RELEASE_PROMOTED=0
+  TX_COMMITTED=0 TX_RELEASE_NEW=0 TX_RELEASE_TARGET= TX_RELEASE_STAGE= TX_RELEASE_OWNED=0
   TX_CLI_PATH= TX_CLI_SNAPSHOT=0 TX_REGISTRY_SNAPSHOT=0 TX_REGISTRY_ACTION=none
   trap 'tx_abort' EXIT
   trap 'tx_abort; exit 1' HUP INT TERM
@@ -248,8 +248,9 @@ tx_abort() {
       done <"$TX_DIR/originals"
     fi
     if [ "$TX_CLI_SNAPSHOT" -eq 1 ]; then tx_restore_user_file "$TX_CLI_PATH" cli; fi
-    if [ "$TX_RELEASE_PROMOTED" -eq 1 ] && [ -n "$TX_RELEASE_TARGET" ]; then rm -rf "$TX_RELEASE_TARGET"; fi
+    if [ "$TX_RELEASE_OWNED" -eq 1 ] && [ -n "$TX_RELEASE_TARGET" ]; then rm -rf "$TX_RELEASE_TARGET"; fi
   fi
+  if [ -n "$TX_RELEASE_STAGE" ]; then rm -rf "$TX_RELEASE_STAGE"; fi
   rm -rf "$TX_DIR"
   TX_DIR=
 }
@@ -367,10 +368,12 @@ prepare_release() {
     release_for_version "$pr_version"
     TX_RELEASE_NEW=0
   else
-    if ! git -c advice.detachedHead=false clone -q --depth 1 --single-branch --branch "$pr_version" "$REMOTE_URL" "$TX_DIR/release"; then
+    mkdir -p "$DATA_ROOT/releases" || die GOVERNANCE_NOT_READY 'Cannot create releases directory'
+    TX_RELEASE_STAGE=$(mktemp -d "$DATA_ROOT/releases/.install.$pr_version.XXXXXX") || die GOVERNANCE_NOT_READY 'Cannot create release stage'
+    if ! git -c advice.detachedHead=false clone -q --depth 1 --single-branch --branch "$pr_version" "$REMOTE_URL" "$TX_RELEASE_STAGE"; then
       die GOVERNANCE_ACCESS_DENIED "Cannot clone $SOURCE_SLUG at $pr_version"
     fi
-    RELEASE_DIR=$TX_DIR/release
+    RELEASE_DIR=$TX_RELEASE_STAGE
     validate_release_checkout "$RELEASE_DIR" "$pr_version"
     TX_RELEASE_NEW=1
   fi
@@ -389,8 +392,8 @@ activate_release() {
   assert_install_paths
   mkdir -p "$DATA_ROOT/releases" || die GOVERNANCE_NOT_READY 'Cannot create releases directory'
   [ ! -e "$TX_RELEASE_TARGET" ] && [ ! -L "$TX_RELEASE_TARGET" ] || die VERSION_MISMATCH 'Release target appeared during installation'
+  TX_RELEASE_OWNED=1
   mv "$RELEASE_DIR" "$TX_RELEASE_TARGET" || die GOVERNANCE_NOT_READY 'Cannot install the release checkout'
-  TX_RELEASE_PROMOTED=1
   RELEASE_DIR=$TX_RELEASE_TARGET
 }
 
