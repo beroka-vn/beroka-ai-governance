@@ -7,6 +7,10 @@ DATA_ROOT=${XDG_DATA_HOME:-$HOME/.local/share}/beroka-ai-governance
 CONFIG_ROOT=${XDG_CONFIG_HOME:-$HOME/.config}/beroka-ai-governance
 BIN_DIR=${BEROKA_GOV_BIN_DIR:-$HOME/.local/bin}
 REMOTE_URL=${BEROKA_GOV_REMOTE_URL:-https://github.com/beroka-vn/beroka-ai-governance.git}
+START_MARKER='<!-- BEROKA-GOVERNANCE:START -->'
+END_MARKER='<!-- BEROKA-GOVERNANCE:END -->'
+REGISTRY=$CONFIG_ROOT/registered-repos
+TX_DIR= TX_REPO= TX_COMMITTED=0
 
 die() {
   code=$1
@@ -19,6 +23,7 @@ die() {
 usage() {
   printf '%s\n' \
     'Usage:' \
+    '  beroka-governance register REPO --version VERSION [--dry-run]' \
     '  beroka-governance doctor REPO' \
     '  beroka-governance context REPO' \
     '  beroka-governance show REPO governance|handbook|workflow' \
@@ -46,6 +51,141 @@ normalize_origin() {
   printf '%s\n' "$slug" | grep -Eq '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' ||
     die REMOTE_MISMATCH "Invalid GitHub repository slug: $slug"
   printf '%s\n' "$slug"
+}
+
+target_dirty() { [ -z "$(git -C "$1" status --porcelain -- "$2")" ]; }
+
+assert_valid_template() {
+  template=$1
+  [ "$(grep -Fxc "$START_MARKER" "$template")" -eq 1 ] || die ENTRYPOINT_DRIFT "Invalid start marker in $template"
+  [ "$(grep -Fxc "$END_MARKER" "$template")" -eq 1 ] || die ENTRYPOINT_DRIFT "Invalid end marker in $template"
+}
+
+strip_managed_block() {
+  input=$1 output=$2
+  awk -v start="$START_MARKER" -v end="$END_MARKER" '
+    $0 == start { if (inside) exit 42; inside=1; found++; next }
+    $0 == end { if (!inside) exit 42; inside=0; next }
+    !inside { print }
+    END { if (inside || found > 1) exit 42 }
+  ' "$input" >"$output" || die ENTRYPOINT_DRIFT "Malformed managed block in $input"
+}
+
+tx_begin() {
+  TX_REPO=$1
+  TX_DIR=$(mktemp -d "${TMPDIR:-/tmp}/beroka-governance-tx.XXXXXX")
+  mkdir -p "$TX_DIR/staged" "$TX_DIR/backup" "$TX_DIR/work"
+  : >"$TX_DIR/manifest"
+  TX_COMMITTED=0
+  trap 'tx_abort' EXIT HUP INT TERM
+}
+
+tx_stage_write() {
+  relative=$1 source_file=$2
+  mkdir -p "$TX_DIR/staged/$(dirname -- "$relative")"
+  cp "$source_file" "$TX_DIR/staged/$relative"
+  printf 'W\t%s\n' "$relative" >>"$TX_DIR/manifest"
+}
+
+tx_stage_delete() { printf 'D\t%s\n' "$1" >>"$TX_DIR/manifest"; }
+
+tx_snapshot() {
+  relative=$1
+  if [ -e "$TX_REPO/$relative" ]; then
+    mkdir -p "$TX_DIR/backup/$(dirname -- "$relative")"
+    cp -p "$TX_REPO/$relative" "$TX_DIR/backup/$relative"
+    printf 'E\t%s\n' "$relative" >>"$TX_DIR/originals"
+  else
+    printf 'M\t%s\n' "$relative" >>"$TX_DIR/originals"
+  fi
+}
+
+tx_apply() {
+  : >"$TX_DIR/originals"
+  while IFS="$(printf '\t')" read -r operation relative; do
+    tx_snapshot "$relative"
+    case "$operation" in
+      W)
+        mkdir -p "$TX_REPO/$(dirname -- "$relative")"
+        temp_file=$(mktemp "$TX_REPO/$(dirname -- "$relative")/.beroka-write.XXXXXX")
+        cp "$TX_DIR/staged/$relative" "$temp_file"
+        mv "$temp_file" "$TX_REPO/$relative"
+        ;;
+      D) rm -f "$TX_REPO/$relative" ;;
+      *) die GOVERNANCE_NOT_READY "Unknown transaction operation: $operation" ;;
+    esac
+  done <"$TX_DIR/manifest"
+}
+
+tx_abort() {
+  [ -n "$TX_DIR" ] || return 0
+  if [ "$TX_COMMITTED" -eq 0 ] && [ -f "$TX_DIR/originals" ]; then
+    while IFS="$(printf '\t')" read -r state relative; do
+      case "$state" in
+        E) mkdir -p "$TX_REPO/$(dirname -- "$relative")"; cp -p "$TX_DIR/backup/$relative" "$TX_REPO/$relative" ;;
+        M) rm -f "$TX_REPO/$relative" ;;
+      esac
+    done <"$TX_DIR/originals"
+  fi
+  rm -rf "$TX_DIR"
+  TX_DIR=
+}
+
+tx_commit() { TX_COMMITTED=1; rm -rf "$TX_DIR"; TX_DIR=; trap - EXIT HUP INT TERM; }
+
+release_for_version() {
+  version=$1
+  printf '%s\n' "$version" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$' || die GOVERNANCE_NOT_READY "Invalid version: $version"
+  RELEASE_DIR=$DATA_ROOT/releases/$version
+  [ -d "$RELEASE_DIR/.git" ] || die GOVERNANCE_NOT_READY "Release is not installed: $version"
+  [ "$(sed -n '1p' "$RELEASE_DIR/VERSION")" = "$version" ] || die VERSION_MISMATCH 'Installed VERSION does not match requested version'
+  RELEASE_COMMIT=$(git -C "$RELEASE_DIR" rev-parse "$version^{commit}" 2>/dev/null) || die VERSION_MISMATCH "Installed tag is missing: $version"
+  [ "$(git -C "$RELEASE_DIR" rev-parse HEAD)" = "$RELEASE_COMMIT" ] || die VERSION_MISMATCH 'Installed checkout is not at its tag commit'
+  [ -z "$(git -C "$RELEASE_DIR" status --porcelain --untracked-files=all)" ] || die VERSION_MISMATCH 'Installed release contains local modifications'
+}
+
+write_lock_file() {
+  destination=$1 repository=$2 version=$3 commit=$4
+  printf '%s\n' "SOURCE=$SOURCE_SLUG" "REPOSITORY=$repository" "VERSION=$version" "COMMIT=$commit" >"$destination"
+}
+
+replace_registry_row() {
+  repo=$1 repository=$2 version=$3
+  mkdir -p "$CONFIG_ROOT"
+  temp_registry=$(mktemp "$CONFIG_ROOT/.registered-repos.XXXXXX")
+  if [ -f "$REGISTRY" ]; then awk -F '\t' -v repo="$repo" '$1 != repo' "$REGISTRY" >"$temp_registry"; fi
+  printf '%s\t%s\t%s\n' "$repo" "$repository" "$version" >>"$temp_registry"
+  mv "$temp_registry" "$REGISTRY"
+}
+
+write_entrypoint() {
+  existing=$1 template=$2 destination=$3
+  if [ -e "$existing" ]; then
+    [ -f "$existing" ] || die ENTRYPOINT_DRIFT "Entrypoint is not a file: $existing"
+    strip_managed_block "$existing" "$TX_DIR/work/base"
+  else
+    : >"$TX_DIR/work/base"
+  fi
+  cat "$TX_DIR/work/base" "$template" >"$destination"
+}
+
+write_claude_entrypoint() {
+  existing=$1 template=$2 destination=$3
+  if [ -e "$existing" ]; then
+    [ -f "$existing" ] || die ENTRYPOINT_DRIFT "Entrypoint is not a file: $existing"
+    strip_managed_block "$existing" "$TX_DIR/work/base"
+  else
+    : >"$TX_DIR/work/base"
+  fi
+  if grep -Fqx '@AGENTS.md' "$TX_DIR/work/base"; then
+    cp "$TX_DIR/work/base" "$destination"
+  else
+    cat "$TX_DIR/work/base" "$template" >"$destination"
+  fi
+}
+
+same_target() {
+  [ -f "$1" ] && cmp -s "$1" "$2"
 }
 
 read_lock() {
@@ -91,6 +231,57 @@ verify_registration() {
   verify_release
 }
 
+cmd_register() {
+  requested=$1 version_flag=$2 version=$3 dry_run=${4:-}
+  [ "$version_flag" = --version ] || { usage >&2; exit 2; }
+  [ -n "$version" ] || { usage >&2; exit 2; }
+  [ -z "$dry_run" ] || [ "$dry_run" = --dry-run ] || { usage >&2; exit 2; }
+
+  REPO=$(canonical_repo "$requested")
+  repository=$(normalize_origin "$REPO")
+  release_for_version "$version"
+  agents_template=$RELEASE_DIR/templates/agent-entrypoints/AGENTS.md
+  claude_template=$RELEASE_DIR/templates/agent-entrypoints/CLAUDE.md
+  cursor_template=$RELEASE_DIR/templates/agent-entrypoints/team-dev-ai-workflow.mdc
+  assert_valid_template "$agents_template"
+  assert_valid_template "$claude_template"
+  [ -f "$cursor_template" ] || die ENTRYPOINT_DRIFT "Missing Cursor rule in $RELEASE_DIR"
+
+  tx_begin "$REPO"
+  write_lock_file "$TX_DIR/work/lock" "$repository" "$version" "$RELEASE_COMMIT"
+  tx_stage_write .beroka-governance.lock "$TX_DIR/work/lock"
+  write_entrypoint "$REPO/AGENTS.md" "$agents_template" "$TX_DIR/work/agents"
+  tx_stage_write AGENTS.md "$TX_DIR/work/agents"
+  write_claude_entrypoint "$REPO/CLAUDE.md" "$claude_template" "$TX_DIR/work/claude"
+  tx_stage_write CLAUDE.md "$TX_DIR/work/claude"
+  tx_stage_write .cursor/rules/beroka-governance.mdc "$cursor_template"
+
+  changed=
+  for relative in .beroka-governance.lock AGENTS.md CLAUDE.md .cursor/rules/beroka-governance.mdc; do
+    if ! same_target "$REPO/$relative" "$TX_DIR/staged/$relative"; then
+      changed=1
+      target_dirty "$REPO" "$relative" || die WORKTREE_CONFLICT "Dirty target entrypoint: $relative"
+    fi
+  done
+
+  if [ -z "$changed" ]; then
+    tx_commit
+    printf '%s\n' "Repository: $repository" "Version: $version" 'Result: PASS'
+    return
+  fi
+
+  if [ "$dry_run" = --dry-run ]; then
+    tx_commit
+    printf '%s\n' "Version: $version" "$REPO/.beroka-governance.lock" "$REPO/AGENTS.md" "$REPO/CLAUDE.md" "$REPO/.cursor/rules/beroka-governance.mdc" 'Result: PASS'
+    return
+  fi
+
+  tx_apply
+  replace_registry_row "$REPO" "$repository" "$version"
+  tx_commit
+  printf '%s\n' "Repository: $repository" "Version: $version" 'Result: PASS'
+}
+
 cmd_doctor() {
   verify_registration "$1"
   printf '%s\n' "Repository: $LOCK_REPOSITORY" "Version: $LOCK_VERSION" "Commit: $LOCK_COMMIT" 'Result: PASS'
@@ -118,6 +309,7 @@ cmd_show() {
 main() {
   command=${1:-}
   case "$command" in
+    register) [ "$#" -ge 4 ] && [ "$#" -le 5 ] || { usage >&2; exit 2; }; cmd_register "${2:-}" "${3:-}" "${4:-}" "${5:-}" ;;
     doctor) [ "$#" -eq 2 ] || { usage >&2; exit 2; }; cmd_doctor "$2" ;;
     context) [ "$#" -eq 2 ] || { usage >&2; exit 2; }; cmd_context "$2" ;;
     show) [ "$#" -ge 3 ] && [ "$#" -le 4 ] || { usage >&2; exit 2; }; cmd_show "$2" "$3" "${4:-}" ;;
