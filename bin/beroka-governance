@@ -1,0 +1,126 @@
+#!/bin/sh
+set -eu
+
+PROGRAM=beroka-governance
+SOURCE_SLUG=beroka-vn/beroka-ai-governance
+DATA_ROOT=${XDG_DATA_HOME:-$HOME/.local/share}/beroka-ai-governance
+CONFIG_ROOT=${XDG_CONFIG_HOME:-$HOME/.config}/beroka-ai-governance
+BIN_DIR=${BEROKA_GOV_BIN_DIR:-$HOME/.local/bin}
+REMOTE_URL=${BEROKA_GOV_REMOTE_URL:-https://github.com/beroka-vn/beroka-ai-governance.git}
+
+die() {
+  code=$1
+  shift
+  printf '%s\n' "Result: $code" >&2
+  if [ "$#" -gt 0 ]; then printf '%s\n' "$*" >&2; fi
+  exit 1
+}
+
+usage() {
+  printf '%s\n' \
+    'Usage:' \
+    '  beroka-governance doctor REPO' \
+    '  beroka-governance context REPO' \
+    '  beroka-governance show REPO governance|handbook|workflow' \
+    '  beroka-governance show REPO template ai-agent-assignment|github-issue|jira-confluence|pull-request'
+}
+
+canonical_repo() {
+  requested=$1
+  root=$(git -C "$requested" rev-parse --show-toplevel 2>/dev/null) ||
+    die REPOSITORY_NOT_REGISTERED "Not a Git repository: $requested"
+  (CDPATH= cd -- "$root" && pwd -P)
+}
+
+normalize_origin() {
+  repo=$1
+  url=$(git -C "$repo" remote get-url origin 2>/dev/null) || die REMOTE_MISMATCH 'Git origin is missing'
+  case "$url" in
+    https://github.com/*) slug=${url#https://github.com/} ;;
+    git@github.com:*) slug=${url#git@github.com:} ;;
+    ssh://git@github.com/*) slug=${url#ssh://git@github.com/} ;;
+    *) die REMOTE_MISMATCH "Unsupported GitHub origin: $url" ;;
+  esac
+  slug=${slug%.git}
+  slug=${slug%/}
+  printf '%s\n' "$slug" | grep -Eq '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' ||
+    die REMOTE_MISMATCH "Invalid GitHub repository slug: $slug"
+  printf '%s\n' "$slug"
+}
+
+read_lock() {
+  repo=$1
+  lock=$repo/.beroka-governance.lock
+  [ -f "$lock" ] || die REPOSITORY_NOT_REGISTERED "Missing $lock"
+  LOCK_SOURCE= LOCK_REPOSITORY= LOCK_VERSION= LOCK_COMMIT=
+  seen_source= seen_repository= seen_version= seen_commit=
+  while IFS='=' read -r key value; do
+    [ -n "$key" ] || continue
+    case "$key" in
+      SOURCE) [ -z "$seen_source" ] || die GOVERNANCE_NOT_READY 'Duplicate SOURCE'; LOCK_SOURCE=$value; seen_source=1 ;;
+      REPOSITORY) [ -z "$seen_repository" ] || die GOVERNANCE_NOT_READY 'Duplicate REPOSITORY'; LOCK_REPOSITORY=$value; seen_repository=1 ;;
+      VERSION) [ -z "$seen_version" ] || die GOVERNANCE_NOT_READY 'Duplicate VERSION'; LOCK_VERSION=$value; seen_version=1 ;;
+      COMMIT) [ -z "$seen_commit" ] || die GOVERNANCE_NOT_READY 'Duplicate COMMIT'; LOCK_COMMIT=$value; seen_commit=1 ;;
+      *) die GOVERNANCE_NOT_READY "Unknown lock key: $key" ;;
+    esac
+  done <"$lock"
+  [ "$LOCK_SOURCE" = "$SOURCE_SLUG" ] || die GOVERNANCE_NOT_READY 'Unexpected SOURCE'
+  printf '%s\n' "$LOCK_REPOSITORY" | grep -Eq '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' || die GOVERNANCE_NOT_READY 'Invalid REPOSITORY'
+  printf '%s\n' "$LOCK_VERSION" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$' || die GOVERNANCE_NOT_READY 'Invalid VERSION'
+  printf '%s\n' "$LOCK_COMMIT" | grep -Eq '^[0-9a-f]{40}$' || die GOVERNANCE_NOT_READY 'Invalid COMMIT'
+}
+
+verify_release() {
+  RELEASE_DIR=$DATA_ROOT/releases/$LOCK_VERSION
+  [ -d "$RELEASE_DIR/.git" ] || die GOVERNANCE_NOT_READY "Release is not installed: $LOCK_VERSION"
+  head=$(git -C "$RELEASE_DIR" rev-parse HEAD 2>/dev/null) || die VERSION_MISMATCH 'Installed release has no commit'
+  [ "$head" = "$LOCK_COMMIT" ] || die VERSION_MISMATCH 'Installed commit differs from lock'
+  tag_commit=$(git -C "$RELEASE_DIR" rev-parse "$LOCK_VERSION^{commit}" 2>/dev/null) || die VERSION_MISMATCH 'Installed tag is missing'
+  [ "$tag_commit" = "$LOCK_COMMIT" ] || die VERSION_MISMATCH 'Tag commit differs from lock'
+  [ "$(sed -n '1p' "$RELEASE_DIR/VERSION")" = "$LOCK_VERSION" ] || die VERSION_MISMATCH 'VERSION file differs from lock'
+  [ -z "$(git -C "$RELEASE_DIR" status --porcelain --untracked-files=all)" ] || die VERSION_MISMATCH 'Installed release contains local modifications'
+}
+
+verify_registration() {
+  REPO=$(canonical_repo "$1")
+  read_lock "$REPO"
+  origin_slug=$(normalize_origin "$REPO")
+  [ "$origin_slug" = "$LOCK_REPOSITORY" ] || die REMOTE_MISMATCH "Origin $origin_slug differs from $LOCK_REPOSITORY"
+  verify_release
+}
+
+cmd_doctor() {
+  verify_registration "$1"
+  printf '%s\n' "Repository: $LOCK_REPOSITORY" "Version: $LOCK_VERSION" "Commit: $LOCK_COMMIT" 'Result: PASS'
+}
+
+cmd_context() { verify_registration "$1"; cat "$RELEASE_DIR/runtime/entrypoint.md"; }
+
+cmd_show() {
+  repo=$1 kind=$2 name=${3:-}
+  verify_registration "$repo"
+  case "$kind:$name" in
+    governance:) file=governance.md ;;
+    handbook:) file=handbook.md ;;
+    workflow:) file=workflow.md ;;
+    template:ai-agent-assignment) file=templates/ai-agent-assignment.md ;;
+    template:github-issue) file=templates/github-issue.md ;;
+    template:jira-confluence) file=templates/jira-confluence.md ;;
+    template:pull-request) file=templates/pull-request.md ;;
+    *) die GOVERNANCE_NOT_READY "Unknown document selection: $kind ${name}" ;;
+  esac
+  [ -f "$RELEASE_DIR/$file" ] || die GOVERNANCE_NOT_READY "Missing package file: $file"
+  cat "$RELEASE_DIR/$file"
+}
+
+main() {
+  command=${1:-}
+  case "$command" in
+    doctor) [ "$#" -eq 2 ] || { usage >&2; exit 2; }; cmd_doctor "$2" ;;
+    context) [ "$#" -eq 2 ] || { usage >&2; exit 2; }; cmd_context "$2" ;;
+    show) [ "$#" -ge 3 ] && [ "$#" -le 4 ] || { usage >&2; exit 2; }; cmd_show "$2" "$3" "${4:-}" ;;
+    *) usage >&2; exit 2 ;;
+  esac
+}
+
+main "$@"
