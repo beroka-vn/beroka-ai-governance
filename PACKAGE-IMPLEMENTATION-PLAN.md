@@ -212,7 +212,7 @@ SOURCE_SLUG=beroka-vn/beroka-ai-governance
 DATA_ROOT=${XDG_DATA_HOME:-$HOME/.local/share}/beroka-ai-governance
 CONFIG_ROOT=${XDG_CONFIG_HOME:-$HOME/.config}/beroka-ai-governance
 BIN_DIR=${BEROKA_GOV_BIN_DIR:-$HOME/.local/bin}
-REMOTE_URL=${BEROKA_GOV_REMOTE_URL:-https://github.com/beroka-vn/beroka-ai-governance.git}
+REMOTE_URL=https://github.com/beroka-vn/beroka-ai-governance.git
 
 die() {
   code=$1
@@ -637,7 +637,8 @@ chmod 755 "$source_repo/bin/beroka-governance"
 git -C "$source_repo" add .
 git -C "$source_repo" commit -qm 'test: create v1.1 fixture'
 git -C "$source_repo" tag -a v1.1.0 -m 'v1.1.0'
-export BEROKA_GOV_REMOTE_URL=file://$source_repo
+git config --global url."file://$source_repo".insteadOf \
+  https://github.com/beroka-vn/beroka-ai-governance.git
 ```
 
 Add lifecycle assertions:
@@ -705,7 +706,8 @@ cmd_install() {
 }
 ```
 
-The production default remains the fixed HTTPS URL. `BEROKA_GOV_REMOTE_URL` is a no-network test seam; it does not change lock `SOURCE` or bypass tag/commit checks.
+The production clone URL is fixed. Isolated tests rewrite that exact URL through
+temporary Git configuration without changing the stored canonical `origin`.
 
 - [ ] **Step 3: Implement one validated repin path for update and rollback**
 
