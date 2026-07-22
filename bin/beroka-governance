@@ -231,7 +231,7 @@ tx_apply() {
       D) rm -f "$TX_REPO/$relative" || die GOVERNANCE_NOT_READY "Cannot delete target file: $relative" ;;
       *) die GOVERNANCE_NOT_READY "Unknown transaction operation: $operation" ;;
     esac
-  done <"$TX_DIR/manifest"
+  done <"$TX_DIR/manifest" || die GOVERNANCE_NOT_READY 'Cannot apply transaction manifest'
 }
 
 tx_abort() {
