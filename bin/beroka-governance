@@ -77,6 +77,16 @@ strip_managed_block() {
   ' "$input" >"$output" || die ENTRYPOINT_DRIFT "Malformed managed block in $input"
 }
 
+extract_managed_block() {
+  input=$1 output=$2
+  awk -v start="$START_MARKER" -v end="$END_MARKER" '
+    $0 == start { if (inside || found) exit 42; inside=1; found=1; print; next }
+    $0 == end { if (!inside) exit 42; print; inside=0; closed=1; next }
+    inside { print }
+    END { if (inside || !found || !closed) exit 42 }
+  ' "$input" >"$output"
+}
+
 tx_begin() {
   TX_REPO=$1
   TX_DIR=$(mktemp -d "${TMPDIR:-/tmp}/beroka-governance-tx.XXXXXX")
@@ -140,6 +150,12 @@ tx_abort() {
 
 tx_commit() { TX_COMMITTED=1; rm -rf "$TX_DIR"; TX_DIR=; trap - EXIT HUP INT TERM; }
 
+assert_detached_release() {
+  if git -C "$1" symbolic-ref -q HEAD >/dev/null 2>&1; then
+    die VERSION_MISMATCH 'Installed release is not detached'
+  fi
+}
+
 release_for_version() {
   version=$1
   printf '%s\n' "$version" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$' || die GOVERNANCE_NOT_READY "Invalid version: $version"
@@ -149,6 +165,7 @@ release_for_version() {
   [ "$(git -C "$RELEASE_DIR" cat-file -t "$version" 2>/dev/null)" = tag ] || die VERSION_MISMATCH 'Installed tag is not annotated'
   RELEASE_COMMIT=$(git -C "$RELEASE_DIR" rev-parse "$version^{commit}" 2>/dev/null) || die VERSION_MISMATCH "Installed tag is missing: $version"
   [ "$(git -C "$RELEASE_DIR" rev-parse HEAD)" = "$RELEASE_COMMIT" ] || die VERSION_MISMATCH 'Installed checkout is not at its tag commit'
+  assert_detached_release "$RELEASE_DIR"
   [ -z "$(git -C "$RELEASE_DIR" status --porcelain --untracked-files=all)" ] || die VERSION_MISMATCH 'Installed release contains local modifications'
 }
 
@@ -173,6 +190,7 @@ cmd_install() {
     head=$(git -C "$stage/checkout" rev-parse HEAD 2>/dev/null || true)
     [ -n "$tag_commit" ] && [ "$head" = "$tag_commit" ] || { rm -rf "$stage"; die VERSION_MISMATCH 'Cloned checkout differs from tag commit'; }
     [ -z "$(git -C "$stage/checkout" status --porcelain --untracked-files=all)" ] || { rm -rf "$stage"; die VERSION_MISMATCH 'Cloned release contains local modifications'; }
+    [ -f "$stage/checkout/bin/beroka-governance" ] || { rm -rf "$stage"; die GOVERNANCE_NOT_READY 'Release does not contain the CLI'; }
     if ! mv "$stage/checkout" "$target"; then
       rm -rf "$stage"
       die GOVERNANCE_NOT_READY 'Cannot install the release checkout'
@@ -265,7 +283,39 @@ verify_release() {
   tag_commit=$(git -C "$RELEASE_DIR" rev-parse "$LOCK_VERSION^{commit}" 2>/dev/null) || die VERSION_MISMATCH 'Installed tag is missing'
   [ "$tag_commit" = "$LOCK_COMMIT" ] || die VERSION_MISMATCH 'Tag commit differs from lock'
   [ "$(sed -n '1p' "$RELEASE_DIR/VERSION")" = "$LOCK_VERSION" ] || die VERSION_MISMATCH 'VERSION file differs from lock'
+  assert_detached_release "$RELEASE_DIR"
   [ -z "$(git -C "$RELEASE_DIR" status --porcelain --untracked-files=all)" ] || die VERSION_MISMATCH 'Installed release contains local modifications'
+}
+
+verify_entrypoints() {
+  entrypoints_repo=$1 entrypoints_release=$2
+  agents_template=$entrypoints_release/templates/agent-entrypoints/AGENTS.md
+  claude_template=$entrypoints_release/templates/agent-entrypoints/CLAUDE.md
+  cursor_template=$entrypoints_release/templates/agent-entrypoints/team-dev-ai-workflow.mdc
+  assert_valid_template "$agents_template"
+  assert_valid_template "$claude_template"
+  [ -f "$cursor_template" ] || die ENTRYPOINT_DRIFT "Missing Cursor rule in $entrypoints_release"
+  [ -f "$entrypoints_repo/AGENTS.md" ] || die ENTRYPOINT_DRIFT 'Missing AGENTS.md'
+  [ -f "$entrypoints_repo/.cursor/rules/beroka-governance.mdc" ] || die ENTRYPOINT_DRIFT 'Missing Cursor rule'
+  entrypoints_dir=$(mktemp -d "${TMPDIR:-/tmp}/beroka-governance-entrypoints.XXXXXX")
+  if ! extract_managed_block "$entrypoints_repo/AGENTS.md" "$entrypoints_dir/agents" || ! cmp -s "$entrypoints_dir/agents" "$agents_template"; then
+    rm -rf "$entrypoints_dir"
+    die ENTRYPOINT_DRIFT 'AGENTS.md managed block differs from the release'
+  fi
+  if grep -Fq "$START_MARKER" "$entrypoints_repo/CLAUDE.md" 2>/dev/null || grep -Fq "$END_MARKER" "$entrypoints_repo/CLAUDE.md" 2>/dev/null; then
+    if ! extract_managed_block "$entrypoints_repo/CLAUDE.md" "$entrypoints_dir/claude" || ! cmp -s "$entrypoints_dir/claude" "$claude_template"; then
+      rm -rf "$entrypoints_dir"
+      die ENTRYPOINT_DRIFT 'CLAUDE.md managed block differs from the release'
+    fi
+  elif ! grep -Fqx '@AGENTS.md' "$entrypoints_repo/CLAUDE.md" 2>/dev/null; then
+    rm -rf "$entrypoints_dir"
+    die ENTRYPOINT_DRIFT 'Missing managed CLAUDE.md content'
+  fi
+  if ! cmp -s "$entrypoints_repo/.cursor/rules/beroka-governance.mdc" "$cursor_template"; then
+    rm -rf "$entrypoints_dir"
+    die ENTRYPOINT_DRIFT 'Cursor rule differs from the release'
+  fi
+  rm -rf "$entrypoints_dir"
 }
 
 verify_registration() {
@@ -274,6 +324,7 @@ verify_registration() {
   origin_slug=$(normalize_origin "$REPO")
   [ "$origin_slug" = "$LOCK_REPOSITORY" ] || die REMOTE_MISMATCH "Origin $origin_slug differs from $LOCK_REPOSITORY"
   verify_release
+  verify_entrypoints "$REPO" "$RELEASE_DIR"
 }
 
 cmd_register() {

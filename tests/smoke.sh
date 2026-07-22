@@ -62,6 +62,11 @@ make_release_fixture() {
   git -C "$source_repo" add .
   git -C "$source_repo" commit -qm 'test: create v1.1 fixture'
   git -C "$source_repo" tag -a v1.1.0 -m 'v1.1.0'
+  rm -f "$source_repo/bin/beroka-governance"
+  printf 'v1.2.0\n' >"$source_repo/VERSION"
+  git -C "$source_repo" add .
+  git -C "$source_repo" commit -qm 'test: create malformed v1.2 fixture'
+  git -C "$source_repo" tag -a v1.2.0 -m 'v1.2.0'
   export BEROKA_GOV_REMOTE_URL=file://$source_repo
   release_dir=$XDG_DATA_HOME/beroka-ai-governance/releases/v1.0.0
   mkdir -p "$(dirname -- "$release_dir")"
@@ -167,9 +172,24 @@ if $CLI register "$dirty_repo" --version v1.0.0 >/dev/null 2>&1; then fail 'regi
 git -C "$register_repo" add .
 git -C "$register_repo" commit -qm 'test: commit v1.0 registration'
 
+absent_dry_hash=$(git -C "$register_repo" hash-object AGENTS.md CLAUDE.md .beroka-governance.lock .cursor/rules/beroka-governance.mdc)
+absent_dry_registry=$(cat "$XDG_CONFIG_HOME/beroka-ai-governance/registered-repos")
+absent_dry_output=$($CLI update "$register_repo" --to v1.2.0 --dry-run)
+assert_contains "$absent_dry_output" 'INSTALL v1.2.0'
+[ ! -e "$XDG_DATA_HOME/beroka-ai-governance/releases/v1.2.0" ] || fail 'absent dry-run installed a release'
+[ "$absent_dry_hash" = "$(git -C "$register_repo" hash-object AGENTS.md CLAUDE.md .beroka-governance.lock .cursor/rules/beroka-governance.mdc)" ] || fail 'absent dry-run changed entrypoints'
+[ "$absent_dry_registry" = "$(cat "$XDG_CONFIG_HOME/beroka-ai-governance/registered-repos")" ] || fail 'absent dry-run changed registry'
+
+if $CLI install v1.2.0 >/dev/null 2>&1; then fail 'install accepted a release without the CLI'; fi
+[ ! -e "$XDG_DATA_HOME/beroka-ai-governance/releases/v1.2.0" ] || fail 'malformed release left an installed checkout'
+
 $CLI install v1.1.0
 [ -d "$XDG_DATA_HOME/beroka-ai-governance/releases/v1.1.0/.git" ] || fail 'install did not create v1.1.0'
 [ -x "$BEROKA_GOV_BIN_DIR/beroka-governance" ] || fail 'install did not update the user CLI'
+release_v11=$XDG_DATA_HOME/beroka-ai-governance/releases/v1.1.0
+git -C "$release_v11" checkout -qb fixture-branch
+if $CLI install v1.1.0 >/dev/null 2>&1; then fail 'install accepted a non-detached release'; fi
+git -C "$release_v11" checkout -q --detach v1.1.0
 
 $CLI update "$register_repo" --to v1.1.0
 assert_contains "$(cat "$register_repo/.beroka-governance.lock")" 'VERSION=v1.1.0'
@@ -182,6 +202,31 @@ assert_contains "$(cat "$register_repo/.beroka-governance.lock")" 'VERSION=v1.0.
 assert_contains "$($CLI context "$register_repo")" 'PINNED ENTRYPOINT v1.0.0'
 git -C "$register_repo" add .
 git -C "$register_repo" commit -qm 'test: commit v1.0 rollback'
+
+cp "$register_repo/AGENTS.md" "$TMP_ROOT/register-agents.valid"
+awk '{ if ($0 == "## Beroka AI Governance") print "## Modified Governance"; else print }' "$register_repo/AGENTS.md" >"$TMP_ROOT/register-agents.drifted"
+cp "$TMP_ROOT/register-agents.drifted" "$register_repo/AGENTS.md"
+git -C "$register_repo" add AGENTS.md
+git -C "$register_repo" commit -qm 'test: drift managed agents'
+drift_hash=$(git -C "$register_repo" hash-object CLAUDE.md .beroka-governance.lock .cursor/rules/beroka-governance.mdc)
+if drift_output=$($CLI update "$register_repo" --to v1.1.0 2>&1); then fail 'update accepted modified managed content'; fi
+assert_contains "$drift_output" 'Result: ENTRYPOINT_DRIFT'
+[ "$drift_hash" = "$(git -C "$register_repo" hash-object CLAUDE.md .beroka-governance.lock .cursor/rules/beroka-governance.mdc)" ] || fail 'drifted update changed package files'
+cp "$TMP_ROOT/register-agents.valid" "$register_repo/AGENTS.md"
+git -C "$register_repo" add AGENTS.md
+git -C "$register_repo" commit -qm 'test: restore managed agents'
+
+rm -f "$register_repo/.cursor/rules/beroka-governance.mdc"
+git -C "$register_repo" add -A
+git -C "$register_repo" commit -qm 'test: delete managed cursor rule'
+before_deleted_rollback=$(git -C "$register_repo" hash-object .beroka-governance.lock)
+if deleted_output=$($CLI rollback "$register_repo" --to v1.0.0 2>&1); then fail 'rollback accepted deleted Cursor rule'; fi
+assert_contains "$deleted_output" 'Result: ENTRYPOINT_DRIFT'
+[ ! -e "$register_repo/.cursor/rules/beroka-governance.mdc" ] || fail 'deleted Cursor rule was recreated'
+[ "$before_deleted_rollback" = "$(git -C "$register_repo" hash-object .beroka-governance.lock)" ] || fail 'deleted-rule rollback changed the lock'
+cp "$source_repo/templates/agent-entrypoints/team-dev-ai-workflow.mdc" "$register_repo/.cursor/rules/beroka-governance.mdc"
+git -C "$register_repo" add .cursor/rules/beroka-governance.mdc
+git -C "$register_repo" commit -qm 'test: restore managed cursor rule'
 
 before_dry_update=$(git -C "$register_repo" hash-object .beroka-governance.lock)
 $CLI update "$register_repo" --to v1.1.0 --dry-run >/dev/null
