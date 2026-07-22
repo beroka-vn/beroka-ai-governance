@@ -1,8 +1,9 @@
 ---
-description: Apply the team Jira, GitHub, Confluence, ownership, and handoff workflow.
+description: Load the exact pinned Beroka Jira, GitHub, Confluence, ownership, and handoff workflow.
 globs:
 alwaysApply: true
 ---
 
-Follow @AGENTS.md. Before external work, use its routing to read the handbook,
-governance, workflow, and only the relevant task template.
+Follow @AGENTS.md. Run `beroka-governance context "$PWD"` before governed work.
+Continue only when it returns `Result: PASS`; then use `beroka-governance show`
+to load only the relevant document or template.

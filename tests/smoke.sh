@@ -101,3 +101,35 @@ if $CLI show "$consumer" ../../etc/passwd >/dev/null 2>&1; then
 fi
 
 printf 'PASS: read-only package validation\n'
+
+register_repo=$TMP_ROOT/register-consumer
+new_repo "$register_repo"
+git -C "$register_repo" remote add origin git@github.com:beroka-vn/register-backend.git
+printf '# Existing repository rules\n\nKeep this line.\n' >"$register_repo/AGENTS.md"
+printf '# Existing Claude rules\n\nKeep this Claude line.\n' >"$register_repo/CLAUDE.md"
+git -C "$register_repo" add AGENTS.md CLAUDE.md
+git -C "$register_repo" commit -qm 'test: add existing agent rules'
+
+$CLI register "$register_repo" --version v1.0.0
+first_hash=$(git -C "$register_repo" hash-object AGENTS.md CLAUDE.md .beroka-governance.lock .cursor/rules/beroka-governance.mdc)
+$CLI register "$register_repo" --version v1.0.0
+second_hash=$(git -C "$register_repo" hash-object AGENTS.md CLAUDE.md .beroka-governance.lock .cursor/rules/beroka-governance.mdc)
+[ "$first_hash" = "$second_hash" ] || fail 'repeated register changed managed files'
+assert_contains "$(cat "$register_repo/AGENTS.md")" 'Keep this line.'
+assert_contains "$(cat "$register_repo/CLAUDE.md")" 'Keep this Claude line.'
+assert_contains "$(cat "$register_repo/.beroka-governance.lock")" 'REPOSITORY=beroka-vn/register-backend'
+
+dry_repo=$TMP_ROOT/dry-consumer
+new_repo "$dry_repo"
+git -C "$dry_repo" remote add origin https://github.com/beroka-vn/dry-backend.git
+$CLI register "$dry_repo" --version v1.0.0 --dry-run >/dev/null
+[ ! -e "$dry_repo/.beroka-governance.lock" ] || fail 'dry-run created a lock'
+
+dirty_repo=$TMP_ROOT/dirty-consumer
+new_repo "$dirty_repo"
+git -C "$dirty_repo" remote add origin https://github.com/beroka-vn/dirty-backend.git
+printf 'uncommitted rules\n' >"$dirty_repo/AGENTS.md"
+if $CLI register "$dirty_repo" --version v1.0.0 >/dev/null 2>&1; then fail 'register accepted a dirty target entrypoint'; fi
+[ "$(cat "$dirty_repo/AGENTS.md")" = 'uncommitted rules' ] || fail 'failed preflight modified AGENTS.md'
+
+printf 'PASS: repository registration\n'
