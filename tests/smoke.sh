@@ -278,6 +278,31 @@ force_repo=$TMP_ROOT/force-consumer
 new_repo "$force_repo"
 git -C "$force_repo" remote add origin https://github.com/beroka-vn/force-backend.git
 $CLI register "$force_repo" --version v1.1.0
+
+external_rules=$TMP_ROOT/external-rules
+mkdir -p "$external_rules"
+cp "$source_repo/templates/agent-entrypoints/team-dev-ai-workflow.mdc" "$external_rules/beroka-governance.mdc"
+symlink_repo=$TMP_ROOT/symlink-consumer
+new_repo "$symlink_repo"
+git -C "$symlink_repo" remote add origin https://github.com/beroka-vn/symlink-backend.git
+$CLI register "$symlink_repo" --version v1.1.0
+rm -rf "$symlink_repo/.cursor/rules"
+ln -s "$external_rules" "$symlink_repo/.cursor/rules"
+if symlink_output=$($CLI unregister "$symlink_repo" 2>&1); then fail 'unregister accepted a managed-path symlink'; fi
+assert_contains "$symlink_output" 'Result: ENTRYPOINT_DRIFT'
+[ -L "$symlink_repo/.cursor/rules" ] || fail 'unregister replaced the managed-path symlink'
+[ -f "$external_rules/beroka-governance.mdc" ] || fail 'unregister deleted the external sentinel'
+
+create_repo=$TMP_ROOT/symlink-create-consumer
+new_repo "$create_repo"
+git -C "$create_repo" remote add origin https://github.com/beroka-vn/symlink-create-backend.git
+mkdir -p "$create_repo/.cursor"
+ln -s "$external_rules" "$create_repo/.cursor/rules"
+if create_output=$($CLI register "$create_repo" --version v1.1.0 2>&1); then fail 'register accepted a managed-path symlink'; fi
+assert_contains "$create_output" 'Result: ENTRYPOINT_DRIFT'
+[ ! -e "$create_repo/.beroka-governance.lock" ] || fail 'symlinked register wrote a lock'
+[ -f "$external_rules/beroka-governance.mdc" ] || fail 'register deleted the external sentinel'
+
 $CLI uninstall --force
 [ -e "$force_repo/.beroka-governance.lock" ] || fail 'force uninstall edited application repository'
 if $CLI doctor "$force_repo" >/dev/null 2>&1; then fail 'force-uninstalled repository did not fail closed'; fi

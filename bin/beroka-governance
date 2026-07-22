@@ -42,6 +42,22 @@ canonical_repo() {
   (CDPATH= cd -- "$root" && pwd -P)
 }
 
+assert_safe_managed_paths() {
+  repo=$1
+  for relative in AGENTS.md CLAUDE.md .beroka-governance.lock .cursor .cursor/rules .cursor/rules/beroka-governance.mdc; do
+    target=$repo/$relative
+    [ ! -L "$target" ] || die ENTRYPOINT_DRIFT "Managed path is a symlink: $relative"
+    parent=$(dirname "$target")
+    if [ -e "$parent" ]; then
+      physical_parent=$(CDPATH= cd -- "$parent" && pwd -P) || die ENTRYPOINT_DRIFT "Cannot resolve managed path parent: $relative"
+      case "$physical_parent" in
+        "$repo"|"$repo"/*) ;;
+        *) die ENTRYPOINT_DRIFT "Managed path escapes repository: $relative" ;;
+      esac
+    fi
+  done
+}
+
 normalize_origin() {
   repo=$1
   url=$(git -C "$repo" remote get-url origin 2>/dev/null) || die REMOTE_MISMATCH 'Git origin is missing'
@@ -339,6 +355,7 @@ verify_entrypoints() {
 
 verify_registration() {
   REPO=$(canonical_repo "$1")
+  assert_safe_managed_paths "$REPO"
   read_lock "$REPO"
   origin_slug=$(normalize_origin "$REPO")
   [ "$origin_slug" = "$LOCK_REPOSITORY" ] || die REMOTE_MISMATCH "Origin $origin_slug differs from $LOCK_REPOSITORY"
@@ -353,6 +370,7 @@ cmd_register() {
   [ -z "$dry_run" ] || [ "$dry_run" = --dry-run ] || { usage >&2; exit 2; }
 
   REPO=$(canonical_repo "$requested")
+  assert_safe_managed_paths "$REPO"
   repository=$(normalize_origin "$REPO")
   release_for_version "$version"
   agents_template=$RELEASE_DIR/templates/agent-entrypoints/AGENTS.md
