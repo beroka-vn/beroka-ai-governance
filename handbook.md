@@ -250,6 +250,76 @@ Tất cả manual gate bên dưới hiện là **UNVERIFIED**. Không được x
 smoke trên Linux là bằng chứng thay thế, không được claim `v1.0.0` đã release,
 và không được publish tag trước khi hoàn tất đúng thứ tự này:
 
+### Chạy unpublished candidate trong môi trường cô lập
+
+Sau khi implementation PR đã merge, coordinator đã chọn exact Backend pilot,
+và local `main` là commit cần kiểm tra, tạo annotated tag **chỉ ở local**. Không
+push tag trong bước này:
+
+```bash
+governance_repo=$(git rev-parse --show-toplevel)
+pilot_repo=/exact/path/from/coordinator
+release=v1.0.0
+
+git -C "$governance_repo" switch main
+git -C "$governance_repo" pull --ff-only origin main
+git -C "$governance_repo" tag -a "$release" -m 'Beroka AI governance package v1.0.0'
+```
+
+Tạo một HOME/XDG/PATH riêng cho candidate. Git rewrite này chỉ nằm trong
+`$candidate_home/.gitconfig`; nó chuyển exact canonical HTTPS URL sang local
+checkout để `install` kiểm tra unpublished tag mà vẫn lưu canonical `origin`:
+
+```bash
+original_home=$HOME
+original_path=$PATH
+candidate_root=$(mktemp -d "${TMPDIR:-/tmp}/beroka-governance-candidate.XXXXXX")
+candidate_home=$candidate_root/home
+canonical_url=https://github.com/beroka-vn/beroka-ai-governance.git
+
+export HOME=$candidate_home
+export XDG_DATA_HOME=$candidate_root/data
+export XDG_CONFIG_HOME=$candidate_root/config
+export BEROKA_GOV_BIN_DIR=$candidate_root/bin
+export PATH=$BEROKA_GOV_BIN_DIR:$original_path
+mkdir -p "$HOME" "$XDG_DATA_HOME" "$XDG_CONFIG_HOME" "$BEROKA_GOV_BIN_DIR"
+
+git config --global url."file://$governance_repo".insteadOf "$canonical_url"
+sh "$governance_repo/bin/beroka-governance" install "$release"
+git config --global --unset-all url."file://$governance_repo".insteadOf
+
+beroka-governance register "$pilot_repo" --version "$release"
+git -C "$pilot_repo" diff -- \
+  .beroka-governance.lock AGENTS.md CLAUDE.md \
+  .cursor/rules/beroka-governance.mdc
+beroka-governance doctor "$pilot_repo"
+```
+
+Phải remove Git rewrite ngay sau `install`, trước `register`/`doctor`. Nếu
+`install` fail, vẫn chạy lệnh `git config --global --unset-all ...` ở trên trước
+khi điều tra hoặc retry. Không export hoặc dùng CLI remote override.
+
+Thoát hoàn toàn các process client đang chạy, rồi launch từng client từ chính
+shell đang giữ candidate environment để process mới kế thừa HOME/XDG/PATH:
+
+```bash
+(cd "$pilot_repo" && claude)
+code --new-window "$pilot_repo"       # mở VS Code và dùng Codex extension
+cursor --new-window "$pilot_repo"
+```
+
+Vì candidate HOME/XDG là cô lập, Claude Code, VS Code/Codex extension và Cursor
+có thể yêu cầu login và connector authentication riêng. Ghi evidence trong
+fresh session của từng client; không copy credential từ HOME thật vào candidate.
+Sau khi evidence hoàn tất, restore shell và xóa environment cô lập:
+
+```bash
+export HOME=$original_home
+export PATH=$original_path
+unset XDG_DATA_HOME XDG_CONFIG_HOME BEROKA_GOV_BIN_DIR
+rm -rf "$candidate_root"
+```
+
 - [ ] **UNVERIFIED** — Coordinator chỉ định một exact Backend pilot repository
       và exact reviewed release-candidate commit; Frontend chưa được register.
 - [ ] **UNVERIFIED** — Tạo annotated candidate tag chỉ ở local trên đúng commit
