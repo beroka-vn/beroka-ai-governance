@@ -1,6 +1,6 @@
 # Beroka AI Governance Package Design
 
-Status: Draft PR for owner review
+Status: Approved — V1 implementation in review
 
 Approved design discussion: 2026-07-22
 

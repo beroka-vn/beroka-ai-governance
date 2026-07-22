@@ -34,23 +34,78 @@ và hỏi developer; không tự chọn từ organization list.
 
 ## Kích hoạt trong repository
 
-Bundle runtime gồm `handbook.md`, `governance.md`, `workflow.md` và `templates/`.
-Không rollout `README.md`, `examples/`, `plans/` hoặc `specs/` như agent rules.
+Package chỉ áp dụng cho repository được đăng ký rõ ràng. V1 pilot chỉ đăng ký
+một Backend repository do coordinator chỉ định; **không đăng ký Frontend
+repository**. Hỗ trợ Linux, macOS và Windows qua WSL; native Windows PowerShell
+không thuộc V1.
 
-Sau khi copy bundle vào `docs/team-dev-ai-workflow/` của repository đích, cài
-entrypoint tương ứng:
+### Điều kiện trước khi cài
 
-| Client | Template nguồn | Vị trí trong repository đích |
-| --- | --- | --- |
-| Codex | `templates/agent-entrypoints/AGENTS.md` | Merge vào root `AGENTS.md` |
-| Claude Code | `templates/agent-entrypoints/CLAUDE.md` | Root `CLAUDE.md` |
-| Cursor | `templates/agent-entrypoints/team-dev-ai-workflow.mdc` | `.cursor/rules/team-dev-ai-workflow.mdc` |
+- Có Git, POSIX shell và quyền Git/GitHub đã authenticate để clone private
+  repository; package không chứa credentials.
+- `$HOME/.local/bin` phải có trong `PATH` sau khi `install` để gọi
+  `beroka-governance`.
+- Dùng một annotated SemVer tag đã được review và publish. `v1.0.0` chưa được
+  publish cho đến khi release gate hoàn tất và coordinator cho phép.
+- Repository đích là Git repository có `origin` GitHub chính xác. Review diff
+  của repository đích bằng PR trước khi merge; không đăng ký trực tiếp vào
+  production branch chỉ để thử nghiệm.
 
-Không overwrite repository rules đang có. Repository-specific safety,
-architecture và validation rules được giữ nguyên; entrypoint này chỉ thêm Jira,
-GitHub và Confluence workflow. Các files rollout phải được review và track bằng
-PR trong repository đích. Folder untracked hiện tại chỉ là design workspace,
-không phải distribution mechanism cho team.
+### Bootstrap và install
+
+Bootstrap checkout chỉ là tạm thời. `install` tạo local pinned checkout và
+user-level CLI; không sửa application repository.
+
+```bash
+release=v1.0.0
+bootstrap_dir=$(mktemp -d "${TMPDIR:-/tmp}/beroka-governance-bootstrap.XXXXXX")
+git clone --depth 1 --single-branch --branch "$release" \
+  https://github.com/beroka-vn/beroka-ai-governance.git \
+  "$bootstrap_dir/repo"
+sh "$bootstrap_dir/repo/bin/beroka-governance" install "$release"
+beroka-governance doctor /srv/beroka/backend
+```
+
+`doctor` trước khi register sẽ trả `REPOSITORY_NOT_REGISTERED`; đó là expected.
+Sau khi install thành công, có thể xóa bootstrap checkout bằng
+`rm -rf "$bootstrap_dir"`.
+
+### Register, Doctor, update, rollback và removal
+
+```bash
+repo=/srv/beroka/backend
+release=v1.0.0
+
+beroka-governance register "$repo" --version "$release"
+git -C "$repo" diff -- .beroka-governance.lock AGENTS.md CLAUDE.md .cursor/rules/beroka-governance.mdc
+beroka-governance doctor "$repo"
+
+beroka-governance update "$repo" --to v1.1.0
+beroka-governance rollback "$repo" --to "$release"
+beroka-governance unregister "$repo"
+beroka-governance uninstall
+```
+
+`register`, `update`, `rollback` và `unregister` hỗ trợ `--dry-run`. Review và
+merge application-repository diff trước khi package version mới có hiệu lực,
+sau đó mở **fresh agent session**. `unregister` chỉ xóa managed markers, lock và
+Cursor rule; `uninstall` chỉ xóa local package khi registry không còn repository
+đăng ký. `uninstall --force` cũng không sửa application repositories.
+
+### Lock và thin entrypoints
+
+Register tạo đúng các artifact package-owned sau, không copy toàn bộ runtime hay
+templates vào application repository:
+
+- `.beroka-governance.lock`: source, `REPOSITORY`, pinned `VERSION` và commit SHA;
+- managed block trong root `AGENTS.md`;
+- managed block hoặc `@AGENTS.md` import trong root `CLAUDE.md`; và
+- `.cursor/rules/beroka-governance.mdc`.
+
+Entrypoints mỏng (thin) chỉ route agent tới release đã pin. Khi mở session mới,
+Codex, Claude Code hoặc Cursor đọc entrypoint theo client, xác minh lock và
+`origin`, rồi chạy `beroka-governance context` để load runtime English từ đúng
+release. Repository chưa register không được package áp dụng.
 
 ## Quyền tối thiểu
 
@@ -138,9 +193,12 @@ cursor-agent mcp list-tools github
 cursor-agent mcp list-tools atlassian
 ```
 
-## Preflight bắt buộc
+## Preflight connector bắt buộc
 
-Agent chạy read-only preflight trước workflow:
+Sau khi `beroka-governance doctor <repo>` trả `Result: PASS`, agent chạy
+read-only connector preflight trước workflow. Package install/register không
+authenticate GitHub, Jira hoặc Confluence connector: developer phải complete
+OAuth/connector authentication riêng trên từng client.
 
 1. Xác định authenticated GitHub và Atlassian account.
 2. Đọc metadata của Backend repository; nếu request thuộc FE, resolve và đọc
@@ -185,10 +243,12 @@ tại. Sau khi developer sửa kết nối, agent phải chạy lại preflight.
 
 ## Deployment checklist
 
-- [ ] Runtime bundle đã được copy vào repository đích và track bằng reviewed PR.
-- [ ] Codex/Claude Code/Cursor entrypoint đã được merge/copy đúng vị trí.
-- [ ] Agent session mới xác nhận đã đọc `handbook.md`, `governance.md` và
-      `workflow.md` trước external work.
+- [ ] Một Backend pilot repository chính xác đã được coordinator chỉ định;
+      Frontend repository chưa được register.
+- [ ] Reviewed annotated tag đã được publish và `install` đã pass trên client.
+- [ ] `register` application-repository diff đã được review và merge bằng PR.
+- [ ] Fresh agent session xác nhận lock/version đã pin và entrypoint client đã load.
+- [ ] `beroka-governance doctor <repo>` trả `Result: PASS`.
 - [ ] GitHub Backend và exact Frontend repository routing đã được xác nhận.
 - [ ] Jira có Epic/Feature/Story/Task/Bug, backlog được enable và status map đúng
       trên `BB/34` và `BF/35`.
@@ -200,24 +260,18 @@ tại. Sau khi developer sửa kết nối, agent phải chạy lại preflight.
       trong repository.
 - [ ] Một pilot task thật đã pass các scenarios bên dưới trước team-wide rollout.
 
-Khi shared rules thay đổi, cập nhật BE và FE bằng paired reviewed PRs. Chỉ thêm
-automation đồng bộ nếu manual drift thực sự lặp lại.
+Chỉ đăng ký thêm repository sau Backend pilot và release gate được coordinator
+review. Không thêm automation đồng bộ nếu manual drift chưa thực sự lặp lại.
 
 ## Rollout pilot
 
-Dùng một task thật, nhỏ; không tạo fake issue/page chỉ để test. Pilot đạt khi:
-
-1. planning-only trả draft và không external write;
-2. BF Epic creation quét BB candidates, chờ confirmation và tạo kèm một initial
-   `Feature/Story/Task/Bug` visible trong backlog;
-3. pure-FE item trả `NO_BACKEND_DEPENDENCY` và không tạo BB link/record;
-4. confirmed BE dependency chưa có counterpart trả `MAPPING_INCOMPLETE`, không
-   đoán hoặc tự tạo BB item;
-5. Jira assignee, parents, `Relates`/`Blocks`, Capability ID, Hub row và
-   documentation hierarchy đều read back đúng khi applicable.
-
-Ghi client, authenticated accounts, exact records, commands/checks và kết quả.
-Chỉ mở rollout cho team sau khi blocker của pilot đã được xử lý.
+Dùng một task Backend thật, nhỏ; không tạo fake issue/page chỉ để test. Ghi
+client, authenticated accounts, exact repository, reviewed PR, pinned tag,
+commands/checks và kết quả. Pilot chỉ đạt khi Codex, Claude Code và Cursor đều
+load entrypoint/lock release đã pin trong session mới, `doctor` trả
+`Result: PASS`, và connector preflight đạt cho action thực tế. Không register
+Frontend hoặc mở team-wide rollout trước khi coordinator xử lý blocker và cho
+phép release gate.
 
 ## Troubleshooting nhanh
 
@@ -229,6 +283,18 @@ Chỉ mở rollout cho team sau khi blocker của pilot đã được xử lý.
 | GitHub `401`/`403` | PAT hết hạn hoặc thiếu scope; không tăng scope nếu chưa cần |
 | Jira có nhưng Confluence không có | Atlassian product access và space permission riêng |
 | Kết quả thuộc nhầm team | Authenticated identity và target URL/project/space |
+
+CLI fail closed với bảy stable result codes sau:
+
+| Result | Ý nghĩa / xử lý |
+| --- | --- |
+| `GOVERNANCE_NOT_READY` | Thiếu release hoặc registration hợp lệ; cài release đúng hoặc sửa lock. |
+| `GOVERNANCE_ACCESS_DENIED` | Không đọc được central private repository; kiểm tra Git/GitHub access, không thêm credential vào repo. |
+| `REPOSITORY_NOT_REGISTERED` | Thiếu lock/managed entrypoint hợp lệ; register đúng repository qua reviewed PR. |
+| `REMOTE_MISMATCH` | Git `origin` không khớp `REPOSITORY` trong lock; dùng đúng clone hoặc sửa qua lifecycle CLI. |
+| `VERSION_MISMATCH` | Tag, commit hoặc installed release khác lock; install/pin lại reviewed version. |
+| `ENTRYPOINT_DRIFT` | Managed content bị sửa ngoài CLI; restore/reconcile qua reviewed CLI lifecycle. |
+| `WORKTREE_CONFLICT` | Target entrypoint có uncommitted changes; review, commit hoặc stash thay đổi trước khi chạy lại. |
 
 ## Tài liệu chính thức
 
