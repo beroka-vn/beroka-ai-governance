@@ -1,0 +1,8 @@
+---
+description: Apply the team Jira, GitHub, Confluence, ownership, and handoff workflow.
+globs:
+alwaysApply: true
+---
+
+Follow @AGENTS.md. Before external work, use its routing to read the handbook,
+governance, workflow, and only the relevant task template.
