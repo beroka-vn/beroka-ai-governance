@@ -90,6 +90,12 @@ assert_contains "$show_output" 'GOVERNANCE v1.0.0'
 template_output=$($CLI show "$consumer" template jira-confluence)
 assert_contains "$template_output" 'JIRA TEMPLATE v1.0.0'
 
+git -C "$release_dir" tag -d v1.0.0
+git -C "$release_dir" tag v1.0.0 "$RELEASE_COMMIT"
+if $CLI doctor "$consumer" >/dev/null 2>&1; then
+  fail 'doctor accepted lightweight tag'
+fi
+
 if $CLI show "$consumer" ../../etc/passwd >/dev/null 2>&1; then
   fail 'show accepted path traversal'
 fi
