@@ -37,6 +37,20 @@ assert_not_contains() {
   esac
 }
 
+FIX_WAVE_FAILURES=0
+
+fix_wave_fail() {
+  printf 'RED: %s\n' "$*" >&2
+  FIX_WAVE_FAILURES=$((FIX_WAVE_FAILURES + 1))
+}
+
+fix_wave_contains() {
+  case "$1" in
+    *"$2"*) ;;
+    *) fix_wave_fail "expected [$2] in [$1]" ;;
+  esac
+}
+
 cat >"$FAKE_BIN/sleep" <<'EOF'
 #!/bin/sh
 exit 0
@@ -129,32 +143,51 @@ cat >"$FAKE_BIN/claude" <<'EOF'
 set -eu
 printf 'claude %s\n' "$*" >>"$CALLS"
 case "$*" in
-  '--version') printf '%s\n' 'claude 1.2.3' ;;
-  'mcp login --help') ;;
+  '--version') printf '%s\n' '1.2.3 (Claude Code)' ;;
+  'mcp add --help'|'mcp get --help'|'mcp list --help') ;;
   'mcp get atlassian')
     [ -f "$XDG_CONFIG_HOME/fake-claude-configured" ] || exit 1
-    printf '%s\n' 'atlassian: https://mcp.atlassian.com/v1/mcp/authv2'
+    printf '%s\n' \
+      'Name: atlassian' \
+      'URL: https://mcp.atlassian.com/v1/mcp/authv2'
     ;;
-  'mcp login atlassian')
+  '')
     printf '%s\n' healthy >"$XDG_CONFIG_HOME/fake-claude-health"
     ;;
   'mcp list')
     case "$(sed -n '1p' "$XDG_CONFIG_HOME/fake-claude-health" 2>/dev/null || :)" in
-      healthy) printf '%s\n' 'atlassian: Connected' ;;
+      healthy)
+        printf '%s\n' \
+          'github: https://example.invalid/mcp (HTTP) - ✓ Connected' \
+          'atlassian: https://mcp.atlassian.com/v1/mcp/authv2 (HTTP) - ✓ Connected'
+        ;;
+      auth-needs-realistic)
+        printf '%s\n' \
+          'atlassian-helper: https://example.invalid/mcp (HTTP) - ✓ Connected' \
+          'atlassian: https://mcp.atlassian.com/v1/mcp/authv2 (HTTP) - ! Needs authentication'
+        ;;
       auth-required-multiserver)
         printf '%s\n' \
-          'atlassian: Authentication required' \
-          'github: Connected'
+          'atlassian: https://mcp.atlassian.com/v1/mcp/authv2 (HTTP) - Authentication required' \
+          'github: https://example.invalid/mcp (HTTP) - ✓ Connected'
         ;;
       auth-required-helper)
         printf '%s\n' \
-          'atlassian-helper: Connected' \
-          'atlassian: Authentication required'
+          'atlassian-helper: https://example.invalid/mcp (HTTP) - ✓ Connected' \
+          'atlassian: https://mcp.atlassian.com/v1/mcp/authv2 (HTTP) - ! Needs authentication'
         ;;
-      not-connected) printf '%s\n' 'atlassian: Not Connected' ;;
-      disconnected) printf '%s\n' 'atlassian: Disconnected' ;;
-      auth-required|'') printf '%s\n' 'atlassian: Authentication required' ;;
-      *) printf '%s\n' 'atlassian: Failed' ;;
+      not-connected)
+        printf '%s\n' 'atlassian: https://mcp.atlassian.com/v1/mcp/authv2 (HTTP) - ✗ Not connected'
+        ;;
+      disconnected)
+        printf '%s\n' 'atlassian: https://mcp.atlassian.com/v1/mcp/authv2 (HTTP) - Disconnected'
+        ;;
+      auth-required|'')
+        printf '%s\n' 'atlassian: https://mcp.atlassian.com/v1/mcp/authv2 (HTTP) - ! Needs authentication'
+        ;;
+      *)
+        printf '%s\n' 'atlassian: https://mcp.atlassian.com/v1/mcp/authv2 (HTTP) - Failed'
+        ;;
     esac
     ;;
   *) exit 1 ;;
@@ -227,7 +260,7 @@ git config --global \
 source_repo=$TEST_ROOT/governance-source
 new_repo "$source_repo"
 mkdir -p "$source_repo/bin" "$source_repo/templates"
-cp "$ROOT/VERSION" "$source_repo/VERSION"
+printf '%s\n' v1.1.0 >"$source_repo/VERSION"
 cp "$CLI" "$source_repo/bin/beroka-governance"
 chmod 755 "$source_repo/bin/beroka-governance"
 cp -R "$ROOT/runtime" "$source_repo/runtime"
@@ -238,14 +271,14 @@ cp "$ROOT/governance.md" "$ROOT/handbook.md" "$ROOT/workflow.md" "$source_repo/"
 cp -R "$ROOT/templates/." "$source_repo/templates/"
 git -C "$source_repo" add .
 git -C "$source_repo" commit -qm 'test: create governance release'
-git -C "$source_repo" tag -a v1.0.0 -m v1.0.0
+git -C "$source_repo" tag -a v1.1.0 -m v1.1.0
 
 git config --global \
   url."file://$source_repo".insteadOf \
   https://github.com/beroka-vn/beroka-ai-governance.git
-release_dir=$XDG_DATA_HOME/beroka-ai-governance/releases/v1.0.0
+release_dir=$XDG_DATA_HOME/beroka-ai-governance/releases/v1.1.0
 mkdir -p "$(dirname -- "$release_dir")"
-git clone -q --depth 1 --branch v1.0.0 \
+git clone -q --depth 1 --branch v1.1.0 \
   https://github.com/beroka-vn/beroka-ai-governance.git "$release_dir"
 
 consumer=$TEST_ROOT/consumer
@@ -254,7 +287,7 @@ git -C "$consumer" remote add upstream \
   https://github.com/beroka-vn/routing-consumer.git
 git -C "$consumer" fetch -q upstream trunk
 git -C "$consumer" switch -qc trunk FETCH_HEAD
-$CLI register "$consumer" --version v1.0.0
+$CLI register "$consumer" --version v1.1.0
 git -C "$consumer" add .
 git -C "$consumer" commit -qm 'test: register governance'
 cp "$consumer/.beroka-governance.lock" "$remote_work/.beroka-governance.lock"
@@ -336,6 +369,38 @@ esac
 : >"$XDG_CONFIG_HOME/fake-codex-configured"
 printf '%s\n' healthy-all >"$XDG_CONFIG_HOME/fake-codex-health"
 : >"$CALLS"
+if output=$($CLI preflight "$consumer" \
+  --client codex --operation jira-write --non-interactive 2>&1)
+then
+  fix_wave_fail 'empty Codex tool schemas supplied semantic capability'
+else
+  fix_wave_contains "$output" 'Capability state: UNKNOWN'
+  fix_wave_contains "$output" 'Result: CONNECTOR_CAPABILITY_REQUIRED'
+fi
+
+mkdir -p "$HOME/.cursor"
+printf '%s\n' \
+  '{"mcpServers":{"atlassian":{"url":"https://mcp.atlassian.com/v1/mcp/authv2"}}}' \
+  >"$HOME/.cursor/mcp.json"
+printf '%s\n' healthy >"$XDG_CONFIG_HOME/fake-cursor-health"
+if output=$($CLI preflight "$consumer" \
+  --client cursor --operation jira-write --non-interactive 2>&1)
+then
+  fix_wave_fail 'Cursor free-text tool names supplied semantic capability'
+else
+  fix_wave_contains "$output" 'Capability state: UNKNOWN'
+  fix_wave_contains "$output" 'Result: CONNECTOR_CAPABILITY_REQUIRED'
+fi
+
+printf '%s\n' \
+  'codex	1.0.0	https://mcp.atlassian.com/v1/mcp/authv2	createConfluencePage,createJiraIssue,getConfluencePage,getJiraIssue	2026-07-23	jira-issue-write	SUPPORTED' \
+  'codex	1.0.0	https://mcp.atlassian.com/v1/mcp/authv2	createConfluencePage,createJiraIssue,getConfluencePage,getJiraIssue	2026-07-23	confluence-page-parent-write	SUPPORTED' \
+  'codex	1.0.0	https://mcp.atlassian.com/v1/mcp/authv2	createJiraIssue,getJiraIssue	2026-07-23	jira-issue-write	SUPPORTED' \
+  'cursor	1.0.0	https://mcp.atlassian.com/v1/mcp/authv2	createJiraIssue,getJiraIssue	2026-07-23	jira-issue-write	SUPPORTED' \
+  >>"$source_repo/runtime/compatibility/atlassian.tsv"
+pin_test_release v1.1.1
+
+: >"$CALLS"
 output=$($CLI preflight "$consumer" \
   --client codex --operation jira-write --non-interactive)
 assert_contains "$output" 'Jira project: APP'
@@ -360,10 +425,6 @@ assert_contains "$output" 'Confluence root type: page'
 assert_contains "$output" 'Capability: confluence-page-parent-write'
 assert_contains "$output" 'Capability state: SUPPORTED'
 
-mkdir -p "$HOME/.cursor"
-printf '%s\n' \
-  '{"mcpServers":{"atlassian":{"url":"https://mcp.atlassian.com/v1/mcp/authv2"}}}' \
-  >"$HOME/.cursor/mcp.json"
 printf '%s\n' healthy >"$XDG_CONFIG_HOME/fake-cursor-health"
 output=$($CLI preflight "$consumer" \
   --client cursor --operation jira-write --non-interactive)
@@ -548,6 +609,28 @@ assert_contains "$output" 'Routing: ROUTING_CHANGE_PENDING'
 git -C "$consumer" reset -q HEAD -- .beroka-governance.conf
 git -C "$consumer" checkout -- .beroka-governance.conf
 
+git -C "$consumer" update-index --skip-worktree .beroka-governance.conf
+printf '%s\n' 'PROFILE=hidden-by-skip-worktree' \
+  >"$consumer/.beroka-governance.conf"
+skip_status=0
+skip_output=$($CLI context "$consumer") || skip_status=$?
+git -C "$consumer" update-index --no-skip-worktree .beroka-governance.conf
+git -C "$consumer" checkout -- .beroka-governance.conf
+[ "$skip_status" -eq 0 ] ||
+  fix_wave_fail 'context failed while checking skip-worktree bytes'
+fix_wave_contains "$skip_output" 'Routing: ROUTING_CHANGE_PENDING'
+
+git -C "$consumer" update-index --assume-unchanged .beroka-governance.conf
+printf '%s\n' 'PROFILE=hidden-by-assume-unchanged' \
+  >"$consumer/.beroka-governance.conf"
+assume_status=0
+assume_output=$($CLI context "$consumer") || assume_status=$?
+git -C "$consumer" update-index --no-assume-unchanged .beroka-governance.conf
+git -C "$consumer" checkout -- .beroka-governance.conf
+[ "$assume_status" -eq 0 ] ||
+  fix_wave_fail 'context failed while checking assume-unchanged bytes'
+fix_wave_contains "$assume_output" 'Routing: ROUTING_CHANGE_PENDING'
+
 git -C "$consumer" switch -qc routing-task
 printf '%s\n' 'PROFILE=task-branch' >"$consumer/.beroka-governance.conf"
 git -C "$consumer" add .beroka-governance.conf
@@ -589,13 +672,20 @@ INTEGRATION_PROFILE=beroka-be-fe
 CROSS_REPO_POLICY=profile-controlled'
 publish_routing "$profile_controlled_config"
 printf '%s\n' healthy-all >"$XDG_CONFIG_HOME/fake-codex-health"
-output=$($CLI preflight "$consumer" \
-  --client codex --operation cross-repo-write --non-interactive)
-assert_contains "$output" 'Integration profile: beroka-be-fe'
-assert_contains "$output" 'Cross-repository policy: profile-controlled'
-assert_contains "$output" 'Required next preflight: jira-write|confluence-write'
-assert_not_contains "$output" 'Capability state: SUPPORTED'
+: >"$CALLS"
+if output=$($CLI preflight "$consumer" \
+  --client codex --operation cross-repo-write --non-interactive 2>&1)
+then
+  fix_wave_fail 'profile-controlled cross-repo write passed without exact mapping'
+else
+  fix_wave_contains "$output" 'Result: ROUTING_REQUIRED'
+  fix_wave_contains "$output" \
+    'Centrally reviewed exact counterpart and workflow mapping are required'
+fi
+[ ! -s "$CALLS" ] ||
+  fix_wave_fail 'cross-repo routing failure inspected a client'
 
+: >"$CALLS"
 publish_routing 'SCHEMA_VERSION=1
 PROFILE=standalone
 JIRA_PROJECT_KEY=APP
@@ -607,6 +697,7 @@ then
   fail 'cross-repo write passed standalone routing'
 fi
 assert_contains "$output" 'Result: ROUTING_REQUIRED'
+[ ! -s "$CALLS" ] || fail 'standalone cross-repo routing inspected a client'
 
 : >"$CALLS"
 publish_routing 'SCHEMA_VERSION=1
@@ -656,11 +747,19 @@ printf '%s\n' \
   'claude	1.2.3	https://mcp.atlassian.com/v1/mcp/authv2	UNAVAILABLE	2026-07-23	confluence-folder-parent-write	SUPPORTED' \
   'codex	1.0.0	https://mcp.atlassian.com/v1/mcp/authv2	getJiraIssue	2026-07-23	jira-issue-write	SUPPORTED' \
   >>"$source_repo/runtime/compatibility/atlassian.tsv"
-pin_test_release v1.0.1
+pin_test_release v1.1.2
 output=$($CLI preflight "$consumer" \
   --client claude --operation confluence-write --non-interactive)
 assert_contains "$output" 'Capability state: SUPPORTED'
 assert_contains "$output" 'Result: PASS'
+
+if output=$($CLI preflight "$consumer" \
+  --client claude --operation confluence-write --non-interactive 2>&1)
+then
+  fix_wave_contains "$output" 'Capability state: SUPPORTED'
+else
+  fix_wave_fail 'Claude Code parenthesized version did not match compatibility evidence'
+fi
 
 printf '%s\n' healthy-read-only >"$XDG_CONFIG_HOME/fake-codex-health"
 if output=$($CLI preflight "$consumer" \
@@ -673,7 +772,7 @@ assert_contains "$output" 'Capability state: UNSUPPORTED'
 printf '%s\n' \
   'claude	1.2.3	https://mcp.atlassian.com/v1/mcp/authv2	UNAVAILABLE	2026-07-23	confluence-folder-parent-write	SUPPORTED' \
   >>"$source_repo/runtime/compatibility/atlassian.tsv"
-pin_test_release v1.0.2
+pin_test_release v1.1.3
 if output=$($CLI preflight "$consumer" \
   --client claude --operation confluence-write --non-interactive 2>&1)
 then
@@ -683,7 +782,7 @@ assert_contains "$output" 'Capability state: UNKNOWN'
 
 sed -i '$d' "$source_repo/runtime/compatibility/atlassian.tsv"
 printf '%s\n' malformed >>"$source_repo/runtime/compatibility/atlassian.tsv"
-pin_test_release v1.0.3
+pin_test_release v1.1.4
 if output=$($CLI preflight "$consumer" \
   --client claude --operation confluence-write --non-interactive 2>&1)
 then
@@ -693,7 +792,7 @@ assert_contains "$output" 'Capability state: UNKNOWN'
 
 sed -i '1s/schema=1/schema=2/; /malformed/d' \
   "$source_repo/runtime/compatibility/atlassian.tsv"
-pin_test_release v1.0.4
+pin_test_release v1.1.5
 if output=$($CLI preflight "$consumer" \
   --client claude --operation confluence-write --non-interactive 2>&1)
 then
@@ -702,7 +801,7 @@ fi
 assert_contains "$output" 'Result: VERSION_MISMATCH'
 
 sed -i '1d' "$source_repo/runtime/compatibility/atlassian.tsv"
-pin_test_release v1.0.5
+pin_test_release v1.1.6
 if output=$($CLI preflight "$consumer" \
   --client claude --operation confluence-write --non-interactive 2>&1)
 then
@@ -781,9 +880,22 @@ grep -F 'central governance onboarding project' "$ROOT/handbook.md" >/dev/null |
   fail 'handbook does not document bootstrap issue provenance'
 grep -F 'CONNECTOR_CAPABILITY_REQUIRED' "$ROOT/handbook.md" >/dev/null ||
   fail 'handbook does not document capability remediation'
-grep -F 'INTEGRATION_PROFILE=none không trigger BE–FE hoặc cross-repository discovery' "$ROOT/handbook.md" >/dev/null ||
+grep -F '`INTEGRATION_PROFILE=none` không trigger BE–FE hoặc cross-repository' "$ROOT/handbook.md" >/dev/null ||
   fail 'handbook does not document standalone preflight scope'
 grep -F 'Read access chỉ cần cho selected profile, requested operation và selected integration profile' "$ROOT/handbook.md" >/dev/null ||
   fail 'handbook does not scope team permissions'
 grep -F 'BE–FE targets chỉ áp dụng khi reviewed beroka-be-fe integration profile được chọn và operation yêu cầu' "$ROOT/handbook.md" >/dev/null ||
   fail 'handbook does not scope required reads'
+
+[ "$(sed -n '1p' "$ROOT/VERSION")" = v1.1.0 ] ||
+  fix_wave_fail 'root VERSION does not select v1.1.0'
+grep -F 'release=v1.1.0' "$ROOT/README.md" >/dev/null ||
+  fix_wave_fail 'README does not select v1.1.0'
+grep -F 'release=v1.1.0' "$ROOT/handbook.md" >/dev/null ||
+  fix_wave_fail 'handbook does not select v1.1.0'
+[ "$(git -C "$ROOT" rev-parse refs/tags/v1.0.0 2>/dev/null)" = \
+  1f2db6bd75cf9d9a68d501c351fb2455448e04e1 ] ||
+  fix_wave_fail 'real v1.0.0 tag object changed'
+
+[ "$FIX_WAVE_FAILURES" -eq 0 ] ||
+  fail "$FIX_WAVE_FAILURES fix-wave regressions remain"

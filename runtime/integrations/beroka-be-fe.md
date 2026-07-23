@@ -9,3 +9,6 @@
   evidence plus developer confirmation where the mapping is not unique.
 - Cross-repository writes require `CROSS_REPO_POLICY=profile-controlled`.
 - `explicit-only` narrows this pack and disables automatic counterpart use.
+- The current central inventory has no exact counterpart/workflow mapping, so
+  every current `cross-repo-write` returns `ROUTING_REQUIRED` before client
+  inspection.

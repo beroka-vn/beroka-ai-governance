@@ -42,6 +42,27 @@ assert_not_contains() {
   esac
 }
 
+FIX_WAVE_FAILURES=0
+
+fix_wave_fail() {
+  printf 'RED: %s\n' "$*" >&2
+  FIX_WAVE_FAILURES=$((FIX_WAVE_FAILURES + 1))
+}
+
+fix_wave_contains() {
+  case "$1" in
+    *"$2"*) ;;
+    *) fix_wave_fail "expected [$2] in [$1]" ;;
+  esac
+}
+
+fix_wave_not_contains() {
+  case "$1" in
+    *"$2"*) fix_wave_fail "did not expect [$2] in [$1]" ;;
+    *) ;;
+  esac
+}
+
 if output=$($CLI setup-connectors --client codex --non-interactive 2>&1); then
   fail 'setup accepted missing Codex'
 fi
@@ -68,7 +89,23 @@ case "$*" in
   'mcp login --help'|'app-server --help') exit 0 ;;
   'mcp get atlassian --json')
     [ -f "$XDG_CONFIG_HOME/fake-codex-configured" ] || exit 1
-    printf '{"name":"atlassian","url":"https://mcp.atlassian.com/v1/mcp/authv2"}\n'
+    case "$(sed -n '1p' "$XDG_CONFIG_HOME/fake-codex-endpoint" 2>/dev/null || :)" in
+      metadata-url)
+        printf '%s\n' '{"name":"atlassian","url":"https://wrong.invalid/mcp","metadata":{"description":"https://mcp.atlassian.com/v1/mcp/authv2"}}'
+        ;;
+      duplicate-url)
+        printf '%s\n' '{"name":"atlassian","url":"https://wrong.invalid/mcp","url":"https://mcp.atlassian.com/v1/mcp/authv2"}'
+        ;;
+      missing-url)
+        printf '%s\n' '{"name":"atlassian","metadata":{"url":"https://mcp.atlassian.com/v1/mcp/authv2"}}'
+        ;;
+      wrong-name)
+        printf '%s\n' '{"name":"atlassian-helper","url":"https://mcp.atlassian.com/v1/mcp/authv2"}'
+        ;;
+      *)
+        printf '{"name":"atlassian","url":"https://mcp.atlassian.com/v1/mcp/authv2"}\n'
+        ;;
+    esac
     ;;
   'mcp login atlassian')
     printf '%s\n' healthy >"$XDG_CONFIG_HOME/fake-codex-health"
@@ -132,13 +169,35 @@ cat >"$FAKE_BIN/claude" <<'EOF'
 set -eu
 printf 'claude %s\n' "$*" >>"$CALLS"
 case "$*" in
-  'mcp login --help') exit 0 ;;
-  'mcp login atlassian')
+  '--version') printf '%s\n' '1.2.3 (Claude Code)' ;;
+  'mcp add --help'|'mcp get --help'|'mcp list --help') exit 0 ;;
+  '')
     printf '%s\n' healthy >"$XDG_CONFIG_HOME/fake-claude-health"
     ;;
   'mcp get atlassian')
     [ -f "$XDG_CONFIG_HOME/fake-claude-configured" ] || exit 1
-    printf 'atlassian: https://mcp.atlassian.com/v1/mcp/authv2\n'
+    case "$(sed -n '1p' "$XDG_CONFIG_HOME/fake-claude-endpoint" 2>/dev/null || :)" in
+      metadata-url)
+        printf '%s\n' \
+          'Description: https://mcp.atlassian.com/v1/mcp/authv2' \
+          'URL: https://wrong.invalid/mcp'
+        ;;
+      duplicate-url)
+        printf '%s\n' \
+          'URL: https://wrong.invalid/mcp' \
+          'URL: https://mcp.atlassian.com/v1/mcp/authv2'
+        ;;
+      missing-url)
+        printf '%s\n' \
+          'Name: atlassian' \
+          'Description: https://mcp.atlassian.com/v1/mcp/authv2'
+        ;;
+      *)
+        printf '%s\n' \
+          'Name: atlassian' \
+          'URL: https://mcp.atlassian.com/v1/mcp/authv2'
+        ;;
+    esac
     ;;
   'mcp add --transport http --scope user atlassian https://mcp.atlassian.com/v1/mcp/authv2')
     : >"$XDG_CONFIG_HOME/fake-claude-configured"
@@ -146,9 +205,26 @@ case "$*" in
   'mcp list')
     health=$(sed -n '1p' "$XDG_CONFIG_HOME/fake-claude-health" 2>/dev/null || :)
     case "$health" in
-      healthy) printf '%s\n' 'atlassian: Connected' ;;
-      auth-required|'') printf '%s\n' 'atlassian: Authentication required' ;;
-      failed) printf '%s\n' 'atlassian: Failed' ;;
+      healthy)
+        printf '%s\n' \
+          'github: https://example.invalid/mcp (HTTP) - ✓ Connected' \
+          'atlassian: https://mcp.atlassian.com/v1/mcp/authv2 (HTTP) - ✓ Connected'
+        ;;
+      auth-needs-realistic)
+        printf '%s\n' \
+          'atlassian-helper: https://example.invalid/mcp (HTTP) - ✓ Connected' \
+          'atlassian: https://mcp.atlassian.com/v1/mcp/authv2 (HTTP) - ! Needs authentication'
+        ;;
+      unrelated-only)
+        printf '%s\n' \
+          'atlassian-helper: https://mcp.atlassian.com/v1/mcp/authv2 (HTTP) - ✓ Connected'
+        ;;
+      auth-required|'')
+        printf '%s\n' 'atlassian: https://mcp.atlassian.com/v1/mcp/authv2 (HTTP) - Authentication required'
+        ;;
+      failed)
+        printf '%s\n' 'atlassian: https://mcp.atlassian.com/v1/mcp/authv2 (HTTP) - Failed'
+        ;;
     esac
     ;;
   *) exit 1 ;;
@@ -165,6 +241,59 @@ assert_contains "$output" 'Select one client'
 assert_not_contains "$output" 'cursor'
 assert_contains "$(cat "$CALLS")" 'claude mcp add --transport http --scope user atlassian'
 assert_not_contains "$(cat "$CALLS")" 'codex app-server --stdio'
+
+: >"$XDG_CONFIG_HOME/fake-codex-configured"
+printf '%s\n' healthy >"$XDG_CONFIG_HOME/fake-codex-health"
+for invalid_endpoint in metadata-url duplicate-url missing-url wrong-name; do
+  printf '%s\n' "$invalid_endpoint" >"$XDG_CONFIG_HOME/fake-codex-endpoint"
+  if output=$($CLI setup-connectors --client codex --non-interactive 2>&1)
+  then
+    fix_wave_fail "Codex accepted $invalid_endpoint endpoint response"
+  else
+    fix_wave_contains "$output" 'Result: CONNECTOR_MISSING'
+  fi
+done
+rm -f "$XDG_CONFIG_HOME/fake-codex-endpoint"
+
+: >"$XDG_CONFIG_HOME/fake-claude-configured"
+printf '%s\n' healthy >"$XDG_CONFIG_HOME/fake-claude-health"
+for invalid_endpoint in metadata-url duplicate-url missing-url; do
+  printf '%s\n' "$invalid_endpoint" >"$XDG_CONFIG_HOME/fake-claude-endpoint"
+  if output=$($CLI setup-connectors --client claude --non-interactive 2>&1)
+  then
+    fix_wave_fail "Claude accepted $invalid_endpoint endpoint response"
+  else
+    fix_wave_contains "$output" 'Result: CONNECTOR_MISSING'
+  fi
+done
+rm -f "$XDG_CONFIG_HOME/fake-claude-endpoint"
+
+printf '%s\n' healthy >"$XDG_CONFIG_HOME/fake-claude-health"
+if output=$($CLI setup-connectors --client claude --non-interactive 2>&1)
+then
+  fix_wave_contains "$output" 'Authentication: PASS'
+else
+  fix_wave_fail 'Claude realistic connected status did not pass'
+fi
+
+printf '%s\n' auth-needs-realistic >"$XDG_CONFIG_HOME/fake-claude-health"
+if output=$($CLI setup-connectors --client claude --non-interactive 2>&1)
+then
+  fix_wave_fail 'Claude Needs authentication status passed'
+else
+  fix_wave_contains "$output" 'Result: ATLASSIAN_AUTH_REQUIRED'
+  fix_wave_contains "$output" 'Remediation: claude'
+  fix_wave_contains "$output" \
+    'In Claude: /mcp -> atlassian -> Authenticate'
+fi
+
+printf '%s\n' unrelated-only >"$XDG_CONFIG_HOME/fake-claude-health"
+if output=$($CLI setup-connectors --client claude --non-interactive 2>&1)
+then
+  fix_wave_fail 'similarly named Claude server passed health'
+else
+  fix_wave_contains "$output" 'Result: GOVERNANCE_NOT_READY'
+fi
 
 cat >"$FAKE_BIN/cursor-agent" <<'EOF'
 #!/bin/sh
@@ -263,7 +392,11 @@ printf '%s\n' auth-required >"$XDG_CONFIG_HOME/fake-claude-health"
 : >"$CALLS"
 output=$(printf 'y\n' | script -qec "$CLI setup-connectors --client claude" /dev/null 2>&1)
 assert_contains "$output" 'Result: PASS'
-assert_contains "$(cat "$CALLS")" 'claude mcp login atlassian'
+fix_wave_contains "$output" 'In Claude: /mcp -> atlassian -> Authenticate'
+if ! grep -Fx 'claude ' "$CALLS" >/dev/null; then
+  fix_wave_fail 'interactive Claude authentication did not launch claude'
+fi
+fix_wave_not_contains "$(cat "$CALLS")" 'claude mcp login atlassian'
 
 printf '%s\n' '{"mcpServers":{"atlassian":{"url":"https://mcp.atlassian.com/v1/mcp/authv2"}}}' \
   >"$HOME/.cursor/mcp.json"
@@ -391,5 +524,8 @@ grep -F 'codex mcp login atlassian' "$ROOT/handbook.md" >/dev/null ||
   fail 'missing Codex remediation command'
 grep -F 'ATLASSIAN_AUTH_REQUIRED' "$ROOT/PACKAGE-DESIGN.md" >/dev/null ||
   fail 'missing authentication result in package design'
+
+[ "$FIX_WAVE_FAILURES" -eq 0 ] ||
+  fail "$FIX_WAVE_FAILURES fix-wave connector regressions remain"
 
 printf '%s\n' 'Connector selection tests: PASS'

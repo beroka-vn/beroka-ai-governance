@@ -6,16 +6,17 @@ to Confluence.
 
 ## Quick start
 
-This is a post-authorization, post-publication procedure. `v1.0.0` is
-currently unpublished, so these commands will not work until its annotated tag
-is authorized and pushed. Once published, use the reviewed tag below. The
+This is a post-authorization, post-publication procedure. `v1.1.0` is the
+current release candidate, so these commands will not work until its annotated
+tag is authorized and published. The existing `v1.0.0` tag is an immutable
+legacy test sample; do not push, move, or reuse it for this feature. The
 bootstrap checkout is temporary; `install` places the pinned release and user
 CLI in the developer's local package directories. Review the resulting
 application-repository diff in its normal pull request before merging, then
 start a fresh agent session so the client loads the registered entrypoint.
 
 ```bash
-release=v1.0.0
+release=v1.1.0
 client=codex # codex | claude | cursor
 bootstrap_dir=$(mktemp -d "${TMPDIR:-/tmp}/beroka-governance-bootstrap.XXXXXX")
 git clone --depth 1 --single-branch --branch "$release" \
@@ -36,8 +37,9 @@ Run connector setup only after the selected client and its MCP dependencies are
 installed. The command configures exactly that client and, in interactive mode,
 offers to start its OAuth flow. It never accepts an Atlassian developer API
 token. Use `--non-interactive` in automation; missing authentication then
-returns `ATLASSIAN_AUTH_REQUIRED` with the exact client login command and does
-not open a browser.
+returns `ATLASSIAN_AUTH_REQUIRED` with client-specific remediation and does not
+open a browser. For Claude Code that remediation is `claude`, followed in the
+client by `/mcp -> atlassian -> Authenticate`.
 
 `context` may continue source-only work while repository routing is unverified.
 Run `preflight` immediately before each routing-dependent external write; the
@@ -45,6 +47,10 @@ exact selected client owns OAuth. Repository routing comes only from a freshly
 fetched default-branch baseline. Pending local routing can be committed,
 pushed, and reviewed, but cannot route Jira, Confluence, or cross-repository
 writes.
+
+`cross-repo-write` currently returns `ROUTING_REQUIRED` before inspecting a
+client. The central release does not yet contain a reviewed exact counterpart
+and workflow mapping, and the CLI accepts no exact target for that operation.
 
 The package applies only to repositories explicitly registered through this
 workflow. The V1 pilot is Backend-only; do not register a Frontend repository.

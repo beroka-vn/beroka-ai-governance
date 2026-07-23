@@ -28,7 +28,8 @@ V1 does not:
 - add a persistent routing cache;
 - run connector qualification writes against production content;
 - accept, print, log, or store developer API tokens; or
-- create, move, delete, or overwrite the published `v1.0.0` tag.
+- create, move, delete, overwrite, or push the immutable legacy `v1.0.0`
+  sample tag.
 
 ## Authority Model
 
@@ -137,6 +138,10 @@ Cross-repository linking requires:
 
 Frontend learns the Backend handoff documentation location through this
 mapping. It does not search for a likely space, page, Epic, or repository.
+The current central inventory contains only a repository/profile allowlist,
+not an exact counterpart and workflow mapping. Because the CLI also accepts no
+exact cross-repository target, every current `cross-repo-write` fails closed
+with `ROUTING_REQUIRED` before inspecting a client.
 
 ## Trusted Default-branch Baseline
 
@@ -234,9 +239,9 @@ defined by the pinned governance release. V1 operation classes are:
 | `jira-board-verify` | Jira project and board ID | Board/backlog/sprint verification |
 | `confluence-write` with `page` root | Confluence space and root content | Page-parent write and read-back |
 | `confluence-write` with `folder` root | Confluence space and root content | Folder-parent page write and read-back |
-| `cross-repo-write` | Profile-controlled policy and exact central mapping | Capability required by the underlying target write |
+| `cross-repo-write` | Centrally reviewed exact counterpart and workflow mapping (not currently available) | Not reached while routing is unavailable |
 
-Preflight:
+For currently routable operations, preflight:
 
 1. verifies registration and the pinned release;
 2. performs fresh trusted-baseline verification;
@@ -252,11 +257,16 @@ Preflight:
 Routing validation precedes OAuth so invalid routing never causes a browser
 prompt.
 
+`cross-repo-write` stops at step 5 with `ROUTING_REQUIRED`; it does not inspect
+a connector, print a next-preflight instruction, or report `PASS`.
+
 If authentication is missing, expired, or invalid, interactive preflight
 prints `AUTH_REQUIRED`, asks for confirmation, and invokes only the selected
-client’s supported OAuth flow. Non-interactive preflight never opens a browser;
-it returns `ATLASSIAN_AUTH_REQUIRED` and prints the exact client-specific
-remediation command.
+client’s supported OAuth flow. Claude Code prints
+`/mcp -> atlassian -> Authenticate` and launches `claude`; Codex and Cursor use
+their exact `mcp login atlassian` commands. Non-interactive preflight never
+opens a browser; it returns `ATLASSIAN_AUTH_REQUIRED` and prints the same
+client-specific remediation without launching the client.
 
 OAuth is interactive only when standard input and output are terminals and
 `--non-interactive` is absent. Each external write requires a fresh preflight;
@@ -374,6 +384,8 @@ Coverage includes:
   objects, index, worktree, or Git configuration;
 - all routing state-matrix rows;
 - changes in `HEAD`, index, and working tree independently;
+- physical working-tree changes hidden by `skip-worktree` or
+  `assume-unchanged`;
 - comparison of only `.beroka-governance.conf`;
 - offline base Doctor and degraded-but-usable Context;
 - fresh online verification before every routing-dependent preflight;
