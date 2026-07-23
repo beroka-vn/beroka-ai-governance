@@ -1225,7 +1225,8 @@ codex_atlassian_record() {
       result_depth=0
       data_array_depth=0
       server_depth=0
-      matches=0
+      id1_responses=0
+      invalid=0
       for (i=1; i<=length(raw); i++) {
         c=substr(raw, i, 1)
         if (c == "\"") {
@@ -1235,9 +1236,22 @@ codex_atlassian_record() {
           separator=nonspace(key_end + 1)
           if (substr(raw, separator, 1) == ":") {
             value_start=nonspace(separator + 1)
-            if (depth == 1 && key == "result" &&
-                substr(raw, value_start, 1) == "{")
-              result_open=value_start
+            if (depth == 1 && key == "id") {
+              message_id_count++
+              value_end=nonspace(value_start + 1)
+              if (substr(raw, value_start, 1) == "1" &&
+                  substr(raw, value_end, 1) ~ /[,}]/) {
+                message_id_one=1
+                message_id_valid=1
+              }
+            }
+            if (depth == 1 && key == "result") {
+              message_result_count++
+              if (substr(raw, value_start, 1) == "{")
+                result_open=value_start
+              else
+                message_result_invalid=1
+            }
             if (result_depth && depth == result_depth && key == "data" &&
                 substr(raw, value_start, 1) == "[")
               data_open=value_start
@@ -1250,6 +1264,21 @@ codex_atlassian_record() {
           i=key_end
         } else if (c == "{") {
           parent_depth=depth
+          if (parent_depth == 0) {
+            message_depth=1
+            message_id_count=0
+            message_id_one=0
+            message_id_valid=0
+            message_result_count=0
+            message_result_invalid=0
+            message_server_matches=0
+            message_record=""
+            result_open=0
+            result_depth=0
+            data_open=0
+            data_array_depth=0
+            server_depth=0
+          }
           depth++
           if (i == result_open) result_depth=depth
           if (data_array_depth && array_depth == data_array_depth &&
@@ -1264,12 +1293,24 @@ codex_atlassian_record() {
           if (server_depth && depth == server_depth) {
             if (!server_name_invalid && server_name_count == 1 &&
                 server_name == "atlassian") {
-              matches++
-              record=substr(raw, server_start, i - server_start + 1)
+              message_server_matches++
+              message_record=substr(raw, server_start, i - server_start + 1)
             }
             server_depth=0
           }
           if (result_depth && depth == result_depth) result_depth=0
+          if (message_depth && depth == message_depth) {
+            if (message_id_one) {
+              id1_responses++
+              if (message_id_count != 1 || !message_id_valid ||
+                  message_result_count != 1 || message_result_invalid ||
+                  message_server_matches != 1)
+                invalid=1
+              else
+                record=message_record
+            }
+            message_depth=0
+          }
           depth--
         } else if (c == "[") {
           array_depth++
@@ -1280,7 +1321,8 @@ codex_atlassian_record() {
           array_depth--
         }
       }
-      if (matches != 1) exit 42
+      if (depth != 0 || array_depth != 0 ||
+          invalid || id1_responses != 1) exit 42
       print record
     }
   '
@@ -1348,8 +1390,9 @@ json_top_level_string() {
   '
 }
 
-json_top_level_tools() {
-  awk '
+json_top_level_object() {
+  jtlo_key=$1
+  awk -v wanted="$jtlo_key" '
     {
       if (NR > 1) raw=raw "\n"
       raw=raw $0
@@ -1402,7 +1445,7 @@ json_top_level_tools() {
         }
         k++
         while (substr(raw, k, 1) ~ /[[:space:]]/) k++
-        if (key != "tools") {
+        if (key != wanted) {
           i=j
           continue
         }
@@ -1437,12 +1480,25 @@ json_top_level_tools() {
         if (!closed) exit 42
       }
       if (matches != 1) exit 42
+      print object
+    }
+  '
+}
 
+json_top_level_keys() {
+  awk '
+    {
+      if (NR > 1) object=object "\n"
+      object=object $0
+    }
+    END {
       depth=0
+      roots=0
       for (i=1; i<=length(object); i++) {
         c=substr(object, i, 1)
         if (c == "{") {
           depth++
+          if (depth == 1) roots++
         } else if (c == "}") {
           depth--
         } else if (c == "\"") {
@@ -1468,7 +1524,46 @@ json_top_level_tools() {
           i=j
         }
       }
+      if (roots != 1 || depth != 0) exit 42
     }
+  '
+}
+
+json_top_level_tools() {
+  json_top_level_object tools | json_top_level_keys
+}
+
+codex_reauthentication_required() {
+  crr_matches=0
+  while IFS= read -r crr_message; do
+    crr_method=$(printf '%s\n' "$crr_message" |
+      json_top_level_string method) || continue
+    [ "$crr_method" = mcpServer/startupStatus/updated ] || continue
+    crr_params=$(printf '%s\n' "$crr_message" |
+      json_top_level_object params) || continue
+    crr_name=$(printf '%s\n' "$crr_params" |
+      json_top_level_string name) || continue
+    crr_reason=$(printf '%s\n' "$crr_params" |
+      json_top_level_string failureReason) || continue
+    [ "$crr_name" = atlassian ] &&
+      [ "$crr_reason" = reauthenticationRequired ] || continue
+    crr_matches=$((crr_matches + 1))
+  done
+  [ "$crr_matches" -gt 0 ]
+}
+
+codex_http_auth_required() {
+  awk '
+    {
+      line=$0
+      sub(/^[[:space:]]*/, "", line)
+      sub(/[[:space:]]*$/, "", line)
+      if (line ~ /^server atlassian:/ &&
+          (line ~ /unauthorized_client/ ||
+           line ~ /401 Unauthorized/ ||
+           line ~ /403 Forbidden/)) found=1
+    }
+    END { exit !found }
   '
 }
 
@@ -1542,6 +1637,16 @@ connector_health() {
   connector_probe "$ch_client" || return 2
   case "$ch_client" in
     codex)
+      if printf '%s\n' "$CONNECTOR_PROBE_OUTPUT" |
+        codex_reauthentication_required
+      then
+        return 1
+      fi
+      if printf '%s\n' "$CONNECTOR_PROBE_OUTPUT" |
+        codex_http_auth_required
+      then
+        return 1
+      fi
       ch_record=$(printf '%s\n' "$CONNECTOR_PROBE_OUTPUT" |
         codex_atlassian_record) || return 2
       ch_auth=$(printf '%s\n' "$ch_record" |

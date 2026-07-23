@@ -83,11 +83,31 @@ case "$*" in
           healthy-nested-metadata)
             printf '%s\n' '{"id":1,"result":{"data":[{"name":"other","metadata":{"name":"atlassian","tools":{"metadata":{"createJiraIssue":{},"getJiraIssue":{}}},"authStatus":"oAuth"}}]}}'
             ;;
+          healthy-wrong-id)
+            printf '%s\n' \
+              '{"id":0,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{},"getJiraIssue":{}},"authStatus":"oAuth"}]}}' \
+              '{"id":1,"result":{"data":[{"name":"other","tools":{},"authStatus":"oAuth"}]}}'
+            ;;
+          healthy-duplicate-id)
+            printf '%s\n' \
+              '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{},"getJiraIssue":{}},"authStatus":"oAuth"}]}}' \
+              '{"id":1,"result":{"data":[{"name":"other","tools":{},"authStatus":"oAuth"}]}}'
+            ;;
+          healthy-string-id)
+            printf '%s\n' '{"id":"1","result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{},"getJiraIssue":{}},"authStatus":"oAuth"}]}}'
+            ;;
+          healthy-unrelated-reauth)
+            printf '%s\n' \
+              '{"method":"mcpServer/startupStatus/updated","params":{"name":"other","metadata":{"name":"atlassian","failureReason":"reauthenticationRequired"}}}' \
+              '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{},"getJiraIssue":{}},"authStatus":"oAuth"}]}}'
+            ;;
           auth-required|'')
             printf '%s\n' \
               '{"method":"mcpServer/startupStatus/updated","params":{"name":"atlassian","failureReason":"reauthenticationRequired"}}' \
-              '{"id":1,"result":{"data":[{"name":"atlassian","tools":{},"authStatus":"notLoggedIn"}]}}'
+              '{"id":1,"result":{"data":[{"name":"atlassian","tools":{},"authStatus":"oAuth"}]}}'
             ;;
+          auth-401) printf '%s\n' 'server atlassian: 401 Unauthorized' ;;
+          auth-403) printf '%s\n' 'server atlassian: 403 Forbidden' ;;
           *) exit 1 ;;
         esac
         ;;
@@ -320,6 +340,14 @@ assert_not_contains "$output" 'createJiraIssue'
 [ "$(grep -Fc 'codex app-server --stdio' "$CALLS")" -eq 1 ] ||
   fail 'preflight repeated its selected-client inventory probe'
 
+printf '%s\n' healthy-unrelated-reauth \
+  >"$XDG_CONFIG_HOME/fake-codex-health"
+output=$($CLI preflight "$consumer" \
+  --client codex --operation jira-write --non-interactive)
+assert_contains "$output" 'Capability state: SUPPORTED'
+assert_contains "$output" 'Result: PASS'
+
+printf '%s\n' healthy-all >"$XDG_CONFIG_HOME/fake-codex-health"
 output=$($CLI preflight "$consumer" \
   --client codex --operation confluence-write --non-interactive)
 assert_contains "$output" 'Confluence root type: page'
@@ -402,6 +430,19 @@ fi
 assert_contains "$output" 'Result: GOVERNANCE_NOT_READY'
 assert_not_contains "$output" 'Capability state: SUPPORTED'
 
+for invalid_response in \
+  healthy-wrong-id healthy-duplicate-id healthy-string-id
+do
+  printf '%s\n' "$invalid_response" >"$XDG_CONFIG_HOME/fake-codex-health"
+  if output=$($CLI preflight "$consumer" \
+    --client codex --operation jira-write --non-interactive 2>&1)
+  then
+    fail "$invalid_response supplied the Atlassian inventory"
+  fi
+  assert_contains "$output" 'Result: GOVERNANCE_NOT_READY'
+  assert_not_contains "$output" 'Capability state: SUPPORTED'
+done
+
 : >"$XDG_CONFIG_HOME/fake-claude-configured"
 printf '%s\n' auth-required-multiserver \
   >"$XDG_CONFIG_HOME/fake-claude-health"
@@ -447,6 +488,19 @@ fi
 assert_contains "$output" 'Remediation: codex mcp login atlassian'
 assert_contains "$output" 'Result: ATLASSIAN_AUTH_REQUIRED'
 assert_not_contains "$(cat "$CALLS")" 'codex mcp login atlassian'
+
+for codex_auth_error in auth-401 auth-403; do
+  printf '%s\n' "$codex_auth_error" >"$XDG_CONFIG_HOME/fake-codex-health"
+  : >"$CALLS"
+  if output=$($CLI preflight "$consumer" \
+    --client codex --operation jira-write --non-interactive 2>&1)
+  then
+    fail "$codex_auth_error passed preflight"
+  fi
+  assert_contains "$output" 'Remediation: codex mcp login atlassian'
+  assert_contains "$output" 'Result: ATLASSIAN_AUTH_REQUIRED'
+  assert_not_contains "$(cat "$CALLS")" 'codex mcp login atlassian'
+done
 
 : >"$CALLS"
 if output=$(printf 'n\n' | script -qec \
