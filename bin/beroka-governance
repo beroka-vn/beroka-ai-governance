@@ -13,10 +13,14 @@ END_MARKER='<!-- BEROKA-GOVERNANCE:END -->'
 REGISTRY=$CONFIG_ROOT/registered-repos
 TX_DIR= TX_REPO= TX_COMMITTED=0 TX_RELEASE_NEW=0 TX_RELEASE_TARGET= TX_RELEASE_STAGE= TX_RELEASE_OWNED=0
 TX_CLI_PATH= TX_CLI_SNAPSHOT=0 TX_REGISTRY_SNAPSHOT=0 TX_REGISTRY_ACTION=none
+ROUTING_FILE=.beroka-governance.conf
+ROUTING_STATE= ROUTING_BASELINE_PRESENT=0 ROUTING_BASELINE_COMMIT=
+ROUTING_BASELINE_FILE= ROUTING_TEMP_DIR=
 
 die() {
   code=$1
   shift
+  [ -z "$ROUTING_TEMP_DIR" ] || routing_cleanup
   printf '%s\n' "Result: $code" >&2
   if [ "$#" -gt 0 ]; then printf '%s\n' "$*" >&2; fi
   exit 1
@@ -125,20 +129,158 @@ assert_safe_managed_paths() {
   done
 }
 
-normalize_origin() {
-  repo=$1
-  url=$(git -C "$repo" remote get-url origin 2>/dev/null) || die REMOTE_MISMATCH 'Git origin is missing'
-  case "$url" in
-    https://github.com/*) slug=${url#https://github.com/} ;;
-    git@github.com:*) slug=${url#git@github.com:} ;;
-    ssh://git@github.com/*) slug=${url#ssh://git@github.com/} ;;
-    *) die REMOTE_MISMATCH "Unsupported GitHub origin: $url" ;;
+normalize_github_url() {
+  ngu_url=$1
+  case "$ngu_url" in
+    https://github.com/*) ngu_slug=${ngu_url#https://github.com/} ;;
+    git@github.com:*) ngu_slug=${ngu_url#git@github.com:} ;;
+    ssh://git@github.com/*) ngu_slug=${ngu_url#ssh://git@github.com/} ;;
+    *) return 1 ;;
   esac
-  while [ "${slug%/}" != "$slug" ]; do slug=${slug%/}; done
-  slug=${slug%.git}
-  printf '%s\n' "$slug" | grep -Eq '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' ||
-    die REMOTE_MISMATCH "Invalid GitHub repository slug: $slug"
-  printf '%s\n' "$slug"
+  while [ "${ngu_slug%/}" != "$ngu_slug" ]; do ngu_slug=${ngu_slug%/}; done
+  ngu_slug=${ngu_slug%.git}
+  printf '%s\n' "$ngu_slug" |
+    grep -Eq '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' || return 1
+  printf '%s\n' "$ngu_slug"
+}
+
+resolve_canonical_remote() {
+  rcr_repo=$1 rcr_expected=${2:-}
+  CANONICAL_REMOTE_NAME= CANONICAL_REMOTE_URL=
+  rcr_matches=0
+  for rcr_name in $(git -C "$rcr_repo" remote); do
+    rcr_url=$(git -C "$rcr_repo" config --get "remote.$rcr_name.url" 2>/dev/null) ||
+      continue
+    rcr_slug=$(normalize_github_url "$rcr_url") || continue
+    if [ -n "$rcr_expected" ]; then
+      [ "$rcr_slug" = "$rcr_expected" ] || continue
+    elif [ "$rcr_name" != origin ]; then
+      continue
+    fi
+    rcr_matches=$((rcr_matches + 1))
+    CANONICAL_REMOTE_NAME=$rcr_name
+    CANONICAL_REMOTE_URL=$rcr_url
+  done
+  if [ -z "$rcr_expected" ] && [ "$rcr_matches" -eq 0 ]; then
+    for rcr_name in $(git -C "$rcr_repo" remote); do
+      rcr_url=$(git -C "$rcr_repo" config --get "remote.$rcr_name.url" 2>/dev/null) ||
+        continue
+      normalize_github_url "$rcr_url" >/dev/null 2>&1 || continue
+      rcr_matches=$((rcr_matches + 1))
+      CANONICAL_REMOTE_NAME=$rcr_name
+      CANONICAL_REMOTE_URL=$rcr_url
+    done
+  fi
+  [ "$rcr_matches" -eq 1 ] ||
+    die REMOTE_MISMATCH 'Cannot resolve exactly one canonical GitHub remote'
+}
+
+routing_cleanup() {
+  rc_temp=$ROUTING_TEMP_DIR
+  ROUTING_TEMP_DIR=
+  [ -z "$rc_temp" ] || rm -rf "$rc_temp"
+  trap - EXIT HUP INT TERM
+}
+
+fetch_routing_baseline() {
+  ROUTING_BASELINE_PRESENT=0 ROUTING_BASELINE_COMMIT= ROUTING_BASELINE_FILE=
+  rfb_advertised=$(git ls-remote --symref "$CANONICAL_REMOTE_URL" HEAD 2>/dev/null) || return 1
+  rfb_ref=$(printf '%s\n' "$rfb_advertised" |
+    awk '$1 == "ref:" && $3 == "HEAD" { print $2; exit }')
+  rfb_commit=$(printf '%s\n' "$rfb_advertised" |
+    awk '$2 == "HEAD" && $1 ~ /^[0-9a-f]{40}$/ { print $1; exit }')
+  case "$rfb_ref:$rfb_commit" in
+    refs/heads/*:[0-9a-f][0-9a-f]*) ;;
+    *) return 1 ;;
+  esac
+
+  ROUTING_TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/beroka-routing-fetch.XXXXXX") || return 1
+  trap 'routing_cleanup' EXIT
+  trap 'routing_cleanup; exit 1' HUP INT TERM
+  git -C "$ROUTING_TEMP_DIR" init -q --bare || {
+    routing_cleanup
+    return 1
+  }
+  git -C "$ROUTING_TEMP_DIR" fetch -q --depth 1 \
+    "$CANONICAL_REMOTE_URL" "$rfb_ref" || {
+    routing_cleanup
+    return 1
+  }
+  ROUTING_BASELINE_COMMIT=$(git -C "$ROUTING_TEMP_DIR" rev-parse FETCH_HEAD 2>/dev/null) || {
+    routing_cleanup
+    return 1
+  }
+  [ "$ROUTING_BASELINE_COMMIT" = "$rfb_commit" ] || {
+    routing_cleanup
+    return 1
+  }
+
+  ROUTING_BASELINE_FILE=$ROUTING_TEMP_DIR/baseline.conf
+  if git -C "$ROUTING_TEMP_DIR" cat-file -e \
+    "$ROUTING_BASELINE_COMMIT:$ROUTING_FILE" 2>/dev/null
+  then
+    rfb_mode=$(git -C "$ROUTING_TEMP_DIR" ls-tree \
+      "$ROUTING_BASELINE_COMMIT" -- "$ROUTING_FILE" |
+      awk '{ print $1; exit }')
+    case "$rfb_mode" in
+      100644|100755) ;;
+      *) routing_cleanup; return 2 ;;
+    esac
+    git -C "$ROUTING_TEMP_DIR" show \
+      "$ROUTING_BASELINE_COMMIT:$ROUTING_FILE" \
+      >"$ROUTING_BASELINE_FILE" || {
+      routing_cleanup
+      return 1
+    }
+    ROUTING_BASELINE_PRESENT=1
+  else
+    : >"$ROUTING_BASELINE_FILE"
+  fi
+}
+
+local_routing_present() {
+  git -C "$REPO" cat-file -e "HEAD:$ROUTING_FILE" 2>/dev/null ||
+    git -C "$REPO" ls-files --error-unmatch "$ROUTING_FILE" >/dev/null 2>&1 ||
+    [ -e "$REPO/$ROUTING_FILE" ] || [ -L "$REPO/$ROUTING_FILE" ]
+}
+
+local_routing_matches_baseline() {
+  [ ! -L "$REPO/$ROUTING_FILE" ] && [ -f "$REPO/$ROUTING_FILE" ] || return 1
+  lrm_baseline=$(git -C "$ROUTING_TEMP_DIR" ls-tree \
+    "$ROUTING_BASELINE_COMMIT" -- "$ROUTING_FILE")
+  lrm_head=$(git -C "$REPO" ls-tree HEAD -- "$ROUTING_FILE")
+  lrm_index=$(git -C "$REPO" ls-files -s -- "$ROUTING_FILE")
+  [ -n "$lrm_baseline" ] && [ -n "$lrm_head" ] && [ -n "$lrm_index" ] ||
+    return 1
+  lrm_mode=$(printf '%s\n' "$lrm_baseline" | awk '{ print $1 }')
+  lrm_blob=$(printf '%s\n' "$lrm_baseline" | awk '{ print $3 }')
+  [ "$(printf '%s\n' "$lrm_head" | awk '{ print $1, $3 }')" = "$lrm_mode $lrm_blob" ] ||
+    return 1
+  [ "$(printf '%s\n' "$lrm_index" | awk '{ print $1, $2 }')" = "$lrm_mode $lrm_blob" ] ||
+    return 1
+  git -C "$REPO" diff --quiet -- "$ROUTING_FILE"
+}
+
+resolve_routing() {
+  ROUTING_STATE=
+  rr_fetch=0
+  fetch_routing_baseline || rr_fetch=$?
+  case "$rr_fetch" in
+    0) ;;
+    2) ROUTING_STATE=ROUTING_INVALID; return 0 ;;
+    *) ROUTING_STATE=ROUTING_VERIFICATION_REQUIRED; return 0 ;;
+  esac
+  if [ "$ROUTING_BASELINE_PRESENT" -eq 0 ]; then
+    if local_routing_present; then
+      ROUTING_STATE=ROUTING_CHANGE_PENDING
+    else
+      ROUTING_STATE=ROUTING_REQUIRED
+    fi
+  elif local_routing_matches_baseline; then
+    ROUTING_STATE=ROUTING_ACTIVE
+  else
+    ROUTING_STATE=ROUTING_CHANGE_PENDING
+  fi
 }
 
 target_dirty() {
@@ -560,8 +702,7 @@ verify_registration() {
   REPO=$(canonical_repo "$1")
   assert_safe_managed_paths "$REPO"
   read_lock "$REPO"
-  origin_slug=$(normalize_origin "$REPO")
-  [ "$origin_slug" = "$LOCK_REPOSITORY" ] || die REMOTE_MISMATCH "Origin $origin_slug differs from $LOCK_REPOSITORY"
+  resolve_canonical_remote "$REPO" "$LOCK_REPOSITORY"
   verify_release
   verify_entrypoints "$REPO" "$RELEASE_DIR"
 }
@@ -575,7 +716,9 @@ cmd_register() {
   REPO=$(canonical_repo "$requested")
   assert_safe_managed_paths "$REPO"
   assert_registry_path
-  repository=$(normalize_origin "$REPO")
+  resolve_canonical_remote "$REPO"
+  repository=$(normalize_github_url "$CANONICAL_REMOTE_URL") ||
+    die REMOTE_MISMATCH 'Canonical remote is not a supported GitHub repository'
   release_for_version "$version"
   agents_template=$RELEASE_DIR/templates/agent-entrypoints/AGENTS.md
   claude_template=$RELEASE_DIR/templates/agent-entrypoints/CLAUDE.md
@@ -1067,6 +1210,15 @@ cmd_doctor() {
 cmd_context() {
   verify_registration "$1"
   cat "$RELEASE_DIR/runtime/entrypoint.md" || die GOVERNANCE_NOT_READY 'Cannot read runtime entrypoint'
+  resolve_routing
+  printf '%s\n' \
+    "Routing: $ROUTING_STATE" \
+    "Routing baseline commit: ${ROUTING_BASELINE_COMMIT:-UNVERIFIED}"
+  case "$ROUTING_STATE" in
+    ROUTING_ACTIVE) printf '%s\n' 'External routing-dependent writes: PREFLIGHT_REQUIRED' ;;
+    *) printf '%s\n' 'External routing-dependent writes: BLOCKED' ;;
+  esac
+  routing_cleanup
 }
 
 cmd_show() {
