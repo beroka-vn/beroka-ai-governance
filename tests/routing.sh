@@ -772,3 +772,12 @@ output=$($CLI context "$consumer")
 assert_contains "$output" 'Routing: ROUTING_INVALID'
 
 printf '%s\n' 'PASS: routing state'
+
+grep -F 'beroka-governance preflight' "$ROOT/README.md" >/dev/null ||
+  fail 'README does not document preflight'
+grep -F 'ROUTING_CHANGE_PENDING' "$ROOT/handbook.md" >/dev/null ||
+  fail 'handbook does not document pending routing'
+grep -F 'central governance onboarding project' "$ROOT/handbook.md" >/dev/null ||
+  fail 'handbook does not document bootstrap issue provenance'
+grep -F 'CONNECTOR_CAPABILITY_REQUIRED' "$ROOT/handbook.md" >/dev/null ||
+  fail 'handbook does not document capability remediation'

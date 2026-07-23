@@ -133,6 +133,59 @@ sau đó mở **fresh agent session**. `unregister` chỉ xóa managed markers, 
 Cursor rule; `uninstall` chỉ xóa local package khi registry không còn repository
 đăng ký. `uninstall --force` cũng không sửa application repositories.
 
+### Repository routing lifecycle
+
+`context` load general rules cùng **selected profile** và **selected integration
+profile**; không load mọi Backend, Frontend và standalone profile. Khi chưa có
+baseline routing đã xác minh, agent vẫn có thể làm source-only work, nhưng mọi
+external write phụ thuộc routing phải chờ `preflight` mới ngay trước operation.
+Routing chỉ lấy từ default branch baseline vừa fetch, không lấy từ local branch,
+index hay worktree.
+
+Repository standalone mới dùng file `.beroka-governance.conf` strict sau:
+
+```text
+SCHEMA_VERSION=1
+PROFILE=standalone
+JIRA_PROJECT_KEY=APP
+CONFLUENCE_SPACE_KEY=APP
+CONFLUENCE_ROOT_CONTENT_ID=123456
+CONFLUENCE_ROOT_CONTENT_TYPE=page
+INTEGRATION_PROFILE=none
+CROSS_REPO_POLICY=explicit-only
+```
+
+Backend profile được review dùng schema sau; `JIRA_BOARD_ID` optional và chỉ
+cần cho board/backlog/sprint verification:
+
+```text
+SCHEMA_VERSION=1
+PROFILE=backend
+JIRA_PROJECT_KEY=BB
+JIRA_BOARD_ID=34
+CONFLUENCE_SPACE_KEY=Berokaback
+CONFLUENCE_ROOT_CONTENT_ID=123456
+CONFLUENCE_ROOT_CONTENT_TYPE=page
+INTEGRATION_PROFILE=beroka-be-fe
+CROSS_REPO_POLICY=profile-controlled
+```
+
+`JIRA_BOARD_ID` là routing data, không bao giờ chứng minh Board capability.
+
+Lifecycle onboarding:
+
+1. Không có trusted hoặc local routing thì `ROUTING_REQUIRED`.
+2. Thêm file trên branch đầu tiên thì `ROUTING_CHANGE_PENDING` cho đến khi PR
+   routing được merge; local routing không được dùng cho external write.
+3. PR đầu tiên phải tham chiếu Jira issue được tạo thủ công hoặc issue trong
+   **central governance onboarding project**, độc lập với pending routing.
+4. Branch, commit, push, current-repository Issue và PR vẫn được phép khi
+   routing pending.
+5. Sau merge, mở fresh session rồi chạy `context` mới và `preflight` mới trước
+   external write phụ thuộc routing.
+6. Khi offline, `context` chỉ block routing-dependent external writes;
+   source-only work vẫn tiếp tục.
+
 ### Lock và thin entrypoints
 
 Register tạo đúng các artifact package-owned sau, không copy toàn bộ runtime hay
@@ -239,10 +292,17 @@ cursor-agent mcp list-tools atlassian
 ## Preflight connector bắt buộc
 
 Sau khi `beroka-governance doctor <repo>` trả `Result: PASS`, agent chạy
-`beroka-governance doctor <repo> --client <client>` rồi chạy read-only connector
-preflight trước workflow. Governance-only `doctor <repo>`, `context`, `show`,
-register/update/rollback/remove không kiểm tra hoặc kích hoạt OAuth. GitHub
-authentication vẫn được complete riêng trên từng client.
+`beroka-governance doctor <repo> --client <client>`, `context`, rồi preflight
+mới ngay trước mỗi routing-dependent external write:
+
+```bash
+beroka-governance preflight <repo> --client <client> --operation jira-write
+```
+
+Preflight xác minh routing trước bất kỳ OAuth prompt nào. Governance-only
+`doctor <repo>`, `context`, `show`, register/update/rollback/remove không kiểm
+tra hoặc kích hoạt OAuth. GitHub authentication vẫn được complete riêng trên
+từng client.
 
 1. Xác định authenticated GitHub và Atlassian account.
 2. Đọc metadata của Backend repository; nếu request thuộc FE, resolve và đọc
@@ -437,6 +497,22 @@ CLI fail closed với các stable result codes sau:
 | `CONNECTOR_MISSING` | Atlassian connector thiếu hoặc URL hiện tại xung đột; chạy `setup-connectors --client <client>` và review config. |
 | `ATLASSIAN_AUTH_REQUIRED` | OAuth thiếu, hết hạn hoặc invalid; chạy exact remediation command được in ra. |
 | `PASS` | Governance và, khi có `--client`, connector/authentication health đều đạt. |
+
+Routing và selected-client preflight trả các result sau:
+
+| Result | Remediation |
+| --- | --- |
+| `ROUTING_REQUIRED` | Add exact routing through the reviewed onboarding workflow. |
+| `ROUTING_INVALID` | Fix the strict schema on a branch and merge it. |
+| `ROUTING_CHANGE_PENDING` | Review and merge the routing PR; do not use local routing for writes. |
+| `ROUTING_VERIFICATION_REQUIRED` | Restore authenticated remote access and rerun fresh preflight. |
+| `DEPENDENCY_MISSING` | Install the explicitly selected client/helper. |
+| `CONNECTOR_MISSING` | Run `beroka-governance setup-connectors --client <client>`. |
+| `ATLASSIAN_AUTH_REQUIRED` | Run the exact remediation command printed for the selected client. |
+| `CONNECTOR_CAPABILITY_REQUIRED` | Use a supported operation/client or add a reviewed compatibility record after an isolated pilot. |
+
+`SUPPORTED`, `UNSUPPORTED` và `UNKNOWN` là operation-scoped. Folder và Board
+không bao giờ fallback sang Page, space root, JQL hoặc guessed capability.
 
 ## Tài liệu chính thức
 

@@ -26,6 +26,10 @@ beroka-governance setup-connectors --client "$client"
 beroka-governance register /srv/beroka/backend --version "$release"
 beroka-governance doctor /srv/beroka/backend
 beroka-governance doctor /srv/beroka/backend --client "$client"
+beroka-governance context /srv/beroka/backend
+beroka-governance preflight /srv/beroka/backend \
+  --client "$client" \
+  --operation jira-write
 ```
 
 Run connector setup only after the selected client and its MCP dependencies are
@@ -34,6 +38,13 @@ offers to start its OAuth flow. It never accepts an Atlassian developer API
 token. Use `--non-interactive` in automation; missing authentication then
 returns `ATLASSIAN_AUTH_REQUIRED` with the exact client login command and does
 not open a browser.
+
+`context` may continue source-only work while repository routing is unverified.
+Run `preflight` immediately before each routing-dependent external write; the
+exact selected client owns OAuth. Repository routing comes only from a freshly
+fetched default-branch baseline. Pending local routing can be committed,
+pushed, and reviewed, but cannot route Jira, Confluence, or cross-repository
+writes.
 
 The package applies only to repositories explicitly registered through this
 workflow. The V1 pilot is Backend-only; do not register a Frontend repository.
