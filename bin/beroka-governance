@@ -1053,6 +1053,9 @@ connector_state() {
     codex)
       cs_output=$(codex mcp get atlassian --json 2>/dev/null) || return 1
       printf '%s\n' "$cs_output" |
+        jq -e -s 'length == 1 and (.[0] | type == "object")' \
+          >/dev/null 2>&1 || return 2
+      printf '%s\n' "$cs_output" |
         jq -e -s --stream --arg url "$ATLASSIAN_MCP_URL" '
           ([.[] |
             select(length == 2 and .[0] == ["name"]) |

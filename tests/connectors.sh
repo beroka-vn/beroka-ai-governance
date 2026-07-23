@@ -105,6 +105,16 @@ case "$*" in
       malformed-json)
         printf '%s\n' '{"name":"atlassian","url":"https://mcp.atlassian.com/v1/mcp/authv2","broken":[,]}'
         ;;
+      split-documents)
+        printf '%s\n' \
+          '{"name":"atlassian"}' \
+          '{"url":"https://mcp.atlassian.com/v1/mcp/authv2"}'
+        ;;
+      trailing-document)
+        printf '%s\n' \
+          '{"name":"atlassian","url":"https://mcp.atlassian.com/v1/mcp/authv2"}' \
+          '{"unrelated":true}'
+        ;;
       *)
         printf '{"name":"atlassian","url":"https://mcp.atlassian.com/v1/mcp/authv2"}\n'
         ;;
@@ -264,7 +274,8 @@ assert_not_contains "$(cat "$CALLS")" 'codex app-server --stdio'
 : >"$XDG_CONFIG_HOME/fake-codex-configured"
 printf '%s\n' healthy >"$XDG_CONFIG_HOME/fake-codex-health"
 for invalid_endpoint in \
-  metadata-url duplicate-url missing-url wrong-name malformed-json
+  metadata-url duplicate-url missing-url wrong-name malformed-json \
+  split-documents trailing-document
 do
   printf '%s\n' "$invalid_endpoint" >"$XDG_CONFIG_HOME/fake-codex-endpoint"
   if output=$($CLI setup-connectors --client codex --non-interactive 2>&1)
