@@ -179,14 +179,17 @@ case "$*" in
     health=$(sed -n '1p' "$XDG_CONFIG_HOME/fake-cursor-health" 2>/dev/null || :)
     case "$health" in
       healthy) printf '%s\n' 'atlassian: Ready' ;;
+      ready-tools-failed) printf '%s\n' 'atlassian: Ready' ;;
       auth-required|'') printf '%s\n' 'atlassian: Authentication required' ;;
       failed) printf '%s\n' 'atlassian: Failed' ;;
     esac
     ;;
   'mcp list-tools atlassian')
-    [ "$(sed -n '1p' "$XDG_CONFIG_HOME/fake-cursor-health" 2>/dev/null || :)" = healthy ] ||
-      { printf '%s\n' 'Authentication required'; exit 1; }
-    printf '%s\n' 'atlassianUserInfo'
+    case "$(sed -n '1p' "$XDG_CONFIG_HOME/fake-cursor-health" 2>/dev/null || :)" in
+      healthy) printf '%s\n' 'atlassianUserInfo' ;;
+      ready-tools-failed) printf '%s\n' 'Tool inventory failed'; exit 1 ;;
+      *) printf '%s\n' 'Authentication required'; exit 1 ;;
+    esac
     ;;
   *) exit 1 ;;
 esac
@@ -271,6 +274,12 @@ assert_contains "$output" 'Authentication: PASS'
 assert_contains "$(cat "$CALLS")" 'cursor-agent mcp list-tools atlassian'
 assert_not_contains "$(cat "$CALLS")" 'codex '
 assert_not_contains "$(cat "$CALLS")" 'claude '
+
+printf '%s\n' ready-tools-failed >"$XDG_CONFIG_HOME/fake-cursor-health"
+if output=$($CLI setup-connectors --client cursor --non-interactive 2>&1); then
+  fail 'Cursor setup accepted a failed tool inventory'
+fi
+assert_contains "$output" 'Result: GOVERNANCE_NOT_READY'
 
 printf '%s\n' auth-required >"$XDG_CONFIG_HOME/fake-cursor-health"
 : >"$CALLS"
@@ -357,10 +366,15 @@ assert_contains "$output" 'Remediation: codex mcp login atlassian'
 assert_contains "$output" 'Result: ATLASSIAN_AUTH_REQUIRED'
 
 printf '%s\n' healthy >"$XDG_CONFIG_HOME/fake-codex-health"
+: >"$CALLS"
 output=$($CLI doctor "$CONSUMER" --client codex)
 assert_contains "$output" 'Connector: PASS'
 assert_contains "$output" 'Authentication: PASS'
 assert_contains "$output" 'Result: PASS'
+assert_not_contains "$output" 'atlassianUserInfo'
+assert_not_contains "$(cat "$CALLS")" 'codex mcp login atlassian'
+[ "$(grep -Fc 'codex app-server --stdio' "$CALLS")" -eq 1 ] ||
+  fail 'connector-aware Doctor repeated its health probe'
 
 mv "$FAKE_BIN/codex" "$FAKE_BIN/codex.disabled"
 if output=$($CLI doctor "$CONSUMER" --client codex 2>&1); then

@@ -10,7 +10,13 @@ export HOME=$TEST_ROOT/home
 export XDG_CONFIG_HOME=$TEST_ROOT/config
 export XDG_DATA_HOME=$TEST_ROOT/data
 export BEROKA_GOV_BIN_DIR=$TEST_ROOT/bin
-mkdir -p "$HOME" "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" "$BEROKA_GOV_BIN_DIR"
+FAKE_BIN=$TEST_ROOT/fake-bin
+CALLS=$TEST_ROOT/calls
+export CALLS
+mkdir -p "$HOME" "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" \
+  "$BEROKA_GOV_BIN_DIR" "$FAKE_BIN"
+PATH=$FAKE_BIN:/usr/bin:/bin
+export PATH
 
 fail() {
   printf 'FAIL: %s\n' "$*" >&2
@@ -23,6 +29,134 @@ assert_contains() {
     *) fail "expected [$2] in [$1]" ;;
   esac
 }
+
+assert_not_contains() {
+  case "$1" in
+    *"$2"*) fail "did not expect [$2] in [$1]" ;;
+    *) ;;
+  esac
+}
+
+cat >"$FAKE_BIN/sleep" <<'EOF'
+#!/bin/sh
+exit 0
+EOF
+
+cat >"$FAKE_BIN/codex" <<'EOF'
+#!/bin/sh
+set -eu
+printf 'codex %s\n' "$*" >>"$CALLS"
+case "$*" in
+  '--version') printf '%s\n' 'codex 1.0.0' ;;
+  'mcp login --help'|'app-server --help') ;;
+  'mcp get atlassian --json')
+    [ -f "$XDG_CONFIG_HOME/fake-codex-configured" ] || exit 1
+    printf '%s\n' '{"name":"atlassian","url":"https://mcp.atlassian.com/v1/mcp/authv2"}'
+    ;;
+  'mcp login atlassian')
+    printf '%s\n' healthy-all >"$XDG_CONFIG_HOME/fake-codex-health"
+    ;;
+  'app-server --stdio')
+    input=$(cat)
+    case "$input" in
+      *'mcpServerStatus/list'*)
+        health=$(sed -n '1p' "$XDG_CONFIG_HOME/fake-codex-health" 2>/dev/null || :)
+        case "$health" in
+          healthy-all)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{},"getJiraIssue":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]}}'
+            ;;
+          healthy-read-only)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"getJiraIssue":{}},"authStatus":"oAuth"}]}}'
+            ;;
+          healthy-cross-server)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"getJiraIssue":{}},"authStatus":"oAuth"}, {"name":"other","tools":{"createJiraIssue":{}},"authStatus":"oAuth"}]}}'
+            ;;
+          healthy-similar-tool)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssuePreview":{},"getJiraIssue":{}},"authStatus":"oAuth"}]}}'
+            ;;
+          healthy-metadata-tool)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"getJiraIssue":{}},"metadata":{"createJiraIssue":{}},"authStatus":"oAuth"}]}}'
+            ;;
+          auth-required|'')
+            printf '%s\n' \
+              '{"method":"mcpServer/startupStatus/updated","params":{"name":"atlassian","failureReason":"reauthenticationRequired"}}' \
+              '{"id":1,"result":{"data":[{"name":"atlassian","tools":{},"authStatus":"oAuth"}]}}'
+            ;;
+          *) exit 1 ;;
+        esac
+        ;;
+      *) exit 1 ;;
+    esac
+    ;;
+  *) exit 1 ;;
+esac
+EOF
+
+cat >"$FAKE_BIN/claude" <<'EOF'
+#!/bin/sh
+set -eu
+printf 'claude %s\n' "$*" >>"$CALLS"
+case "$*" in
+  '--version') printf '%s\n' 'claude 1.2.3' ;;
+  'mcp login --help') ;;
+  'mcp get atlassian')
+    [ -f "$XDG_CONFIG_HOME/fake-claude-configured" ] || exit 1
+    printf '%s\n' 'atlassian: https://mcp.atlassian.com/v1/mcp/authv2'
+    ;;
+  'mcp login atlassian')
+    printf '%s\n' healthy >"$XDG_CONFIG_HOME/fake-claude-health"
+    ;;
+  'mcp list')
+    case "$(sed -n '1p' "$XDG_CONFIG_HOME/fake-claude-health" 2>/dev/null || :)" in
+      healthy) printf '%s\n' 'atlassian: Connected' ;;
+      auth-required-multiserver)
+        printf '%s\n' \
+          'atlassian: Authentication required' \
+          'github: Connected'
+        ;;
+      auth-required-helper)
+        printf '%s\n' \
+          'atlassian-helper: Connected' \
+          'atlassian: Authentication required'
+        ;;
+      not-connected) printf '%s\n' 'atlassian: Not Connected' ;;
+      disconnected) printf '%s\n' 'atlassian: Disconnected' ;;
+      auth-required|'') printf '%s\n' 'atlassian: Authentication required' ;;
+      *) printf '%s\n' 'atlassian: Failed' ;;
+    esac
+    ;;
+  *) exit 1 ;;
+esac
+EOF
+
+cat >"$FAKE_BIN/cursor-agent" <<'EOF'
+#!/bin/sh
+set -eu
+printf 'cursor-agent %s\n' "$*" >>"$CALLS"
+case "$*" in
+  '--version') printf '%s\n' 'cursor-agent 1.0.0' ;;
+  'mcp login --help') ;;
+  'mcp login atlassian')
+    printf '%s\n' healthy >"$XDG_CONFIG_HOME/fake-cursor-health"
+    ;;
+  'mcp list')
+    case "$(sed -n '1p' "$XDG_CONFIG_HOME/fake-cursor-health" 2>/dev/null || :)" in
+      healthy) printf '%s\n' 'atlassian: Ready' ;;
+      auth-required|'') printf '%s\n' 'atlassian: Authentication required' ;;
+      *) printf '%s\n' 'atlassian: Failed' ;;
+    esac
+    ;;
+  'mcp list-tools atlassian')
+    [ "$(sed -n '1p' "$XDG_CONFIG_HOME/fake-cursor-health" 2>/dev/null || :)" = healthy ] ||
+      exit 1
+    printf '%s\n' 'createJiraIssue getJiraIssue'
+    ;;
+  *) exit 1 ;;
+esac
+EOF
+chmod 755 "$FAKE_BIN/sleep" "$FAKE_BIN/codex" "$FAKE_BIN/claude" \
+  "$FAKE_BIN/cursor-agent"
+: >"$CALLS"
 
 new_repo() {
   nr_path=$1
@@ -119,10 +253,28 @@ publish_routing() {
   git -C "$consumer" reset -q --hard FETCH_HEAD
 }
 
+pin_test_release() {
+  ptr_version=$1
+  printf '%s\n' "$ptr_version" >"$source_repo/VERSION"
+  git -C "$source_repo" add VERSION runtime/compatibility/atlassian.tsv
+  git -C "$source_repo" commit -qm "test: create $ptr_version release"
+  git -C "$source_repo" tag -a "$ptr_version" -m "$ptr_version"
+  ptr_release=$XDG_DATA_HOME/beroka-ai-governance/releases/$ptr_version
+  git clone -q --depth 1 --branch "$ptr_version" \
+    https://github.com/beroka-vn/beroka-ai-governance.git "$ptr_release"
+  ptr_commit=$(git -C "$ptr_release" rev-parse HEAD)
+  sed -i \
+    "s/^VERSION=.*/VERSION=$ptr_version/;s/^COMMIT=.*/COMMIT=$ptr_commit/" \
+    "$consumer/.beroka-governance.lock"
+  git -C "$consumer" add .beroka-governance.lock
+  git -C "$consumer" commit -qm "test: pin $ptr_version release"
+}
+
 printf '%s\n' \
   'SCHEMA_VERSION=1' \
   'PROFILE=standalone' \
   'JIRA_PROJECT_KEY=APP' \
+  'JIRA_BOARD_ID=12' \
   'CONFLUENCE_SPACE_KEY=APP' \
   'CONFLUENCE_ROOT_CONTENT_ID=123456' \
   'CONFLUENCE_ROOT_CONTENT_TYPE=page' \
@@ -148,6 +300,156 @@ assert_contains "$output" '# Standalone Repository'
 case "$output" in
   *'# Backend–Frontend Integration'*) fail 'standalone loaded BE-FE integration' ;;
 esac
+
+: >"$XDG_CONFIG_HOME/fake-codex-configured"
+printf '%s\n' healthy-all >"$XDG_CONFIG_HOME/fake-codex-health"
+: >"$CALLS"
+output=$($CLI preflight "$consumer" \
+  --client codex --operation jira-write --non-interactive)
+assert_contains "$output" 'Jira project: APP'
+assert_contains "$output" 'Capability: jira-issue-write'
+assert_contains "$output" 'Capability state: SUPPORTED'
+assert_contains "$output" 'Result: PASS'
+assert_not_contains "$output" 'createJiraIssue'
+[ "$(grep -Fc 'codex app-server --stdio' "$CALLS")" -eq 1 ] ||
+  fail 'preflight repeated its selected-client inventory probe'
+
+output=$($CLI preflight "$consumer" \
+  --client codex --operation confluence-write --non-interactive)
+assert_contains "$output" 'Confluence root type: page'
+assert_contains "$output" 'Capability: confluence-page-parent-write'
+assert_contains "$output" 'Capability state: SUPPORTED'
+
+mkdir -p "$HOME/.cursor"
+printf '%s\n' \
+  '{"mcpServers":{"atlassian":{"url":"https://mcp.atlassian.com/v1/mcp/authv2"}}}' \
+  >"$HOME/.cursor/mcp.json"
+printf '%s\n' healthy >"$XDG_CONFIG_HOME/fake-cursor-health"
+output=$($CLI preflight "$consumer" \
+  --client cursor --operation jira-write --non-interactive)
+assert_contains "$output" 'Client: cursor'
+assert_contains "$output" 'Capability state: SUPPORTED'
+
+if output=$($CLI preflight "$consumer" \
+  --client codex --operation jira-board-verify --non-interactive 2>&1)
+then
+  fail 'board verification passed without board capability evidence'
+fi
+assert_contains "$output" 'Capability state: UNKNOWN'
+assert_contains "$output" 'Result: CONNECTOR_CAPABILITY_REQUIRED'
+
+if output=$($CLI preflight "$consumer" \
+  --client codex --operation invalid --non-interactive 2>&1)
+then
+  fail 'preflight accepted an unknown operation'
+fi
+assert_contains "$output" 'Usage:'
+
+printf '%s\n' healthy-read-only >"$XDG_CONFIG_HOME/fake-codex-health"
+if output=$($CLI preflight "$consumer" \
+  --client codex --operation jira-write --non-interactive 2>&1)
+then
+  fail 'jira write passed without create capability'
+fi
+assert_contains "$output" 'Capability state: UNSUPPORTED'
+assert_contains "$output" 'Result: CONNECTOR_CAPABILITY_REQUIRED'
+
+printf '%s\n' healthy-cross-server >"$XDG_CONFIG_HOME/fake-codex-health"
+if output=$($CLI preflight "$consumer" \
+  --client codex --operation jira-write --non-interactive 2>&1)
+then
+  fail 'another server supplied the missing Atlassian capability'
+fi
+assert_contains "$output" 'Capability state: UNSUPPORTED'
+
+printf '%s\n' healthy-similar-tool >"$XDG_CONFIG_HOME/fake-codex-health"
+if output=$($CLI preflight "$consumer" \
+  --client codex --operation jira-write --non-interactive 2>&1)
+then
+  fail 'similarly named tool satisfied the Jira write capability'
+fi
+assert_contains "$output" 'Capability state: UNSUPPORTED'
+
+printf '%s\n' healthy-metadata-tool >"$XDG_CONFIG_HOME/fake-codex-health"
+if output=$($CLI preflight "$consumer" \
+  --client codex --operation jira-write --non-interactive 2>&1)
+then
+  fail 'metadata outside the tools object satisfied Jira write'
+fi
+assert_contains "$output" 'Capability state: UNSUPPORTED'
+
+: >"$XDG_CONFIG_HOME/fake-claude-configured"
+printf '%s\n' auth-required-multiserver \
+  >"$XDG_CONFIG_HOME/fake-claude-health"
+if output=$($CLI preflight "$consumer" \
+  --client claude --operation jira-write --non-interactive 2>&1)
+then
+  fail 'another server masked required Atlassian authentication'
+fi
+assert_contains "$output" 'Result: ATLASSIAN_AUTH_REQUIRED'
+
+printf '%s\n' auth-required-helper >"$XDG_CONFIG_HOME/fake-claude-health"
+if output=$($CLI preflight "$consumer" \
+  --client claude --operation jira-write --non-interactive 2>&1)
+then
+  fail 'an atlassian-helper status masked Atlassian authentication'
+fi
+assert_contains "$output" 'Result: ATLASSIAN_AUTH_REQUIRED'
+
+for negative_health in not-connected disconnected; do
+  printf '%s\n' "$negative_health" >"$XDG_CONFIG_HOME/fake-claude-health"
+  if output=$($CLI preflight "$consumer" \
+    --client claude --operation jira-write --non-interactive 2>&1)
+  then
+    fail "Claude $negative_health status passed"
+  fi
+  assert_contains "$output" 'Result: GOVERNANCE_NOT_READY'
+done
+
+if output=$($CLI preflight "$consumer" --client codex \
+  --operation jira-write --api-token should-not-appear 2>&1)
+then
+  fail 'preflight accepted a developer API token'
+fi
+assert_not_contains "$output" 'should-not-appear'
+
+printf '%s\n' auth-required >"$XDG_CONFIG_HOME/fake-codex-health"
+: >"$CALLS"
+if output=$($CLI preflight "$consumer" \
+  --client codex --operation jira-write --non-interactive 2>&1)
+then
+  fail 'non-interactive preflight invoked OAuth'
+fi
+assert_contains "$output" 'Remediation: codex mcp login atlassian'
+assert_contains "$output" 'Result: ATLASSIAN_AUTH_REQUIRED'
+assert_not_contains "$(cat "$CALLS")" 'codex mcp login atlassian'
+
+: >"$CALLS"
+if output=$(printf 'n\n' | script -qec \
+  "$CLI preflight $consumer --client codex --operation jira-write" \
+  /dev/null 2>&1)
+then
+  fail 'preflight accepted declined OAuth'
+fi
+assert_contains "$output" 'Result: ATLASSIAN_AUTH_REQUIRED'
+assert_not_contains "$(cat "$CALLS")" 'codex mcp login atlassian'
+
+: >"$CALLS"
+output=$(printf 'y\n' | script -qec \
+  "$CLI preflight $consumer --client codex --operation jira-write" \
+  /dev/null 2>&1)
+assert_contains "$output" 'Result: PASS'
+assert_contains "$(cat "$CALLS")" 'codex mcp login atlassian'
+assert_not_contains "$(cat "$CALLS")" 'claude mcp login atlassian'
+assert_not_contains "$(cat "$CALLS")" 'cursor-agent mcp login atlassian'
+
+: >"$CALLS"
+output=$($CLI doctor "$consumer" --client codex)
+assert_contains "$output" 'Connector: PASS'
+assert_contains "$output" 'Authentication: PASS'
+assert_contains "$output" 'Result: PASS'
+$CLI context "$consumer" >/dev/null
+assert_not_contains "$(cat "$CALLS")" 'mcp login atlassian'
 
 printf '%s\n' 'PROFILE=working-tree' >"$consumer/.beroka-governance.conf"
 output=$($CLI context "$consumer")
@@ -190,6 +492,138 @@ output=$($CLI context "$consumer")
 assert_contains "$output" 'Profile: backend'
 assert_contains "$output" 'Cross-repository policy: explicit-only'
 assert_contains "$output" '# Backend–Frontend Integration'
+
+profile_controlled_config='SCHEMA_VERSION=1
+PROFILE=backend
+JIRA_PROJECT_KEY=APP
+JIRA_BOARD_ID=12
+CONFLUENCE_SPACE_KEY=APP
+CONFLUENCE_ROOT_CONTENT_ID=123456
+CONFLUENCE_ROOT_CONTENT_TYPE=page
+INTEGRATION_PROFILE=beroka-be-fe
+CROSS_REPO_POLICY=profile-controlled'
+publish_routing "$profile_controlled_config"
+printf '%s\n' healthy-all >"$XDG_CONFIG_HOME/fake-codex-health"
+output=$($CLI preflight "$consumer" \
+  --client codex --operation cross-repo-write --non-interactive)
+assert_contains "$output" 'Integration profile: beroka-be-fe'
+assert_contains "$output" 'Cross-repository policy: profile-controlled'
+assert_contains "$output" 'Required next preflight: jira-write|confluence-write'
+assert_not_contains "$output" 'Capability state: SUPPORTED'
+
+publish_routing 'SCHEMA_VERSION=1
+PROFILE=standalone
+JIRA_PROJECT_KEY=APP
+INTEGRATION_PROFILE=none
+CROSS_REPO_POLICY=explicit-only'
+if output=$($CLI preflight "$consumer" \
+  --client codex --operation cross-repo-write --non-interactive 2>&1)
+then
+  fail 'cross-repo write passed standalone routing'
+fi
+assert_contains "$output" 'Result: ROUTING_REQUIRED'
+
+: >"$CALLS"
+publish_routing 'SCHEMA_VERSION=1
+PROFILE=standalone
+CONFLUENCE_SPACE_KEY=APP
+CONFLUENCE_ROOT_CONTENT_ID=123456
+CONFLUENCE_ROOT_CONTENT_TYPE=page
+INTEGRATION_PROFILE=none
+CROSS_REPO_POLICY=explicit-only'
+if output=$($CLI preflight "$consumer" \
+  --client codex --operation jira-write --non-interactive 2>&1)
+then
+  fail 'jira write passed without project routing'
+fi
+assert_contains "$output" 'Result: ROUTING_REQUIRED'
+[ ! -s "$CALLS" ] || fail 'routing failure inspected a client'
+
+folder_config='SCHEMA_VERSION=1
+PROFILE=standalone
+JIRA_PROJECT_KEY=APP
+CONFLUENCE_SPACE_KEY=APP
+CONFLUENCE_ROOT_CONTENT_ID=123456
+CONFLUENCE_ROOT_CONTENT_TYPE=folder
+INTEGRATION_PROFILE=none
+CROSS_REPO_POLICY=explicit-only'
+publish_routing "$folder_config"
+printf '%s\n' healthy-all >"$XDG_CONFIG_HOME/fake-codex-health"
+if output=$($CLI preflight "$consumer" \
+  --client codex --operation confluence-write --non-interactive 2>&1)
+then
+  fail 'folder write fell back to page capability'
+fi
+assert_contains "$output" 'Capability: confluence-folder-parent-write'
+assert_contains "$output" 'Capability state: UNKNOWN'
+assert_contains "$output" 'Result: CONNECTOR_CAPABILITY_REQUIRED'
+
+: >"$XDG_CONFIG_HOME/fake-claude-configured"
+printf '%s\n' healthy >"$XDG_CONFIG_HOME/fake-claude-health"
+if output=$($CLI preflight "$consumer" \
+  --client claude --operation confluence-write --non-interactive 2>&1)
+then
+  fail 'folder write passed without compatibility evidence'
+fi
+assert_contains "$output" 'Capability state: UNKNOWN'
+
+printf '%s\n' \
+  'claude	1.2.3	https://mcp.atlassian.com/v1/mcp/authv2	UNAVAILABLE	2026-07-23	confluence-folder-parent-write	SUPPORTED' \
+  'codex	1.0.0	https://mcp.atlassian.com/v1/mcp/authv2	getJiraIssue	2026-07-23	jira-issue-write	SUPPORTED' \
+  >>"$source_repo/runtime/compatibility/atlassian.tsv"
+pin_test_release v1.0.1
+output=$($CLI preflight "$consumer" \
+  --client claude --operation confluence-write --non-interactive)
+assert_contains "$output" 'Capability state: SUPPORTED'
+assert_contains "$output" 'Result: PASS'
+
+printf '%s\n' healthy-read-only >"$XDG_CONFIG_HOME/fake-codex-health"
+if output=$($CLI preflight "$consumer" \
+  --client codex --operation jira-write --non-interactive 2>&1)
+then
+  fail 'compatibility evidence overrode complete runtime inventory'
+fi
+assert_contains "$output" 'Capability state: UNSUPPORTED'
+
+printf '%s\n' \
+  'claude	1.2.3	https://mcp.atlassian.com/v1/mcp/authv2	UNAVAILABLE	2026-07-23	confluence-folder-parent-write	SUPPORTED' \
+  >>"$source_repo/runtime/compatibility/atlassian.tsv"
+pin_test_release v1.0.2
+if output=$($CLI preflight "$consumer" \
+  --client claude --operation confluence-write --non-interactive 2>&1)
+then
+  fail 'duplicate compatibility evidence passed'
+fi
+assert_contains "$output" 'Capability state: UNKNOWN'
+
+sed -i '$d' "$source_repo/runtime/compatibility/atlassian.tsv"
+printf '%s\n' malformed >>"$source_repo/runtime/compatibility/atlassian.tsv"
+pin_test_release v1.0.3
+if output=$($CLI preflight "$consumer" \
+  --client claude --operation confluence-write --non-interactive 2>&1)
+then
+  fail 'malformed compatibility evidence passed'
+fi
+assert_contains "$output" 'Capability state: UNKNOWN'
+
+sed -i '1s/schema=1/schema=2/; /malformed/d' \
+  "$source_repo/runtime/compatibility/atlassian.tsv"
+pin_test_release v1.0.4
+if output=$($CLI preflight "$consumer" \
+  --client claude --operation confluence-write --non-interactive 2>&1)
+then
+  fail 'unsupported compatibility schema passed'
+fi
+assert_contains "$output" 'Result: VERSION_MISMATCH'
+
+sed -i '1d' "$source_repo/runtime/compatibility/atlassian.tsv"
+pin_test_release v1.0.5
+if output=$($CLI preflight "$consumer" \
+  --client claude --operation confluence-write --non-interactive 2>&1)
+then
+  fail 'missing compatibility schema passed'
+fi
+assert_contains "$output" 'Result: VERSION_MISMATCH'
 
 invalid_config='SCHEMA_VERSION=1
 PROFILE=standalone

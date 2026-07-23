@@ -20,6 +20,13 @@ ROUTE_SCHEMA_VERSION= ROUTE_PROFILE= ROUTE_JIRA_PROJECT_KEY=
 ROUTE_JIRA_BOARD_ID= ROUTE_CONFLUENCE_SPACE_KEY=
 ROUTE_CONFLUENCE_ROOT_CONTENT_ID= ROUTE_CONFLUENCE_ROOT_CONTENT_TYPE=
 ROUTE_INTEGRATION_PROFILE= ROUTE_CROSS_REPO_POLICY= DEPENDENCY_STATE=
+CONNECTOR_PROBE_CLIENT= CONNECTOR_PROBE_OUTPUT= CONNECTOR_PROBE_STATUS=
+CONNECTOR_PROBE_STATE=
+CONNECTOR_PROBE_TOOLS=
+CONNECTOR_PROBE_TOOLS_OK=0
+CAPABILITY_INVENTORY= CAPABILITY_INVENTORY_COMPLETE=0
+CAPABILITY_INVENTORY_FORMAT= CAPABILITY_TOOLSET=UNAVAILABLE
+CAPABILITY_STATE= PREFLIGHT_CAPABILITY=
 
 die() {
   code=$1
@@ -41,6 +48,7 @@ usage() {
     '  beroka-governance uninstall [--force]' \
     '  beroka-governance setup-connectors [--client codex|claude|cursor] [--non-interactive]' \
     '  beroka-governance doctor REPO [--client codex|claude|cursor]' \
+    '  beroka-governance preflight REPO --client codex|claude|cursor --operation OPERATION [--non-interactive]' \
     '  beroka-governance context REPO' \
     '  beroka-governance show REPO governance|handbook|workflow' \
     '  beroka-governance show REPO template ai-agent-assignment|github-issue|jira-confluence|pull-request'
@@ -606,10 +614,14 @@ validate_release_checkout() {
       runtime/rules/general.md \
       runtime/profiles/standalone.md runtime/profiles/backend.md \
       runtime/profiles/frontend.md runtime/integrations/beroka-be-fe.md \
-      runtime/integrations/beroka-be-fe.repositories
+      runtime/integrations/beroka-be-fe.repositories \
+      runtime/compatibility/atlassian.tsv
     do
       assert_release_file "$vrc_checkout" "$vrc_routing_file"
     done
+    [ "$(sed -n '1p' \
+      "$vrc_checkout/runtime/compatibility/atlassian.tsv")" = '# schema=1' ] ||
+      die VERSION_MISMATCH 'Unsupported Atlassian compatibility schema'
   fi
   [ "$(sed -n '1p' "$vrc_checkout/VERSION" 2>/dev/null)" = "$vrc_version" ] || die VERSION_MISMATCH 'Installed VERSION does not match requested version'
   [ "$(git -C "$vrc_checkout" cat-file -t "$vrc_version" 2>/dev/null)" = tag ] || die VERSION_MISMATCH 'Installed tag is not annotated'
@@ -1109,32 +1121,316 @@ configure_connector() {
   esac
 }
 
-connector_health() {
-  ch_client=$1
-  case "$ch_client" in
+atlassian_status_line() {
+  awk -F: '{
+    label=$1
+    sub(/^[[:space:]]*/, "", label)
+    sub(/[[:space:]]*$/, "", label)
+    if (tolower(label) == "atlassian") {
+      print
+      exit
+    }
+  }'
+}
+
+connector_probe() {
+  cp_client=$1
+  [ "${CONNECTOR_PROBE_CLIENT:-}" = "$cp_client" ] && return 0
+  CONNECTOR_PROBE_CLIENT=$cp_client
+  CONNECTOR_PROBE_OUTPUT=
+  CONNECTOR_PROBE_STATUS=
+  CONNECTOR_PROBE_STATE=
+  CONNECTOR_PROBE_TOOLS=
+  CONNECTOR_PROBE_TOOLS_OK=0
+  case "$cp_client" in
     codex)
-      ch_output=$(
+      CONNECTOR_PROBE_OUTPUT=$(
         {
           printf '%s\n' \
             '{"method":"initialize","id":0,"params":{"clientInfo":{"name":"beroka-governance","title":"Beroka Governance","version":"1"}}}' \
             '{"method":"initialized","params":{}}' \
             '{"method":"mcpServerStatus/list","id":1,"params":{"detail":"toolsAndAuthOnly","limit":100}}'
           sleep 3
-        } |
-          codex app-server --stdio 2>&1
-      ) || return 2
-      case "$ch_output" in
+        } | codex app-server --stdio 2>&1
+      ) || return 1
+      ;;
+    claude)
+      CONNECTOR_PROBE_OUTPUT=$(claude mcp list 2>&1) || :
+      CONNECTOR_PROBE_STATUS=$(printf '%s\n' "$CONNECTOR_PROBE_OUTPUT" |
+        atlassian_status_line)
+      CONNECTOR_PROBE_STATE=$(printf '%s\n' "$CONNECTOR_PROBE_STATUS" |
+        awk '{
+          sub(/^[^:]*:[[:space:]]*/, "")
+          sub(/[[:space:]]*$/, "")
+          print tolower($0)
+        }')
+      ;;
+    cursor)
+      CONNECTOR_PROBE_OUTPUT=$(cursor-agent mcp list 2>&1) || :
+      CONNECTOR_PROBE_STATUS=$(printf '%s\n' "$CONNECTOR_PROBE_OUTPUT" |
+        atlassian_status_line)
+      CONNECTOR_PROBE_STATE=$(printf '%s\n' "$CONNECTOR_PROBE_STATUS" |
+        awk '{
+          sub(/^[^:]*:[[:space:]]*/, "")
+          sub(/[[:space:]]*$/, "")
+          print tolower($0)
+        }')
+      case "$CONNECTOR_PROBE_STATE" in
+        ready|connected)
+          if CONNECTOR_PROBE_TOOLS=$(
+            cursor-agent mcp list-tools atlassian 2>&1
+          ); then
+            CONNECTOR_PROBE_TOOLS_OK=1
+          fi
+          ;;
+      esac
+      ;;
+  esac
+}
+
+codex_atlassian_record() {
+  awk '
+    {
+      if (NR > 1) raw=raw "\n"
+      raw=raw $0
+    }
+    END {
+      rest=raw
+      base=0
+      matches=0
+      while (match(rest, /"name"[[:space:]]*:[[:space:]]*"atlassian"/)) {
+        matches++
+        target=base + RSTART
+        consumed=RSTART + RLENGTH - 1
+        base += consumed
+        rest=substr(rest, consumed + 1)
+      }
+      if (matches != 1) exit 42
+
+      depth=0
+      in_string=0
+      escaped=0
+      for (i=1; i<target; i++) {
+        c=substr(raw, i, 1)
+        if (in_string) {
+          if (escaped) escaped=0
+          else if (c == "\\") escaped=1
+          else if (c == "\"") in_string=0
+        } else if (c == "\"") {
+          in_string=1
+        } else if (c == "{") {
+          depth++
+          starts[depth]=i
+        } else if (c == "}") {
+          delete starts[depth]
+          depth--
+        }
+      }
+      record_start=starts[depth]
+      if (!record_start) exit 42
+
+      depth=0
+      in_string=0
+      escaped=0
+      for (i=record_start; i<=length(raw); i++) {
+        c=substr(raw, i, 1)
+        if (in_string) {
+          if (escaped) escaped=0
+          else if (c == "\\") escaped=1
+          else if (c == "\"") in_string=0
+        } else if (c == "\"") {
+          in_string=1
+        } else if (c == "{") {
+          depth++
+        } else if (c == "}") {
+          depth--
+          if (depth == 0) {
+            print substr(raw, record_start, i - record_start + 1)
+            exit
+          }
+        }
+      }
+      exit 42
+    }
+  '
+}
+
+json_top_level_tools() {
+  awk '
+    {
+      if (NR > 1) raw=raw "\n"
+      raw=raw $0
+    }
+    END {
+      length_raw=length(raw)
+      depth=0
+      in_string=0
+      escaped=0
+      matches=0
+      for (i=1; i<=length_raw; i++) {
+        c=substr(raw, i, 1)
+        if (in_string) {
+          if (escaped) escaped=0
+          else if (c == "\\") escaped=1
+          else if (c == "\"") in_string=0
+          continue
+        }
+        if (c == "{") {
+          depth++
+          continue
+        }
+        if (c == "}") {
+          depth--
+          continue
+        }
+        if (c != "\"" || depth != 1) continue
+
+        key=""
+        key_escaped=0
+        for (j=i+1; j<=length_raw; j++) {
+          d=substr(raw, j, 1)
+          if (key_escaped) {
+            key=key d
+            key_escaped=0
+          } else if (d == "\\") {
+            key_escaped=1
+          } else if (d == "\"") {
+            break
+          } else {
+            key=key d
+          }
+        }
+        if (j > length_raw) exit 42
+        k=j+1
+        while (substr(raw, k, 1) ~ /[[:space:]]/) k++
+        if (substr(raw, k, 1) != ":") {
+          i=j
+          continue
+        }
+        k++
+        while (substr(raw, k, 1) ~ /[[:space:]]/) k++
+        if (key != "tools") {
+          i=j
+          continue
+        }
+        if (substr(raw, k, 1) != "{") exit 42
+
+        object_start=k
+        object_depth=0
+        object_string=0
+        object_escaped=0
+        closed=0
+        for (l=k; l<=length_raw; l++) {
+          d=substr(raw, l, 1)
+          if (object_string) {
+            if (object_escaped) object_escaped=0
+            else if (d == "\\") object_escaped=1
+            else if (d == "\"") object_string=0
+          } else if (d == "\"") {
+            object_string=1
+          } else if (d == "{") {
+            object_depth++
+          } else if (d == "}") {
+            object_depth--
+            if (object_depth == 0) {
+              object=substr(raw, object_start, l - object_start + 1)
+              matches++
+              closed=1
+              i=l
+              break
+            }
+          }
+        }
+        if (!closed) exit 42
+      }
+      if (matches != 1) exit 42
+      print object
+    }
+  '
+}
+
+inventory_has_tool() {
+  iht_tool=$1
+  case "$CAPABILITY_INVENTORY_FORMAT" in
+    json)
+      printf '%s\n' "$CAPABILITY_INVENTORY" |
+        grep -Eq "\"$iht_tool\"[[:space:]]*:"
+      ;;
+    text)
+      printf '%s\n' "$CAPABILITY_INVENTORY" |
+        awk -v tool="$iht_tool" '
+          {
+            count=split($0, words, /[^A-Za-z0-9_]/)
+            for (i=1; i<=count; i++) if (words[i] == tool) found=1
+          }
+          END { exit !found }
+        '
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+connector_inventory() {
+  ci_client=$1
+  CAPABILITY_INVENTORY=
+  CAPABILITY_INVENTORY_COMPLETE=0
+  CAPABILITY_INVENTORY_FORMAT=
+  CAPABILITY_TOOLSET=UNAVAILABLE
+  case "$ci_client" in
+    codex)
+      connector_probe codex || return 1
+      ci_record=$(printf '%s\n' "$CONNECTOR_PROBE_OUTPUT" |
+        codex_atlassian_record) || return 1
+      CAPABILITY_INVENTORY=$(printf '%s\n' "$ci_record" |
+        json_top_level_tools) || return 1
+      CAPABILITY_INVENTORY_FORMAT=json
+      CAPABILITY_INVENTORY_COMPLETE=1
+      ;;
+    claude)
+      CAPABILITY_INVENTORY_COMPLETE=0
+      ;;
+    cursor)
+      connector_probe cursor || return 1
+      [ "$CONNECTOR_PROBE_TOOLS_OK" -eq 1 ] &&
+        [ -n "$CONNECTOR_PROBE_TOOLS" ] || return 1
+      CAPABILITY_INVENTORY=$CONNECTOR_PROBE_TOOLS
+      CAPABILITY_INVENTORY_FORMAT=text
+      CAPABILITY_INVENTORY_COMPLETE=1
+      ;;
+  esac
+  [ "$CAPABILITY_INVENTORY_COMPLETE" -eq 1 ] || return 0
+  CAPABILITY_TOOLSET=
+  for ci_tool in \
+    createConfluencePage createJiraIssue getConfluencePage getJiraIssue
+  do
+    if inventory_has_tool "$ci_tool"; then
+      if [ -n "$CAPABILITY_TOOLSET" ]; then
+        CAPABILITY_TOOLSET=$CAPABILITY_TOOLSET,$ci_tool
+      else
+        CAPABILITY_TOOLSET=$ci_tool
+      fi
+    fi
+  done
+  [ -n "$CAPABILITY_TOOLSET" ] || CAPABILITY_TOOLSET=EMPTY
+}
+
+connector_health() {
+  ch_client=$1
+  connector_probe "$ch_client" || return 2
+  case "$ch_client" in
+    codex)
+      case "$CONNECTOR_PROBE_OUTPUT" in
         *'server atlassian:'*unauthorized_client*|\
         *'server atlassian:'*'401 Unauthorized'*|\
         *'server atlassian:'*'403 Forbidden'*) return 1 ;;
       esac
-      if printf '%s\n' "$ch_output" |
+      if printf '%s\n' "$CONNECTOR_PROBE_OUTPUT" |
         awk '/"name":"atlassian"/ && /"failureReason":"reauthenticationRequired"/ { found=1 } END { exit !found }'
       then
         return 1
       fi
       ch_status=$(
-        printf '%s\n' "$ch_output" |
+        printf '%s\n' "$CONNECTOR_PROBE_OUTPUT" |
           sed 's/},{"name":/}\
 {"name":/g' |
           awk '/"name":"atlassian"/ && /"authStatus":/ { print; exit }'
@@ -1152,24 +1448,22 @@ connector_health() {
       esac
       ;;
     claude)
-      ch_output=$(claude mcp list 2>&1) || :
-      case "$ch_output" in
-        *atlassian*Connected*|*atlassian*connected*) return 0 ;;
-        *atlassian*auth*|*atlassian*Auth*|*atlassian*login*|*atlassian*401*|*atlassian*403*) return 1 ;;
+      case "$CONNECTOR_PROBE_STATE" in
+        connected) return 0 ;;
+        *auth*|*login*|*401*|*403*) return 1 ;;
         *) return 2 ;;
       esac
       ;;
     cursor)
-      ch_output=$(cursor-agent mcp list 2>&1) || :
-      case "$ch_output" in
-        *atlassian*ready*|*atlassian*Ready*|*atlassian*connected*|*atlassian*Connected*)
-          ch_output=$(cursor-agent mcp list-tools atlassian 2>&1) && return 0
-          case "$ch_output" in
+      case "$CONNECTOR_PROBE_STATE" in
+        ready|connected)
+          [ "$CONNECTOR_PROBE_TOOLS_OK" -eq 0 ] || return 0
+          case "$CONNECTOR_PROBE_TOOLS" in
             *auth*|*Auth*|*login*|*401*|*403*) return 1 ;;
             *) return 2 ;;
           esac
           ;;
-        *atlassian*auth*|*atlassian*Auth*|*atlassian*login*|*atlassian*401*|*atlassian*403*) return 1 ;;
+        *auth*|*login*|*401*|*403*) return 1 ;;
         *) return 2 ;;
       esac
       ;;
@@ -1181,6 +1475,99 @@ run_oauth() {
     codex) codex mcp login atlassian ;;
     claude) claude mcp login atlassian ;;
     cursor) cursor-agent mcp login atlassian ;;
+  esac || return $?
+  CONNECTOR_PROBE_CLIENT=
+  CONNECTOR_PROBE_OUTPUT=
+  CONNECTOR_PROBE_STATUS=
+  CONNECTOR_PROBE_STATE=
+  CONNECTOR_PROBE_TOOLS=
+  CONNECTOR_PROBE_TOOLS_OK=0
+}
+
+runtime_capability() {
+  rc_capability=$1
+  CAPABILITY_STATE=UNKNOWN
+  case "$rc_capability" in
+    jira-issue-write)
+      if inventory_has_tool createJiraIssue &&
+         inventory_has_tool getJiraIssue
+      then
+        CAPABILITY_STATE=SUPPORTED
+      elif [ "$CAPABILITY_INVENTORY_COMPLETE" -eq 1 ]; then
+        CAPABILITY_STATE=UNSUPPORTED
+      fi
+      ;;
+    confluence-page-parent-write)
+      if inventory_has_tool createConfluencePage &&
+         inventory_has_tool getConfluencePage
+      then
+        CAPABILITY_STATE=SUPPORTED
+      elif [ "$CAPABILITY_INVENTORY_COMPLETE" -eq 1 ]; then
+        CAPABILITY_STATE=UNSUPPORTED
+      fi
+      ;;
+    jira-board-verification|confluence-folder-parent-write)
+      CAPABILITY_STATE=UNKNOWN
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+compatibility_capability() {
+  cc_client=$1 cc_capability=$2
+  cc_file=$RELEASE_DIR/runtime/compatibility/atlassian.tsv
+  [ "$(sed -n '1p' "$cc_file" 2>/dev/null)" = '# schema=1' ] || return 1
+  cc_executable=$(client_executable "$cc_client")
+  cc_version=$("$cc_executable" --version 2>/dev/null |
+    sed -n '1{s/.* //;p;}') || return 1
+  printf '%s\n' "$cc_version" |
+    grep -Eq '^[A-Za-z0-9._+-]+$' || return 1
+  awk -F '\t' \
+    -v client="$cc_client" \
+    -v version="$cc_version" \
+    -v endpoint="$ATLASSIAN_MCP_URL" \
+    -v toolset="$CAPABILITY_TOOLSET" \
+    -v capability="$cc_capability" '
+      /^[[:space:]]*$/ || /^#/ { next }
+      {
+        if (NF != 7 ||
+            $1 !~ /^(codex|claude|cursor)$/ ||
+            $2 !~ /^[A-Za-z0-9._+-]+$/ ||
+            $3 == "" ||
+            $4 == "" ||
+            $5 !~ /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/ ||
+            $6 !~ /^[a-z][a-z0-9-]+$/ ||
+            $7 !~ /^(SUPPORTED|UNSUPPORTED)$/) invalid=1
+        if ($1 == client &&
+            $2 == version &&
+            $3 == endpoint &&
+            $4 == toolset &&
+            $6 == capability) {
+          matches++
+          result=$7
+        }
+      }
+      END {
+        if (invalid || matches > 1) exit 42
+        if (matches == 1) print result
+        else exit 1
+      }
+    ' "$cc_file"
+}
+
+resolve_capability() {
+  rcap_client=$1 rcap_capability=$2
+  connector_inventory "$rcap_client" || {
+    CAPABILITY_STATE=UNKNOWN
+    return 0
+  }
+  runtime_capability "$rcap_capability" || return 1
+  [ "$CAPABILITY_STATE" = UNKNOWN ] || return 0
+  rcap_compat=$(compatibility_capability \
+    "$rcap_client" "$rcap_capability") || rcap_compat=
+  case "$rcap_compat" in
+    SUPPORTED|UNSUPPORTED) CAPABILITY_STATE=$rcap_compat ;;
+    *) CAPABILITY_STATE=UNKNOWN ;;
   esac
 }
 
@@ -1233,6 +1620,185 @@ auth_required() {
     'Authentication: AUTH_REQUIRED' \
     "Remediation: $(oauth_command "$ar_client")"
   die ATLASSIAN_AUTH_REQUIRED
+}
+
+require_operation_routing() {
+  ror_operation=$1
+  case "$ror_operation" in
+    jira-write)
+      [ -n "$ROUTE_JIRA_PROJECT_KEY" ] ||
+        die ROUTING_REQUIRED 'JIRA_PROJECT_KEY is required for jira-write'
+      PREFLIGHT_CAPABILITY=jira-issue-write
+      ;;
+    jira-board-verify)
+      [ -n "$ROUTE_JIRA_PROJECT_KEY" ] ||
+        die ROUTING_REQUIRED 'JIRA_PROJECT_KEY is required for jira-board-verify'
+      [ -n "$ROUTE_JIRA_BOARD_ID" ] ||
+        die ROUTING_REQUIRED 'JIRA_BOARD_ID is required for jira-board-verify'
+      PREFLIGHT_CAPABILITY=jira-board-verification
+      ;;
+    confluence-write)
+      [ -n "$ROUTE_CONFLUENCE_SPACE_KEY" ] &&
+        [ -n "$ROUTE_CONFLUENCE_ROOT_CONTENT_ID" ] &&
+        [ -n "$ROUTE_CONFLUENCE_ROOT_CONTENT_TYPE" ] ||
+        die ROUTING_REQUIRED 'Confluence space, root content ID, and root type are required'
+      case "$ROUTE_CONFLUENCE_ROOT_CONTENT_TYPE" in
+        page) PREFLIGHT_CAPABILITY=confluence-page-parent-write ;;
+        folder) PREFLIGHT_CAPABILITY=confluence-folder-parent-write ;;
+      esac
+      ;;
+    cross-repo-write)
+      [ "$ROUTE_CROSS_REPO_POLICY" = profile-controlled ] &&
+        [ "$ROUTE_INTEGRATION_PROFILE" != none ] ||
+        die ROUTING_REQUIRED 'Reviewed profile-controlled integration is required'
+      PREFLIGHT_CAPABILITY=
+      ;;
+    *) usage >&2; exit 2 ;;
+  esac
+}
+
+print_preflight_result() {
+  ppr_client=$1 ppr_operation=$2
+  printf '%s\n' \
+    "Client: $ppr_client" \
+    "Routing baseline commit: $ROUTING_BASELINE_COMMIT" \
+    "Profile: $ROUTE_PROFILE" \
+    "Integration profile: $ROUTE_INTEGRATION_PROFILE" \
+    "Cross-repository policy: $ROUTE_CROSS_REPO_POLICY" \
+    "Operation: $ppr_operation"
+  case "$ppr_operation" in
+    jira-write)
+      printf '%s\n' "Jira project: $ROUTE_JIRA_PROJECT_KEY"
+      ;;
+    jira-board-verify)
+      printf '%s\n' \
+        "Jira project: $ROUTE_JIRA_PROJECT_KEY" \
+        "Jira board: $ROUTE_JIRA_BOARD_ID"
+      ;;
+    confluence-write)
+      printf '%s\n' \
+        "Confluence space: $ROUTE_CONFLUENCE_SPACE_KEY" \
+        "Confluence root content: $ROUTE_CONFLUENCE_ROOT_CONTENT_ID" \
+        "Confluence root type: $ROUTE_CONFLUENCE_ROOT_CONTENT_TYPE"
+      ;;
+    cross-repo-write)
+      printf '%s\n' \
+        'Required next preflight: jira-write|confluence-write' \
+        'Result: PASS'
+      return
+      ;;
+  esac
+  printf '%s\n' \
+    "Capability: $PREFLIGHT_CAPABILITY" \
+    "Capability state: $CAPABILITY_STATE" \
+    'Result: PASS'
+}
+
+cmd_preflight() {
+  pf_repo=$1
+  shift
+  pf_client= pf_operation= pf_non_interactive=0
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --client)
+        [ -z "$pf_client" ] && [ "$#" -ge 2 ] ||
+          { usage >&2; exit 2; }
+        case "$2" in
+          codex|claude|cursor) pf_client=$2 ;;
+          *) usage >&2; exit 2 ;;
+        esac
+        shift 2
+        ;;
+      --operation)
+        [ -z "$pf_operation" ] && [ "$#" -ge 2 ] ||
+          { usage >&2; exit 2; }
+        pf_operation=$2
+        shift 2
+        ;;
+      --non-interactive)
+        [ "$pf_non_interactive" -eq 0 ] || { usage >&2; exit 2; }
+        pf_non_interactive=1
+        shift
+        ;;
+      *) usage >&2; exit 2 ;;
+    esac
+  done
+  [ -n "$pf_client" ] && [ -n "$pf_operation" ] ||
+    { usage >&2; exit 2; }
+
+  verify_registration "$pf_repo"
+  [ -f "$RELEASE_DIR/runtime/routing-schema" ] &&
+    [ "$(sed -n '1p' "$RELEASE_DIR/runtime/routing-schema")" = 1 ] ||
+    die GOVERNANCE_NOT_READY \
+      'Update the repository to a release with runtime/routing-schema=1 before preflight'
+  resolve_routing
+  case "$ROUTING_STATE" in
+    ROUTING_ACTIVE) ;;
+    ROUTING_REQUIRED) routing_cleanup; die ROUTING_REQUIRED ;;
+    ROUTING_CHANGE_PENDING) routing_cleanup; die ROUTING_CHANGE_PENDING ;;
+    ROUTING_INVALID) routing_cleanup; die ROUTING_INVALID ;;
+    *) routing_cleanup; die ROUTING_VERIFICATION_REQUIRED ;;
+  esac
+  parse_routing "$ROUTING_BASELINE_FILE" || {
+    routing_cleanup
+    die ROUTING_INVALID
+  }
+  require_operation_routing "$pf_operation"
+
+  require_client "$pf_client"
+  pf_connector=0
+  connector_state "$pf_client" || pf_connector=$?
+  [ "$pf_connector" -eq 0 ] || {
+    routing_cleanup
+    die CONNECTOR_MISSING \
+      "Missing compatible Atlassian connector for $pf_client"
+  }
+  pf_health=0
+  connector_health "$pf_client" || pf_health=$?
+  if [ "$pf_health" -eq 1 ]; then
+    pf_interactive=0
+    if [ "$pf_non_interactive" -eq 0 ] && [ -t 0 ] && [ -t 1 ]; then
+      pf_interactive=1
+    fi
+    if [ "$pf_interactive" -eq 1 ]; then
+      printf '%s\n' "Client: $pf_client" 'Authentication: AUTH_REQUIRED'
+      printf 'Start OAuth now? [y/N] '
+      IFS= read -r pf_answer || pf_answer=
+      case "$pf_answer" in
+        y|Y|yes|YES)
+          run_oauth "$pf_client" || {
+            routing_cleanup
+            auth_required "$pf_client"
+          }
+          connector_health "$pf_client" || {
+            routing_cleanup
+            auth_required "$pf_client"
+          }
+          ;;
+        *) routing_cleanup; auth_required "$pf_client" ;;
+      esac
+    else
+      routing_cleanup
+      auth_required "$pf_client"
+    fi
+  elif [ "$pf_health" -ne 0 ]; then
+    routing_cleanup
+    die GOVERNANCE_NOT_READY 'Cannot verify Atlassian connector health'
+  fi
+
+  if [ -n "$PREFLIGHT_CAPABILITY" ]; then
+    resolve_capability "$pf_client" "$PREFLIGHT_CAPABILITY"
+    if [ "$CAPABILITY_STATE" != SUPPORTED ]; then
+      printf '%s\n' \
+        "Operation: $pf_operation" \
+        "Capability: $PREFLIGHT_CAPABILITY" \
+        "Capability state: $CAPABILITY_STATE"
+      routing_cleanup
+      die CONNECTOR_CAPABILITY_REQUIRED
+    fi
+  fi
+  print_preflight_result "$pf_client" "$pf_operation"
+  routing_cleanup
 }
 
 cmd_setup_connectors() {
@@ -1404,6 +1970,13 @@ main() {
     doctor)
       { [ "$#" -eq 2 ] || [ "$#" -eq 4 ]; } || { usage >&2; exit 2; }
       cmd_doctor "$2" "${3:-}" "${4:-}"
+      ;;
+    preflight)
+      [ "$#" -ge 6 ] || { usage >&2; exit 2; }
+      shift
+      pf_repo=$1
+      shift
+      cmd_preflight "$pf_repo" "$@"
       ;;
     context) [ "$#" -eq 2 ] || { usage >&2; exit 2; }; cmd_context "$2" ;;
     show) [ "$#" -ge 3 ] && [ "$#" -le 4 ] || { usage >&2; exit 2; }; cmd_show "$2" "$3" "${4:-}" ;;

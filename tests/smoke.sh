@@ -48,7 +48,7 @@ make_release_fixture() {
   cp -R "$ROOT/runtime" "$source_repo/runtime"
   rm -f "$source_repo/runtime/routing-schema"
   rm -rf "$source_repo/runtime/rules" "$source_repo/runtime/profiles" \
-    "$source_repo/runtime/integrations"
+    "$source_repo/runtime/integrations" "$source_repo/runtime/compatibility"
   printf 'PINNED ENTRYPOINT v1.0.0\n' >"$source_repo/runtime/entrypoint.md"
   printf 'GOVERNANCE v1.0.0\n' >"$source_repo/governance.md"
   printf 'HANDBOOK v1.0.0\n' >"$source_repo/handbook.md"
@@ -133,6 +133,26 @@ assert_contains "$context_output" 'PINNED ENTRYPOINT v1.0.0'
 case "$context_output" in
   *'Routing:'*) fail 'legacy Context resolved routing' ;;
 esac
+
+marker_fake=$TMP_ROOT/marker-fake
+marker_calls=$TMP_ROOT/marker-calls
+mkdir -p "$marker_fake"
+cat >"$marker_fake/codex" <<'EOF'
+#!/bin/sh
+printf '%s\n' "$*" >>"$CALLS"
+exit 1
+EOF
+chmod 755 "$marker_fake/codex"
+: >"$marker_calls"
+if marker_output=$(CALLS=$marker_calls PATH=$marker_fake:$PATH \
+  $CLI preflight "$consumer" \
+  --client codex --operation jira-write --non-interactive 2>&1)
+then
+  fail 'legacy release passed connector preflight'
+fi
+assert_contains "$marker_output" 'Result: GOVERNANCE_NOT_READY'
+assert_contains "$marker_output" 'Update the repository'
+[ ! -s "$marker_calls" ] || fail 'legacy preflight inspected a connector'
 
 show_output=$($CLI show "$consumer" governance)
 assert_contains "$show_output" 'GOVERNANCE v1.0.0'
