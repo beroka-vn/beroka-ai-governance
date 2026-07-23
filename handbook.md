@@ -15,8 +15,9 @@ trước khi đọc hoặc ghi GitHub, Jira hay Confluence.
 | Confluence Backend | Space [`Beroka-backend`](https://beroka.atlassian.net/wiki/spaces/Berokaback/overview) |
 | Confluence Frontend | Space [`Beroka-frontend`](https://beroka.atlassian.net/wiki/spaces/Berokafron) |
 
-Read access tới cả `BB` và `BF` là bắt buộc cho counterpart discovery. Write
-access chỉ dùng trong project/repository/space thuộc request đã xác nhận. Nếu
+Read access chỉ cần cho selected profile, requested operation và selected integration profile.
+BE–FE targets chỉ áp dụng khi reviewed beroka-be-fe integration profile được chọn và operation yêu cầu.
+Write access chỉ dùng trong project/repository/space thuộc request đã xác nhận. Nếu
 Frontend repository chưa resolve thành một exact URL, agent dừng external write
 và hỏi developer; không tự chọn từ organization list.
 
@@ -205,9 +206,9 @@ release. Repository chưa register không được package áp dụng.
 
 | Provider | Read bắt buộc | Write chỉ khi request cần | Không yêu cầu mặc định |
 | --- | --- | --- | --- |
-| GitHub | Repositories, Issues, PRs, checks | Create/update Issue, comment, branch/PR trong owned scope | Repository admin, secret management, destructive actions |
-| Jira | Browse `BB` và `BF`, board/backlog, users, links | Create/edit/assign/link/transition item trong confirmed project | Jira admin, sửa board filter/workflow/scheme |
-| Confluence | Đọc hai team spaces và shared Integration Hub | Tạo/update Folder/page trong confirmed owning space | Space admin, delete/move hàng loạt |
+| GitHub | Current repository; exact counterpart chỉ khi selected integration/operation cần | Create/update Issue, comment, branch/PR trong owned scope | Repository admin, secret management, destructive actions |
+| Jira | Project của selected profile; board/backlog chỉ khi operation yêu cầu và Board capability được chứng minh | Create/edit/assign/link/transition item trong confirmed project | Jira admin, sửa board filter/workflow/scheme |
+| Confluence | Space/root của selected profile; shared Integration Hub chỉ khi selected integration/operation cần | Tạo/update Folder/page trong confirmed owning space | Space admin, delete/move hàng loạt |
 
 Permission không được mở rộng chỉ để làm preflight pass. Nếu action thực tế cần
 quyền cao hơn, agent báo exact target/action và chờ người có authority.

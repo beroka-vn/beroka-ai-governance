@@ -783,3 +783,7 @@ grep -F 'CONNECTOR_CAPABILITY_REQUIRED' "$ROOT/handbook.md" >/dev/null ||
   fail 'handbook does not document capability remediation'
 grep -F 'INTEGRATION_PROFILE=none không trigger BE–FE hoặc cross-repository discovery' "$ROOT/handbook.md" >/dev/null ||
   fail 'handbook does not document standalone preflight scope'
+grep -F 'Read access chỉ cần cho selected profile, requested operation và selected integration profile' "$ROOT/handbook.md" >/dev/null ||
+  fail 'handbook does not scope team permissions'
+grep -F 'BE–FE targets chỉ áp dụng khi reviewed beroka-be-fe integration profile được chọn và operation yêu cầu' "$ROOT/handbook.md" >/dev/null ||
+  fail 'handbook does not scope required reads'
