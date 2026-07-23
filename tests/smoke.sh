@@ -44,6 +44,11 @@ make_release_fixture() {
   printf 'v1.0.0\n' >"$source_repo/VERSION"
   cp "$CLI" "$source_repo/bin/beroka-governance"
   chmod 755 "$source_repo/bin/beroka-governance"
+  rm -rf "$source_repo/runtime"
+  cp -R "$ROOT/runtime" "$source_repo/runtime"
+  rm -f "$source_repo/runtime/routing-schema"
+  rm -rf "$source_repo/runtime/rules" "$source_repo/runtime/profiles" \
+    "$source_repo/runtime/integrations"
   printf 'PINNED ENTRYPOINT v1.0.0\n' >"$source_repo/runtime/entrypoint.md"
   printf 'GOVERNANCE v1.0.0\n' >"$source_repo/governance.md"
   printf 'HANDBOOK v1.0.0\n' >"$source_repo/handbook.md"
@@ -59,6 +64,8 @@ make_release_fixture() {
   git -C "$source_repo" commit -qm 'test: create v1 fixture'
   git -C "$source_repo" tag -a v1.0.0 -m 'v1.0.0'
   printf 'v1.1.0\n' >"$source_repo/VERSION"
+  rm -rf "$source_repo/runtime"
+  cp -R "$ROOT/runtime" "$source_repo/runtime"
   printf 'PINNED ENTRYPOINT v1.1.0\n' >"$source_repo/runtime/entrypoint.md"
   printf 'GOVERNANCE v1.1.0\n' >"$source_repo/governance.md"
   git -C "$source_repo" add .
@@ -123,6 +130,9 @@ assert_contains "$doctor_output" 'Version: v1.0.0'
 
 context_output=$($CLI context "$consumer")
 assert_contains "$context_output" 'PINNED ENTRYPOINT v1.0.0'
+case "$context_output" in
+  *'Routing:'*) fail 'legacy Context resolved routing' ;;
+esac
 
 show_output=$($CLI show "$consumer" governance)
 assert_contains "$show_output" 'GOVERNANCE v1.0.0'

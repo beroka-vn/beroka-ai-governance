@@ -16,6 +16,10 @@ TX_CLI_PATH= TX_CLI_SNAPSHOT=0 TX_REGISTRY_SNAPSHOT=0 TX_REGISTRY_ACTION=none
 ROUTING_FILE=.beroka-governance.conf
 ROUTING_STATE= ROUTING_BASELINE_PRESENT=0 ROUTING_BASELINE_COMMIT=
 ROUTING_BASELINE_FILE= ROUTING_TEMP_DIR=
+ROUTE_SCHEMA_VERSION= ROUTE_PROFILE= ROUTE_JIRA_PROJECT_KEY=
+ROUTE_JIRA_BOARD_ID= ROUTE_CONFLUENCE_SPACE_KEY=
+ROUTE_CONFLUENCE_ROOT_CONTENT_ID= ROUTE_CONFLUENCE_ROOT_CONTENT_TYPE=
+ROUTE_INTEGRATION_PROFILE= ROUTE_CROSS_REPO_POLICY= DEPENDENCY_STATE=
 
 die() {
   code=$1
@@ -281,6 +285,114 @@ resolve_routing() {
   else
     ROUTING_STATE=ROUTING_CHANGE_PENDING
   fi
+  if [ "$ROUTING_BASELINE_PRESENT" -eq 1 ] &&
+     ! parse_routing "$ROUTING_BASELINE_FILE"
+  then
+    ROUTING_STATE=ROUTING_INVALID
+    return 0
+  fi
+  if [ "$ROUTING_STATE" = ROUTING_CHANGE_PENDING ] &&
+     [ -e "$REPO/$ROUTING_FILE" ]
+  then
+    if (parse_routing "$REPO/$ROUTING_FILE"); then
+      printf '%s\n' 'Local routing validation: PASS'
+    else
+      printf '%s\n' 'Local routing validation: INVALID'
+    fi
+  fi
+}
+
+clear_routing_values() {
+  ROUTE_SCHEMA_VERSION= ROUTE_PROFILE= ROUTE_JIRA_PROJECT_KEY=
+  ROUTE_JIRA_BOARD_ID= ROUTE_CONFLUENCE_SPACE_KEY=
+  ROUTE_CONFLUENCE_ROOT_CONTENT_ID=
+  ROUTE_CONFLUENCE_ROOT_CONTENT_TYPE=
+  ROUTE_INTEGRATION_PROFILE= ROUTE_CROSS_REPO_POLICY=
+  DEPENDENCY_STATE=
+}
+
+parse_routing() {
+  pr_file=$1
+  clear_routing_values
+  [ ! -L "$pr_file" ] && [ -f "$pr_file" ] || return 1
+  pr_parsed=$(
+    awk -F= '
+      /^[[:space:]]*$/ { next }
+      index($0, "=") == 0 { exit 42 }
+      {
+        key=$1
+        value=substr($0, length(key) + 2)
+        if (key !~ /^[A-Z][A-Z0-9_]*$/ || value == "" || seen[key]++) exit 42
+        if (key != "SCHEMA_VERSION" &&
+            key != "PROFILE" &&
+            key != "JIRA_PROJECT_KEY" &&
+            key != "JIRA_BOARD_ID" &&
+            key != "CONFLUENCE_SPACE_KEY" &&
+            key != "CONFLUENCE_ROOT_CONTENT_ID" &&
+            key != "CONFLUENCE_ROOT_CONTENT_TYPE" &&
+            key != "INTEGRATION_PROFILE" &&
+            key != "CROSS_REPO_POLICY") exit 42
+        print key "\t" value
+      }
+    ' "$pr_file"
+  ) || return 1
+  while IFS="$(printf '\t')" read -r pr_key pr_value; do
+    case "$pr_key" in
+      SCHEMA_VERSION) ROUTE_SCHEMA_VERSION=$pr_value ;;
+      PROFILE) ROUTE_PROFILE=$pr_value ;;
+      JIRA_PROJECT_KEY) ROUTE_JIRA_PROJECT_KEY=$pr_value ;;
+      JIRA_BOARD_ID) ROUTE_JIRA_BOARD_ID=$pr_value ;;
+      CONFLUENCE_SPACE_KEY) ROUTE_CONFLUENCE_SPACE_KEY=$pr_value ;;
+      CONFLUENCE_ROOT_CONTENT_ID) ROUTE_CONFLUENCE_ROOT_CONTENT_ID=$pr_value ;;
+      CONFLUENCE_ROOT_CONTENT_TYPE) ROUTE_CONFLUENCE_ROOT_CONTENT_TYPE=$pr_value ;;
+      INTEGRATION_PROFILE) ROUTE_INTEGRATION_PROFILE=$pr_value ;;
+      CROSS_REPO_POLICY) ROUTE_CROSS_REPO_POLICY=$pr_value ;;
+    esac
+  done <<EOF
+$pr_parsed
+EOF
+
+  [ "$ROUTE_SCHEMA_VERSION" = 1 ] || return 1
+  case "$ROUTE_PROFILE" in standalone|backend|frontend) ;; *) return 1 ;; esac
+  case "$ROUTE_INTEGRATION_PROFILE" in none|beroka-be-fe) ;; *) return 1 ;; esac
+  case "$ROUTE_CROSS_REPO_POLICY" in explicit-only|profile-controlled) ;; *) return 1 ;; esac
+  [ -z "$ROUTE_JIRA_PROJECT_KEY" ] ||
+    printf '%s\n' "$ROUTE_JIRA_PROJECT_KEY" |
+      grep -Eq '^[A-Z][A-Z0-9_]*$' || return 1
+  [ -z "$ROUTE_JIRA_BOARD_ID" ] ||
+    printf '%s\n' "$ROUTE_JIRA_BOARD_ID" |
+      grep -Eq '^[1-9][0-9]*$' || return 1
+  [ -z "$ROUTE_CONFLUENCE_SPACE_KEY" ] ||
+    printf '%s\n' "$ROUTE_CONFLUENCE_SPACE_KEY" |
+      grep -Eq '^[A-Za-z0-9._~-]+$' || return 1
+  [ -z "$ROUTE_CONFLUENCE_ROOT_CONTENT_ID" ] ||
+    printf '%s\n' "$ROUTE_CONFLUENCE_ROOT_CONTENT_ID" |
+      grep -Eq '^[1-9][0-9]*$' || return 1
+  case "$ROUTE_CONFLUENCE_ROOT_CONTENT_TYPE" in ''|page|folder) ;; *) return 1 ;; esac
+
+  [ "$ROUTE_INTEGRATION_PROFILE" != none ] ||
+    [ "$ROUTE_CROSS_REPO_POLICY" = explicit-only ] || return 1
+  [ "$ROUTE_PROFILE" != standalone ] ||
+    [ "$ROUTE_INTEGRATION_PROFILE:$ROUTE_CROSS_REPO_POLICY" = none:explicit-only ] ||
+    return 1
+  [ "$ROUTE_INTEGRATION_PROFILE" != beroka-be-fe ] ||
+    [ "$ROUTE_PROFILE" = backend ] || [ "$ROUTE_PROFILE" = frontend ] ||
+    return 1
+  if [ "$ROUTE_INTEGRATION_PROFILE" = beroka-be-fe ]; then
+    awk -F '\t' \
+      -v repository="$LOCK_REPOSITORY" \
+      -v profile="$ROUTE_PROFILE" '
+        $0 !~ /^#/ && $1 == repository && $2 == profile { found=1 }
+        END { exit !found }
+      ' "$RELEASE_DIR/runtime/integrations/beroka-be-fe.repositories" ||
+      return 1
+  fi
+
+  if [ "$ROUTE_INTEGRATION_PROFILE" = none ]; then
+    DEPENDENCY_STATE=NO_DEPENDENCY_DECLARED
+  else
+    DEPENDENCY_STATE=MAPPING_VERIFICATION_REQUIRED
+  fi
 }
 
 target_dirty() {
@@ -486,6 +598,19 @@ validate_release_checkout() {
   do
     assert_release_file "$vrc_checkout" "$vrc_required"
   done
+  if [ -e "$vrc_checkout/runtime/routing-schema" ]; then
+    assert_release_file "$vrc_checkout" runtime/routing-schema
+    [ "$(sed -n '1p' "$vrc_checkout/runtime/routing-schema")" = 1 ] ||
+      die VERSION_MISMATCH 'Unsupported routing schema in installed release'
+    for vrc_routing_file in \
+      runtime/rules/general.md \
+      runtime/profiles/standalone.md runtime/profiles/backend.md \
+      runtime/profiles/frontend.md runtime/integrations/beroka-be-fe.md \
+      runtime/integrations/beroka-be-fe.repositories
+    do
+      assert_release_file "$vrc_checkout" "$vrc_routing_file"
+    done
+  fi
   [ "$(sed -n '1p' "$vrc_checkout/VERSION" 2>/dev/null)" = "$vrc_version" ] || die VERSION_MISMATCH 'Installed VERSION does not match requested version'
   [ "$(git -C "$vrc_checkout" cat-file -t "$vrc_version" 2>/dev/null)" = tag ] || die VERSION_MISMATCH 'Installed tag is not annotated'
   RELEASE_COMMIT=$(git -C "$vrc_checkout" rev-parse "$vrc_version^{commit}" 2>/dev/null) || die VERSION_MISMATCH "Installed tag is missing: $vrc_version"
@@ -1210,15 +1335,43 @@ cmd_doctor() {
 cmd_context() {
   verify_registration "$1"
   cat "$RELEASE_DIR/runtime/entrypoint.md" || die GOVERNANCE_NOT_READY 'Cannot read runtime entrypoint'
+  [ -e "$RELEASE_DIR/runtime/routing-schema" ] || return 0
   resolve_routing
   printf '%s\n' \
     "Routing: $ROUTING_STATE" \
     "Routing baseline commit: ${ROUTING_BASELINE_COMMIT:-UNVERIFIED}"
+  render_routing_context
   case "$ROUTING_STATE" in
     ROUTING_ACTIVE) printf '%s\n' 'External routing-dependent writes: PREFLIGHT_REQUIRED' ;;
     *) printf '%s\n' 'External routing-dependent writes: BLOCKED' ;;
   esac
   routing_cleanup
+}
+
+render_routing_context() {
+  cat "$RELEASE_DIR/runtime/rules/general.md" ||
+    die GOVERNANCE_NOT_READY 'Cannot read general runtime rules'
+  [ "$ROUTING_BASELINE_PRESENT" -eq 1 ] || return 0
+  case "$ROUTING_STATE" in
+    ROUTING_ACTIVE|ROUTING_CHANGE_PENDING) ;;
+    *) return 0 ;;
+  esac
+  printf '%s\n' \
+    "Profile: $ROUTE_PROFILE" \
+    "Dependency state: $DEPENDENCY_STATE" \
+    "Jira project: ${ROUTE_JIRA_PROJECT_KEY:-ROUTING_REQUIRED}" \
+    "Jira board: ${ROUTE_JIRA_BOARD_ID:-NOT_DECLARED}" \
+    "Confluence space: ${ROUTE_CONFLUENCE_SPACE_KEY:-ROUTING_REQUIRED}" \
+    "Confluence root content: ${ROUTE_CONFLUENCE_ROOT_CONTENT_ID:-ROUTING_REQUIRED}" \
+    "Confluence root type: ${ROUTE_CONFLUENCE_ROOT_CONTENT_TYPE:-ROUTING_REQUIRED}" \
+    "Integration profile: $ROUTE_INTEGRATION_PROFILE" \
+    "Cross-repository policy: $ROUTE_CROSS_REPO_POLICY"
+  cat "$RELEASE_DIR/runtime/profiles/$ROUTE_PROFILE.md" ||
+    die GOVERNANCE_NOT_READY 'Cannot read repository profile'
+  if [ "$ROUTE_INTEGRATION_PROFILE" != none ]; then
+    cat "$RELEASE_DIR/runtime/integrations/$ROUTE_INTEGRATION_PROFILE.md" ||
+      die GOVERNANCE_NOT_READY 'Cannot read integration profile'
+  fi
 }
 
 cmd_show() {
