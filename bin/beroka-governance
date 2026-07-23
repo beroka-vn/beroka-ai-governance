@@ -787,10 +787,13 @@ connector_state() {
 
 codex_configure_atlassian() {
   cca_output=$(
-    printf '%s\n' \
-      '{"method":"initialize","id":0,"params":{"clientInfo":{"name":"beroka-governance","title":"Beroka Governance","version":"1"}}}' \
-      '{"method":"initialized","params":{}}' \
-      "{\"method\":\"config/value/write\",\"id\":1,\"params\":{\"keyPath\":\"mcp_servers.atlassian\",\"value\":{\"url\":\"$ATLASSIAN_MCP_URL\"},\"mergeStrategy\":\"upsert\"}}" |
+    {
+      printf '%s\n' \
+        '{"method":"initialize","id":0,"params":{"clientInfo":{"name":"beroka-governance","title":"Beroka Governance","version":"1"}}}' \
+        '{"method":"initialized","params":{}}' \
+        "{\"method\":\"config/value/write\",\"id\":1,\"params\":{\"keyPath\":\"mcp_servers.atlassian\",\"value\":{\"url\":\"$ATLASSIAN_MCP_URL\"},\"mergeStrategy\":\"upsert\"}}"
+      sleep 1
+    } |
       codex app-server --stdio 2>&1
   ) || die GOVERNANCE_NOT_READY 'Codex could not configure Atlassian MCP'
   case "$cca_output" in
@@ -835,6 +838,80 @@ configure_connector() {
         die GOVERNANCE_NOT_READY 'Claude Code could not configure Atlassian MCP'
       ;;
     cursor) cursor_configure_atlassian ;;
+  esac
+}
+
+connector_health() {
+  ch_client=$1
+  case "$ch_client" in
+    codex)
+      ch_output=$(
+        {
+          printf '%s\n' \
+            '{"method":"initialize","id":0,"params":{"clientInfo":{"name":"beroka-governance","title":"Beroka Governance","version":"1"}}}' \
+            '{"method":"initialized","params":{}}' \
+            '{"method":"mcpServerStatus/list","id":1,"params":{"detail":"toolsAndAuthOnly","limit":100}}'
+          sleep 3
+        } |
+          codex app-server --stdio 2>&1
+      ) || return 2
+      case "$ch_output" in
+        *'server atlassian:'*unauthorized_client*|\
+        *'server atlassian:'*'401 Unauthorized'*|\
+        *'server atlassian:'*'403 Forbidden'*) return 1 ;;
+      esac
+      if printf '%s\n' "$ch_output" |
+        awk '/"name":"atlassian"/ && /"failureReason":"reauthenticationRequired"/ { found=1 } END { exit !found }'
+      then
+        return 1
+      fi
+      ch_status=$(
+        printf '%s\n' "$ch_output" |
+          sed 's/},{"name":/}\
+{"name":/g' |
+          awk '/"name":"atlassian"/ && /"authStatus":/ { print; exit }'
+      )
+      case "$ch_status" in
+        *'"authStatus":"notLoggedIn"'*) return 1 ;;
+        *'"authStatus":"oAuth"'*)
+          case "$ch_status" in
+            *atlassianUserInfo*) return 0 ;;
+            *) return 2 ;;
+          esac
+          ;;
+        *) return 2 ;;
+      esac
+      ;;
+    claude)
+      ch_output=$(claude mcp list 2>&1) || :
+      case "$ch_output" in
+        *atlassian*Connected*|*atlassian*connected*) return 0 ;;
+        *atlassian*auth*|*atlassian*Auth*|*atlassian*login*|*atlassian*401*|*atlassian*403*) return 1 ;;
+        *) return 2 ;;
+      esac
+      ;;
+    cursor)
+      ch_output=$(cursor-agent mcp list 2>&1) || :
+      case "$ch_output" in
+        *atlassian*ready*|*atlassian*Ready*|*atlassian*connected*|*atlassian*Connected*)
+          ch_output=$(cursor-agent mcp list-tools atlassian 2>&1) && return 0
+          case "$ch_output" in
+            *auth*|*Auth*|*login*|*401*|*403*) return 1 ;;
+            *) return 2 ;;
+          esac
+          ;;
+        *atlassian*auth*|*atlassian*Auth*|*atlassian*login*|*atlassian*401*|*atlassian*403*) return 1 ;;
+        *) return 2 ;;
+      esac
+      ;;
+  esac
+}
+
+run_oauth() {
+  case "$1" in
+    codex) codex mcp login atlassian ;;
+    claude) claude mcp login atlassian ;;
+    cursor) cursor-agent mcp login atlassian ;;
   esac
 }
 
@@ -926,17 +1003,31 @@ cmd_setup_connectors() {
     2) die CONNECTOR_MISSING "Existing atlassian connector has an unexpected URL for $setup_client" ;;
     *) die GOVERNANCE_NOT_READY "Cannot inspect $setup_client Atlassian connector" ;;
   esac
+  setup_health=0
+  connector_health "$setup_client" || setup_health=$?
+  case "$setup_health" in
+    0)
+      printf '%s\n' "Client: $setup_client" 'Connector: PASS' 'Authentication: PASS' 'Result: PASS'
+      return
+      ;;
+    1) ;;
+    *) die GOVERNANCE_NOT_READY "Cannot verify $setup_client Atlassian connector health" ;;
+  esac
   if [ "$setup_interactive" -eq 1 ]; then
     printf '%s\n' "Client: $setup_client" 'Authentication: AUTH_REQUIRED'
     printf 'Start OAuth now? [y/N] '
     IFS= read -r setup_answer || setup_answer=
     case "$setup_answer" in
       y|Y|yes|YES)
-        case "$setup_client" in
-          codex) codex mcp login atlassian ;;
-          claude) claude mcp login atlassian ;;
-          cursor) cursor-agent mcp login atlassian ;;
-        esac
+        run_oauth "$setup_client" || auth_required "$setup_client"
+        setup_health=0
+        connector_health "$setup_client" || setup_health=$?
+        [ "$setup_health" -eq 0 ] || {
+          [ "$setup_health" -eq 1 ] && auth_required "$setup_client"
+          die GOVERNANCE_NOT_READY "Cannot verify $setup_client Atlassian connector health"
+        }
+        printf '%s\n' "Client: $setup_client" 'Connector: PASS' 'Authentication: PASS' 'Result: PASS'
+        return
         ;;
     esac
   fi
@@ -944,7 +1035,31 @@ cmd_setup_connectors() {
 }
 
 cmd_doctor() {
-  verify_registration "$1"
+  requested=$1 doctor_flag=${2:-} doctor_client=${3:-}
+  if [ -n "$doctor_flag" ]; then
+    [ "$doctor_flag" = --client ] && [ -n "$doctor_client" ] ||
+      { usage >&2; exit 2; }
+    case "$doctor_client" in
+      codex|claude|cursor) ;;
+      *) usage >&2; exit 2 ;;
+    esac
+  fi
+  verify_registration "$requested"
+  if [ -n "$doctor_client" ]; then
+    require_client "$doctor_client"
+    doctor_state=0
+    connector_state "$doctor_client" || doctor_state=$?
+    [ "$doctor_state" -eq 0 ] ||
+      die CONNECTOR_MISSING "Missing compatible Atlassian connector for $doctor_client"
+    doctor_health=0
+    connector_health "$doctor_client" || doctor_health=$?
+    case "$doctor_health" in
+      0) ;;
+      1) auth_required "$doctor_client" ;;
+      *) die GOVERNANCE_NOT_READY "Cannot verify $doctor_client Atlassian connector health" ;;
+    esac
+    printf '%s\n' "Client: $doctor_client" 'Connector: PASS' 'Authentication: PASS'
+  fi
   printf '%s\n' "Repository: $LOCK_REPOSITORY" "Version: $LOCK_VERSION" "Commit: $LOCK_COMMIT" 'Result: PASS'
 }
 
@@ -980,7 +1095,10 @@ main() {
     unregister) [ "$#" -ge 2 ] && [ "$#" -le 3 ] || { usage >&2; exit 2; }; cmd_unregister "${2:-}" "${3:-}" ;;
     uninstall) [ "$#" -le 2 ] || { usage >&2; exit 2; }; cmd_uninstall "${2:-}" ;;
     setup-connectors) shift; cmd_setup_connectors "$@" ;;
-    doctor) [ "$#" -eq 2 ] || { usage >&2; exit 2; }; cmd_doctor "$2" ;;
+    doctor)
+      { [ "$#" -eq 2 ] || [ "$#" -eq 4 ]; } || { usage >&2; exit 2; }
+      cmd_doctor "$2" "${3:-}" "${4:-}"
+      ;;
     context) [ "$#" -eq 2 ] || { usage >&2; exit 2; }; cmd_context "$2" ;;
     show) [ "$#" -ge 3 ] && [ "$#" -le 4 ] || { usage >&2; exit 2; }; cmd_show "$2" "$3" "${4:-}" ;;
     *) usage >&2; exit 2 ;;
