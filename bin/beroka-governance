@@ -875,7 +875,8 @@ connector_health() {
         *'"authStatus":"notLoggedIn"'*) return 1 ;;
         *'"authStatus":"oAuth"'*)
           case "$ch_status" in
-            *atlassianUserInfo*) return 0 ;;
+            *'"tools":{}'*) return 2 ;;
+            *'"tools":{'*) return 0 ;;
             *) return 2 ;;
           esac
           ;;

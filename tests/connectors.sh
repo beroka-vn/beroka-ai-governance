@@ -86,6 +86,9 @@ case "$*" in
           healthy)
             printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","serverInfo":null,"tools":{"atlassianUserInfo":{}},"resources":[],"resourceTemplates":[],"authStatus":"oAuth"}]}}'
             ;;
+          healthy-custom-tools)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","serverInfo":null,"tools":{"searchJiraIssuesUsingJql":{}},"resources":[],"resourceTemplates":[],"authStatus":"oAuth"}]}}'
+            ;;
           auth-required|'')
             printf '%s\n' \
               '{"method":"mcpServer/startupStatus/updated","params":{"name":"atlassian","status":"failed","failureReason":"reauthenticationRequired"}}' \
@@ -231,6 +234,10 @@ fi
 assert_contains "$output" 'Result: ATLASSIAN_AUTH_REQUIRED'
 
 printf '%s\n' healthy >"$XDG_CONFIG_HOME/fake-codex-health"
+output=$($CLI setup-connectors --client codex --non-interactive)
+assert_contains "$output" 'Result: PASS'
+
+printf '%s\n' healthy-custom-tools >"$XDG_CONFIG_HOME/fake-codex-health"
 output=$($CLI setup-connectors --client codex --non-interactive)
 assert_contains "$output" 'Result: PASS'
 
