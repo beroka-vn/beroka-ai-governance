@@ -304,30 +304,32 @@ Preflight xác minh routing trước bất kỳ OAuth prompt nào. Governance-on
 tra hoặc kích hoạt OAuth. GitHub authentication vẫn được complete riêng trên
 từng client.
 
-1. Xác định authenticated GitHub và Atlassian account.
-2. Đọc metadata của Backend repository; nếu request thuộc FE, resolve và đọc
-   exact Frontend repository.
-3. Đọc project `BB`/board `34` và project `BF`/board `35` để counterpart
-   discovery hoạt động hai chiều.
-4. Đọc hai Confluence spaces và xác nhận agent mở được shared Integration Hub;
-   chỉ kiểm tra Folder/page hierarchy của owning space liên quan.
-5. Chỉ kiểm tra write permission khi request thực tế cần external write; không
-   tạo test record.
+1. Xác định authenticated GitHub và Atlassian account của đúng client được
+   chọn.
+2. Load chỉ general rules, selected `PROFILE` và selected allowlisted
+   `INTEGRATION_PROFILE` từ trusted routing baseline.
+3. Kiểm tra target và capability đúng operation: `jira-write` chỉ cần selected
+   Jira project; `jira-board-verify` chỉ kiểm tra `JIRA_BOARD_ID` khi operation
+   đó được yêu cầu, và Board capability vẫn phải được chứng minh riêng.
+4. `confluence-write` chỉ kiểm tra selected space và root content; Page/Folder
+   hierarchy chỉ theo root type đã route. `cross-repo-write` chỉ dùng reviewed
+   profile-controlled mapping. `INTEGRATION_PROFILE=none không trigger BE–FE hoặc cross-repository discovery`.
+5. Chỉ kiểm tra write permission khi request thực tế cần routing-dependent
+   external write; không tạo test record.
 
 Kết quả đạt yêu cầu:
 
 ```text
-Integration preflight
-- Client: Codex | Claude Code | Cursor
-- GitHub identity/Backend read: PASS
-- GitHub Frontend target/read: PASS | NOT_REQUIRED | TARGET_REQUIRED
-- Jira identity/BB read: PASS
-- Jira BF read: PASS
-- Confluence Beroka-backend read: PASS
-- Confluence Beroka-frontend read: PASS
-- Shared Integration Hub access: PASS | NOT_REQUIRED | FAIL
-- Required write scope: NOT_REQUIRED | PASS | FAIL
-- Result: PASS | INTEGRATION_BLOCKED
+Client: <selected client>
+Routing baseline commit: <fresh default-branch commit>
+Profile: <selected profile>
+Integration profile: <selected integration profile>
+Cross-repository policy: <selected policy>
+Operation: <requested operation>
+Jira project: <only for jira-write>
+Capability: <only for the requested capability>
+Capability state: SUPPORTED
+Result: PASS
 ```
 
 Khi thất bại, agent dừng phần phụ thuộc và báo đúng nguyên nhân:

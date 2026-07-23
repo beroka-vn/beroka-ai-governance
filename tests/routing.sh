@@ -781,3 +781,5 @@ grep -F 'central governance onboarding project' "$ROOT/handbook.md" >/dev/null |
   fail 'handbook does not document bootstrap issue provenance'
 grep -F 'CONNECTOR_CAPABILITY_REQUIRED' "$ROOT/handbook.md" >/dev/null ||
   fail 'handbook does not document capability remediation'
+grep -F 'INTEGRATION_PROFILE=none không trigger BE–FE hoặc cross-repository discovery' "$ROOT/handbook.md" >/dev/null ||
+  fail 'handbook does not document standalone preflight scope'
