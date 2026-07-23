@@ -62,13 +62,15 @@ templates/
   agent-entrypoints/
 examples/
 tests/
+  connectors.sh
   smoke.sh
 ```
 
 `bin/beroka-governance` is one POSIX shell CLI. It depends only on standard
-POSIX utilities, Git, and authenticated access to the private GitHub
-repository. It must not require Python, Node.js, a daemon, or a new package
-manager.
+POSIX utilities, Git, authenticated access to the private GitHub repository,
+and the explicitly selected client. Cursor setup additionally requires `jq` to
+preserve its user-level MCP JSON. It must not require Python, a daemon, or a new
+package manager.
 
 Each release is an immutable annotated SemVer tag. The first package release is
 `v1.0.0`.
@@ -153,6 +155,40 @@ major version it must remain compatible with every locally installed lock
 version. A major CLI or lock-format change requires a coordinated upgrade and
 must fail closed when an older CLI cannot interpret the target release.
 
+### Setup connectors
+
+```bash
+beroka-governance setup-connectors --client codex
+beroka-governance setup-connectors --client claude
+beroka-governance setup-connectors --client cursor
+```
+
+Setup runs after the selected client and its MCP dependencies are installed.
+`--client codex|claude|cursor` selects exactly one client. Running setup again
+for another client is explicit and supported; no invocation configures every
+installed client.
+
+An interactive invocation without `--client` detects supported executables. It
+asks for confirmation when exactly one is found, prompts for one selection when
+multiple are found, and returns `DEPENDENCY_MISSING` when none are found. After
+registering the Atlassian MCP endpoint, it reports `AUTH_REQUIRED` and asks
+before starting that client's OAuth flow.
+
+`--non-interactive` requires explicit client selection and never opens a
+browser. Missing, expired, or invalid authentication returns
+`ATLASSIAN_AUTH_REQUIRED` and the exact remediation command:
+
+```text
+codex mcp login atlassian
+claude mcp login atlassian
+cursor-agent mcp login atlassian
+```
+
+The clients are configured through their own supported paths: Codex app-server
+configuration, Claude Code user-scoped MCP commands, and an atomic merge of
+Cursor's user-level MCP JSON. Their OAuth commands are deliberately not
+treated as interchangeable.
+
 ### Register
 
 ```bash
@@ -168,11 +204,15 @@ Running the same command again is idempotent.
 
 ```bash
 beroka-governance doctor /path/to/repo
+beroka-governance doctor /path/to/repo --client codex
 ```
 
 Doctor is read-only. It verifies registration, remote identity, tag and commit,
 local release integrity, managed entrypoints, and required commands. It prints
-the exact active version and a stable result code.
+the exact active version and a stable result code. Without `--client`, it is
+governance-only and does not inspect or trigger OAuth. With `--client`, it also
+distinguishes a missing dependency, missing connector, required
+authentication, and `PASS`.
 
 ### Load agent context
 
@@ -250,7 +290,7 @@ latest tag.
 
 ## Failure behavior
 
-The CLI and agent entrypoints use these stable failure results:
+The CLI and agent entrypoints use these stable results:
 
 | Result | Meaning |
 | --- | --- |
@@ -261,6 +301,10 @@ The CLI and agent entrypoints use these stable failure results:
 | `VERSION_MISMATCH` | Installed tag or commit differs from the lock |
 | `ENTRYPOINT_DRIFT` | Managed content was changed outside the CLI |
 | `WORKTREE_CONFLICT` | A target entrypoint has uncommitted changes |
+| `DEPENDENCY_MISSING` | The selected client or required client command is missing |
+| `CONNECTOR_MISSING` | The selected client lacks the expected Atlassian connector |
+| `ATLASSIAN_AUTH_REQUIRED` | Atlassian OAuth is missing, expired, or invalid |
+| `PASS` | All checks requested by the command passed |
 
 No failed command may leave a partial registration or version change. The CLI
 computes and validates the complete change set before writing, uses temporary
@@ -271,6 +315,9 @@ targets do.
 ## Security boundaries
 
 - The package stores no GitHub, Jira, Confluence, or agent credentials.
+- Atlassian OAuth state and credentials remain owned by the selected client or
+  OS keyring. The CLI never accepts, requests, prints, logs, or stores a
+  developer API token.
 - Private-repository access uses each developer's existing least-privilege Git
   or GitHub authentication.
 - The CLI never uses `curl | sh`, executes a lock file, or fetches an unpinned
@@ -298,11 +345,18 @@ targets do.
 - refusal on remote mismatch and dirty managed targets; and
 - no repository mutation after a failed preflight.
 
+`tests/connectors.sh` uses temporary HOME/XDG directories and fake client
+executables. It verifies exact client selection, registration preservation,
+per-client OAuth delegation, non-interactive remediation, Doctor result
+classification, and that governance-only Doctor makes no connector call. It
+uses no real credential.
+
 The release gate is:
 
 ```bash
 sh -n bin/beroka-governance
 sh tests/smoke.sh
+sh tests/connectors.sh
 ```
 
 Before publishing a release, a maintainer also starts fresh sessions and
@@ -329,6 +383,8 @@ commit.
   release is already installed.
 - Doctor identifies every supported drift and access failure with a stable
   result.
+- Connector setup configures exactly one selected client, delegates OAuth to
+  that client, and fails closed without browser access in non-interactive mode.
 - Unregister and uninstall remove package-owned state without deleting user or
   repository-owned content.
 

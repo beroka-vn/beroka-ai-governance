@@ -16,19 +16,29 @@ start a fresh agent session so the client loads the registered entrypoint.
 
 ```bash
 release=v1.0.0
+client=codex # codex | claude | cursor
 bootstrap_dir=$(mktemp -d "${TMPDIR:-/tmp}/beroka-governance-bootstrap.XXXXXX")
 git clone --depth 1 --single-branch --branch "$release" \
   https://github.com/beroka-vn/beroka-ai-governance.git \
   "$bootstrap_dir/repo"
 sh "$bootstrap_dir/repo/bin/beroka-governance" install "$release"
+beroka-governance setup-connectors --client "$client"
 beroka-governance register /srv/beroka/backend --version "$release"
 beroka-governance doctor /srv/beroka/backend
+beroka-governance doctor /srv/beroka/backend --client "$client"
 ```
+
+Run connector setup only after the selected client and its MCP dependencies are
+installed. The command configures exactly that client and, in interactive mode,
+offers to start its OAuth flow. It never accepts an Atlassian developer API
+token. Use `--non-interactive` in automation; missing authentication then
+returns `ATLASSIAN_AUTH_REQUIRED` with the exact client login command and does
+not open a browser.
 
 The package applies only to repositories explicitly registered through this
 workflow. The V1 pilot is Backend-only; do not register a Frontend repository.
-GitHub, Jira, and Confluence connectors authenticate separately in each client;
-complete package Doctor before connector preflight.
+GitHub authentication remains separate in each client; verify the selected
+Atlassian connector with client-aware Doctor before connector preflight.
 
 - Manager/coordinator: read the [operating workflow](workflow.md), then use
   the [Jira and Confluence template](templates/jira-confluence.md) and

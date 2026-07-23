@@ -61,17 +61,54 @@ user-level CLI; không sửa application repository.
 
 ```bash
 release=v1.0.0
+client=codex # codex | claude | cursor
 bootstrap_dir=$(mktemp -d "${TMPDIR:-/tmp}/beroka-governance-bootstrap.XXXXXX")
 git clone --depth 1 --single-branch --branch "$release" \
   https://github.com/beroka-vn/beroka-ai-governance.git \
   "$bootstrap_dir/repo"
 sh "$bootstrap_dir/repo/bin/beroka-governance" install "$release"
+beroka-governance setup-connectors --client "$client"
 beroka-governance doctor /srv/beroka/backend
 ```
 
 `doctor` trước khi register sẽ trả `REPOSITORY_NOT_REGISTERED`; đó là expected.
 Sau khi install thành công, có thể xóa bootstrap checkout bằng
 `rm -rf "$bootstrap_dir"`.
+
+### Chọn đúng một client và setup Atlassian connector
+
+Chỉ chạy setup sau khi client đã được cài và có MCP commands cần thiết. Cách
+khuyến nghị là luôn chọn rõ đúng một client:
+
+```bash
+beroka-governance setup-connectors --client codex
+beroka-governance setup-connectors --client claude
+beroka-governance setup-connectors --client cursor
+```
+
+Mỗi lần chạy chỉ cấu hình client được chọn. Có thể chạy lại rõ ràng cho client
+thứ hai; command không tự cấu hình tất cả client đã cài. Nếu bỏ `--client`,
+chỉ interactive terminal mới auto-detect: một client thì hỏi xác nhận, nhiều
+client thì yêu cầu chọn một, không có client thì trả `DEPENDENCY_MISSING`.
+
+Sau khi tạo connector, interactive mode báo `AUTH_REQUIRED` và hỏi trước khi mở
+OAuth flow của client. Non-interactive mode phải dùng explicit `--client`:
+
+```bash
+beroka-governance setup-connectors --client codex --non-interactive
+```
+
+Mode này không mở browser. Khi credential thiếu, hết hạn hoặc invalid, command
+trả `ATLASSIAN_AUTH_REQUIRED` và in đúng một remediation command:
+
+```bash
+codex mcp login atlassian
+claude mcp login atlassian
+cursor-agent mcp login atlassian
+```
+
+OAuth state/credential do client hoặc OS keyring sở hữu. Package không yêu cầu,
+nhận, in, log hay lưu Atlassian developer API token.
 
 ### Register, Doctor, update, rollback và removal
 
@@ -82,6 +119,7 @@ release=v1.0.0
 beroka-governance register "$repo" --version "$release"
 git -C "$repo" diff -- .beroka-governance.lock AGENTS.md CLAUDE.md .cursor/rules/beroka-governance.mdc
 beroka-governance doctor "$repo"
+beroka-governance doctor "$repo" --client codex
 
 beroka-governance update "$repo" --to v1.1.0
 beroka-governance rollback "$repo" --to "$release"
@@ -123,38 +161,33 @@ quyền cao hơn, agent báo exact target/action và chờ người có authorit
 
 ## Codex
 
-### Cách khuyến nghị: OpenAI plugins
+GitHub có thể tiếp tục dùng OpenAI plugin:
 
 ```bash
 codex plugin add github@openai-curated
-codex plugin add atlassian-rovo@openai-curated
 codex plugin list
 ```
 
-Sau khi cài, mở Plugins/Connectors trong Codex, authorize GitHub và Atlassian,
-rồi mở session mới nếu tools chưa xuất hiện.
-
-Nếu Codex distribution không có plugin marketplace, dùng official MCP thay
-thế, không dùng song song:
+Atlassian dùng MCP do package setup quản lý:
 
 ```bash
-codex mcp add github --url https://api.githubcopilot.com/mcp/ --bearer-token-env-var GITHUB_PAT_TOKEN
-codex mcp add atlassian --url https://mcp.atlassian.com/v1/mcp/authv2
+beroka-governance setup-connectors --client codex
 ```
 
-`GITHUB_PAT_TOKEN` phải tồn tại trong environment của Codex và không được ghi
-vào repository. Hoàn thành Atlassian OAuth khi Codex yêu cầu, sau đó dùng `/mcp`
-để xác nhận hai servers có tools.
+Nếu cần re-login, remediation là `codex mcp login atlassian`. Package chỉ ghi
+Atlassian MCP URL bằng Codex config API; Codex/OS keyring giữ OAuth credential.
+GitHub connector và authentication vẫn là rollout riêng.
 
 ## Claude Code
 
-Atlassian dùng remote MCP và OAuth:
+Atlassian dùng user-scoped remote MCP và OAuth:
 
 ```bash
-claude mcp add --transport http atlassian https://mcp.atlassian.com/v1/mcp/authv2
+beroka-governance setup-connectors --client claude
 ```
 
-Mở Claude Code, chạy `/mcp` và hoàn thành Atlassian authentication.
+Nếu cần re-login, remediation là `claude mcp login atlassian`. Package gọi
+Claude Code MCP commands riêng; không giả định chúng giống Codex.
 
 GitHub hosted MCP hiện cần GitHub PAT. Export PAT trong shell rồi thêm ở scope
 `local` mặc định; không dùng `--scope project` vì cách đó tạo shared
@@ -173,8 +206,15 @@ theo official GitHub MCP guide; không hardcode token vào project file.
 
 ### Atlassian
 
-Trong Cursor Marketplace, cài **Atlassian plugin for Cursor with MCP**, chọn
-**Add to Cursor** và hoàn thành OAuth bằng đúng Atlassian account.
+Đảm bảo Cursor Agent CLI đã được cài, rồi chạy:
+
+```bash
+beroka-governance setup-connectors --client cursor
+```
+
+Command merge Atlassian server vào user-level `~/.cursor/mcp.json` mà không xóa
+server khác. Nếu cần re-login, remediation là
+`cursor-agent mcp login atlassian`.
 
 ### GitHub
 
@@ -199,9 +239,10 @@ cursor-agent mcp list-tools atlassian
 ## Preflight connector bắt buộc
 
 Sau khi `beroka-governance doctor <repo>` trả `Result: PASS`, agent chạy
-read-only connector preflight trước workflow. Package install/register không
-authenticate GitHub, Jira hoặc Confluence connector: developer phải complete
-OAuth/connector authentication riêng trên từng client.
+`beroka-governance doctor <repo> --client <client>` rồi chạy read-only connector
+preflight trước workflow. Governance-only `doctor <repo>`, `context`, `show`,
+register/update/rollback/remove không kiểm tra hoặc kích hoạt OAuth. GitHub
+authentication vẫn được complete riêng trên từng client.
 
 1. Xác định authenticated GitHub và Atlassian account.
 2. Đọc metadata của Backend repository; nếu request thuộc FE, resolve và đọc
@@ -381,7 +422,7 @@ thêm automation đồng bộ nếu manual drift chưa thực sự lặp lại.
 | Jira có nhưng Confluence không có | Atlassian product access và space permission riêng |
 | Kết quả thuộc nhầm team | Authenticated identity và target URL/project/space |
 
-CLI fail closed với bảy stable result codes sau:
+CLI fail closed với các stable result codes sau:
 
 | Result | Ý nghĩa / xử lý |
 | --- | --- |
@@ -392,6 +433,10 @@ CLI fail closed với bảy stable result codes sau:
 | `VERSION_MISMATCH` | Tag, commit hoặc installed release khác lock; install/pin lại reviewed version. |
 | `ENTRYPOINT_DRIFT` | Managed content bị sửa ngoài CLI; restore/reconcile qua reviewed CLI lifecycle. |
 | `WORKTREE_CONFLICT` | Target entrypoint có uncommitted changes; review, commit hoặc stash thay đổi trước khi chạy lại. |
+| `DEPENDENCY_MISSING` | Client hoặc command dependency chưa có; cài đúng client/dependency rồi chạy lại explicit setup. |
+| `CONNECTOR_MISSING` | Atlassian connector thiếu hoặc URL hiện tại xung đột; chạy `setup-connectors --client <client>` và review config. |
+| `ATLASSIAN_AUTH_REQUIRED` | OAuth thiếu, hết hạn hoặc invalid; chạy exact remediation command được in ra. |
+| `PASS` | Governance và, khi có `--client`, connector/authentication health đều đạt. |
 
 ## Tài liệu chính thức
 
