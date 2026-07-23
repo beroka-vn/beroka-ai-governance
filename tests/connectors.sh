@@ -362,4 +362,13 @@ fi
 assert_contains "$output" 'Result: DEPENDENCY_MISSING'
 mv "$FAKE_BIN/codex.disabled" "$FAKE_BIN/codex"
 
+for document in "$ROOT/README.md" "$ROOT/handbook.md" "$ROOT/PACKAGE-DESIGN.md"; do
+  grep -F 'setup-connectors' "$document" >/dev/null ||
+    fail "missing setup-connectors documentation in $document"
+done
+grep -F 'codex mcp login atlassian' "$ROOT/handbook.md" >/dev/null ||
+  fail 'missing Codex remediation command'
+grep -F 'ATLASSIAN_AUTH_REQUIRED' "$ROOT/PACKAGE-DESIGN.md" >/dev/null ||
+  fail 'missing authentication result in package design'
+
 printf '%s\n' 'Connector selection tests: PASS'
