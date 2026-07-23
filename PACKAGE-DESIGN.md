@@ -68,12 +68,13 @@ tests/
 
 `bin/beroka-governance` is one POSIX shell CLI. It depends only on standard
 POSIX utilities, Git, authenticated access to the private GitHub repository,
-and the explicitly selected client. Cursor setup additionally requires `jq` to
-preserve its user-level MCP JSON. It must not require Python, a daemon, or a new
-package manager.
+and the explicitly selected client. Selected-client
+connector inspection requires `jq` for every selected client; Cursor setup also
+uses it to preserve user-level MCP JSON. It must not require Python, a daemon,
+or a new package manager.
 
-Each release is an immutable annotated SemVer tag. The first package release is
-`v1.0.0`.
+Each release is an immutable annotated SemVer tag. `v1.0.0` is an immutable
+legacy test sample; it is not the routing/preflight release candidate.
 
 ## Developer-machine layout
 
@@ -391,9 +392,10 @@ commit.
 
 ## Initial rollout
 
-Implement and release the package from the central governance repository. Pilot
-`v1.0.0` with one explicitly selected Backend repository before registering
-additional Backend repositories. Frontend rollout remains a later, explicit
+Implement and release the package from the central governance repository.
+`v1.0.0` is an immutable legacy test sample and must not be reused or pushed.
+`v1.1.0` is the current unpublished candidate for one explicitly selected
+Backend pilot repository. Frontend rollout remains a later, explicit
 registration step. Do not bulk-register repositories or add automatic update
 automation during the pilot.
 

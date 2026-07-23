@@ -631,6 +631,39 @@ git -C "$consumer" checkout -- .beroka-governance.conf
   fix_wave_fail 'context failed while checking assume-unchanged bytes'
 fix_wave_contains "$assume_output" 'Routing: ROUTING_CHANGE_PENDING'
 
+git -C "$consumer" update-index --skip-worktree .beroka-governance.conf
+chmod +x "$consumer/.beroka-governance.conf"
+mode_644_status=0
+mode_644_output=$($CLI context "$consumer") || mode_644_status=$?
+git -C "$consumer" update-index --no-skip-worktree .beroka-governance.conf
+chmod -x "$consumer/.beroka-governance.conf"
+[ "$mode_644_status" -eq 0 ] ||
+  fix_wave_fail 'context failed while checking physical 100644 mode'
+fix_wave_contains "$mode_644_output" 'Routing: ROUTING_CHANGE_PENDING'
+
+chmod +x "$remote_work/.beroka-governance.conf"
+git -C "$remote_work" add .beroka-governance.conf
+git -C "$remote_work" commit -qm 'test: publish executable routing'
+git -C "$remote_work" push -q "file://$remote_bare" trunk
+git -C "$consumer" fetch -q "file://$remote_bare" trunk
+git -C "$consumer" reset -q --hard FETCH_HEAD
+git -C "$consumer" update-index --assume-unchanged .beroka-governance.conf
+chmod -x "$consumer/.beroka-governance.conf"
+mode_755_status=0
+mode_755_output=$($CLI context "$consumer") || mode_755_status=$?
+git -C "$consumer" update-index --no-assume-unchanged .beroka-governance.conf
+chmod +x "$consumer/.beroka-governance.conf"
+[ "$mode_755_status" -eq 0 ] ||
+  fix_wave_fail 'context failed while checking physical 100755 mode'
+fix_wave_contains "$mode_755_output" 'Routing: ROUTING_CHANGE_PENDING'
+
+chmod -x "$remote_work/.beroka-governance.conf"
+git -C "$remote_work" add .beroka-governance.conf
+git -C "$remote_work" commit -qm 'test: restore non-executable routing'
+git -C "$remote_work" push -q "file://$remote_bare" trunk
+git -C "$consumer" fetch -q "file://$remote_bare" trunk
+git -C "$consumer" reset -q --hard FETCH_HEAD
+
 git -C "$consumer" switch -qc routing-task
 printf '%s\n' 'PROFILE=task-branch' >"$consumer/.beroka-governance.conf"
 git -C "$consumer" add .beroka-governance.conf
@@ -896,6 +929,15 @@ grep -F 'release=v1.1.0' "$ROOT/handbook.md" >/dev/null ||
 [ "$(git -C "$ROOT" rev-parse refs/tags/v1.0.0 2>/dev/null)" = \
   1f2db6bd75cf9d9a68d501c351fb2455448e04e1 ] ||
   fix_wave_fail 'real v1.0.0 tag object changed'
+if git -C "$ROOT" show-ref --verify --quiet refs/tags/v1.1.0; then
+  fix_wave_fail 'real v1.1.0 candidate tag exists'
+fi
+grep -F '`v1.0.0` is an immutable legacy test sample' \
+  "$ROOT/PACKAGE-DESIGN.md" >/dev/null ||
+  fix_wave_fail 'package design does not mark v1.0.0 as legacy'
+grep -F '`v1.1.0` is the current unpublished candidate' \
+  "$ROOT/PACKAGE-DESIGN.md" >/dev/null ||
+  fix_wave_fail 'package design does not select the v1.1.0 candidate'
 
 [ "$FIX_WAVE_FAILURES" -eq 0 ] ||
   fail "$FIX_WAVE_FAILURES fix-wave regressions remain"

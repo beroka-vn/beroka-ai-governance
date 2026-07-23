@@ -270,6 +270,11 @@ local_routing_matches_baseline() {
     return 1
   [ "$(printf '%s\n' "$lrm_index" | awk '{ print $1, $2 }')" = "$lrm_mode $lrm_blob" ] ||
     return 1
+  case "$lrm_mode" in
+    100644) [ ! -x "$REPO/$ROUTING_FILE" ] || return 1 ;;
+    100755) [ -x "$REPO/$ROUTING_FILE" ] || return 1 ;;
+    *) return 1 ;;
+  esac
   cmp -s "$REPO/$ROUTING_FILE" "$ROUTING_BASELINE_FILE"
 }
 
@@ -1021,6 +1026,8 @@ require_client() {
   rc_executable=$(client_executable "$rc_client")
   command -v "$rc_executable" >/dev/null 2>&1 ||
     die DEPENDENCY_MISSING "Missing dependency: $rc_executable"
+  command -v jq >/dev/null 2>&1 ||
+    die DEPENDENCY_MISSING 'Missing dependency: jq'
   case "$rc_client" in
     codex)
       codex mcp login --help >/dev/null 2>&1 &&
@@ -1036,8 +1043,6 @@ require_client() {
     cursor)
       cursor-agent mcp login --help >/dev/null 2>&1 ||
         die DEPENDENCY_MISSING 'Cursor Agent lacks required MCP login support'
-      command -v jq >/dev/null 2>&1 ||
-        die DEPENDENCY_MISSING 'Missing dependency: jq'
       ;;
   esac
 }
@@ -1047,21 +1052,22 @@ connector_state() {
   case "$cs_client" in
     codex)
       cs_output=$(codex mcp get atlassian --json 2>/dev/null) || return 1
-      printf '%s\n' "$cs_output" | json_top_level_keys >/dev/null ||
-        return 2
-      cs_name=$(printf '%s\n' "$cs_output" |
-        json_top_level_string name) || return 2
-      cs_url=$(printf '%s\n' "$cs_output" |
-        json_top_level_string url) || return 2
-      [ "$cs_name" = atlassian ] &&
-        [ "$cs_url" = "$ATLASSIAN_MCP_URL" ] && return 0
+      printf '%s\n' "$cs_output" |
+        jq -e -s --stream --arg url "$ATLASSIAN_MCP_URL" '
+          ([.[] |
+            select(length == 2 and .[0] == ["name"]) |
+            .[1]] == ["atlassian"]) and
+          ([.[] |
+            select(length == 2 and .[0] == ["url"]) |
+            .[1]] == [$url])
+        ' >/dev/null 2>&1 && return 0
       return 2
       ;;
     claude)
       cs_output=$(claude mcp get atlassian 2>/dev/null) || return 1
-      cs_url=$(printf '%s\n' "$cs_output" |
-        claude_atlassian_endpoint) || return 2
-      [ "$cs_url" = "$ATLASSIAN_MCP_URL" ] && return 0
+      printf '%s\n' "$cs_output" |
+        claude_atlassian_endpoint "$ATLASSIAN_MCP_URL" >/dev/null &&
+        return 0
       return 2
       ;;
     cursor)
@@ -1144,16 +1150,24 @@ atlassian_status_line() {
 }
 
 claude_atlassian_endpoint() {
-  awk '
+  cae_url=$1
+  awk -v expected_url="$cae_url" '
+    /^[[:space:]]*Name:[[:space:]]*/ {
+      name=$0
+      sub(/^[[:space:]]*Name:[[:space:]]*/, "", name)
+      if (name == "") invalid=1
+      name_matches++
+    }
     /^[[:space:]]*URL:[[:space:]]*/ {
       endpoint=$0
       sub(/^[[:space:]]*URL:[[:space:]]*/, "", endpoint)
       if (endpoint == "") invalid=1
-      matches++
+      url_matches++
     }
     END {
-      if (invalid || matches != 1) exit 42
-      print endpoint
+      if (invalid ||
+          name_matches != 1 || name != "atlassian" ||
+          url_matches != 1 || endpoint != expected_url) exit 42
     }
   '
 }

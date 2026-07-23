@@ -102,6 +102,9 @@ case "$*" in
       wrong-name)
         printf '%s\n' '{"name":"atlassian-helper","url":"https://mcp.atlassian.com/v1/mcp/authv2"}'
         ;;
+      malformed-json)
+        printf '%s\n' '{"name":"atlassian","url":"https://mcp.atlassian.com/v1/mcp/authv2","broken":[,]}'
+        ;;
       *)
         printf '{"name":"atlassian","url":"https://mcp.atlassian.com/v1/mcp/authv2"}\n'
         ;;
@@ -192,6 +195,22 @@ case "$*" in
           'Name: atlassian' \
           'Description: https://mcp.atlassian.com/v1/mcp/authv2'
         ;;
+      wrong-name)
+        printf '%s\n' \
+          'Name: atlassian-helper' \
+          'URL: https://mcp.atlassian.com/v1/mcp/authv2'
+        ;;
+      duplicate-name)
+        printf '%s\n' \
+          'Name: atlassian' \
+          'Name: atlassian-helper' \
+          'URL: https://mcp.atlassian.com/v1/mcp/authv2'
+        ;;
+      missing-name)
+        printf '%s\n' \
+          'Description: atlassian' \
+          'URL: https://mcp.atlassian.com/v1/mcp/authv2'
+        ;;
       *)
         printf '%s\n' \
           'Name: atlassian' \
@@ -244,7 +263,9 @@ assert_not_contains "$(cat "$CALLS")" 'codex app-server --stdio'
 
 : >"$XDG_CONFIG_HOME/fake-codex-configured"
 printf '%s\n' healthy >"$XDG_CONFIG_HOME/fake-codex-health"
-for invalid_endpoint in metadata-url duplicate-url missing-url wrong-name; do
+for invalid_endpoint in \
+  metadata-url duplicate-url missing-url wrong-name malformed-json
+do
   printf '%s\n' "$invalid_endpoint" >"$XDG_CONFIG_HOME/fake-codex-endpoint"
   if output=$($CLI setup-connectors --client codex --non-interactive 2>&1)
   then
@@ -257,7 +278,9 @@ rm -f "$XDG_CONFIG_HOME/fake-codex-endpoint"
 
 : >"$XDG_CONFIG_HOME/fake-claude-configured"
 printf '%s\n' healthy >"$XDG_CONFIG_HOME/fake-claude-health"
-for invalid_endpoint in metadata-url duplicate-url missing-url; do
+for invalid_endpoint in \
+  metadata-url duplicate-url missing-url wrong-name duplicate-name missing-name
+do
   printf '%s\n' "$invalid_endpoint" >"$XDG_CONFIG_HOME/fake-claude-endpoint"
   if output=$($CLI setup-connectors --client claude --non-interactive 2>&1)
   then
@@ -267,6 +290,21 @@ for invalid_endpoint in metadata-url duplicate-url missing-url; do
   fi
 done
 rm -f "$XDG_CONFIG_HOME/fake-claude-endpoint"
+
+if output=$(PATH=$FAKE_BIN $CLI setup-connectors \
+  --client codex --non-interactive 2>&1)
+then
+  fix_wave_fail 'Codex accepted a missing jq dependency'
+else
+  fix_wave_contains "$output" 'Result: DEPENDENCY_MISSING'
+fi
+if output=$(PATH=$FAKE_BIN $CLI setup-connectors \
+  --client claude --non-interactive 2>&1)
+then
+  fix_wave_fail 'Claude accepted a missing jq dependency'
+else
+  fix_wave_contains "$output" 'Result: DEPENDENCY_MISSING'
+fi
 
 printf '%s\n' healthy >"$XDG_CONFIG_HOME/fake-claude-health"
 if output=$($CLI setup-connectors --client claude --non-interactive 2>&1)
@@ -524,6 +562,9 @@ grep -F 'codex mcp login atlassian' "$ROOT/handbook.md" >/dev/null ||
   fail 'missing Codex remediation command'
 grep -F 'ATLASSIAN_AUTH_REQUIRED' "$ROOT/PACKAGE-DESIGN.md" >/dev/null ||
   fail 'missing authentication result in package design'
+grep -F 'connector inspection requires `jq` for every selected client' \
+  "$ROOT/PACKAGE-DESIGN.md" >/dev/null ||
+  fix_wave_fail 'package design does not declare jq for connector inspection'
 
 [ "$FIX_WAVE_FAILURES" -eq 0 ] ||
   fail "$FIX_WAVE_FAILURES fix-wave connector regressions remain"
