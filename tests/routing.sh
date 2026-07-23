@@ -96,6 +96,12 @@ case "$*" in
           healthy-string-id)
             printf '%s\n' '{"id":"1","result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{},"getJiraIssue":{}},"authStatus":"oAuth"}]}}'
             ;;
+          healthy-array-wrapped)
+            printf '%s\n' '[{"id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{},"getJiraIssue":{}},"authStatus":"oAuth"}]}}]'
+            ;;
+          healthy-duplicate-data)
+            printf '%s\n' '{"id":1,"result":{"data":[],"data":[{"name":"atlassian","tools":{"createJiraIssue":{},"getJiraIssue":{}},"authStatus":"oAuth"}]}}'
+            ;;
           healthy-unrelated-reauth)
             printf '%s\n' \
               '{"method":"mcpServer/startupStatus/updated","params":{"name":"other","metadata":{"name":"atlassian","failureReason":"reauthenticationRequired"}}}' \
@@ -431,6 +437,7 @@ assert_contains "$output" 'Result: GOVERNANCE_NOT_READY'
 assert_not_contains "$output" 'Capability state: SUPPORTED'
 
 for invalid_response in \
+  healthy-duplicate-data healthy-array-wrapped \
   healthy-wrong-id healthy-duplicate-id healthy-string-id
 do
   printf '%s\n' "$invalid_response" >"$XDG_CONFIG_HOME/fake-codex-health"

@@ -1236,7 +1236,7 @@ codex_atlassian_record() {
           separator=nonspace(key_end + 1)
           if (substr(raw, separator, 1) == ":") {
             value_start=nonspace(separator + 1)
-            if (depth == 1 && key == "id") {
+            if (message_depth && depth == message_depth && key == "id") {
               message_id_count++
               value_end=nonspace(value_start + 1)
               if (substr(raw, value_start, 1) == "1" &&
@@ -1245,16 +1245,20 @@ codex_atlassian_record() {
                 message_id_valid=1
               }
             }
-            if (depth == 1 && key == "result") {
+            if (message_depth && depth == message_depth && key == "result") {
               message_result_count++
               if (substr(raw, value_start, 1) == "{")
                 result_open=value_start
               else
                 message_result_invalid=1
             }
-            if (result_depth && depth == result_depth && key == "data" &&
-                substr(raw, value_start, 1) == "[")
-              data_open=value_start
+            if (result_depth && depth == result_depth && key == "data") {
+              message_data_count++
+              if (substr(raw, value_start, 1) == "[")
+                data_open=value_start
+              else
+                message_data_invalid=1
+            }
             if (server_depth && depth == server_depth && key == "name") {
               server_name_count++
               if (!string_at(value_start)) server_name_invalid=1
@@ -1264,13 +1268,15 @@ codex_atlassian_record() {
           i=key_end
         } else if (c == "{") {
           parent_depth=depth
-          if (parent_depth == 0) {
+          if (parent_depth == 0 && array_depth == 0) {
             message_depth=1
             message_id_count=0
             message_id_one=0
             message_id_valid=0
             message_result_count=0
             message_result_invalid=0
+            message_data_count=0
+            message_data_invalid=0
             message_server_matches=0
             message_record=""
             result_open=0
@@ -1304,6 +1310,7 @@ codex_atlassian_record() {
               id1_responses++
               if (message_id_count != 1 || !message_id_valid ||
                   message_result_count != 1 || message_result_invalid ||
+                  message_data_count != 1 || message_data_invalid ||
                   message_server_matches != 1)
                 invalid=1
               else
