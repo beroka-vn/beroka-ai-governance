@@ -7,6 +7,7 @@ DATA_ROOT=${XDG_DATA_HOME:-$HOME/.local/share}/beroka-ai-governance
 CONFIG_ROOT=${XDG_CONFIG_HOME:-$HOME/.config}/beroka-ai-governance
 BIN_DIR=${BEROKA_GOV_BIN_DIR:-$HOME/.local/bin}
 REMOTE_URL=https://github.com/beroka-vn/beroka-ai-governance.git
+ATLASSIAN_MCP_URL=https://mcp.atlassian.com/v1/mcp/authv2
 START_MARKER='<!-- BEROKA-GOVERNANCE:START -->'
 END_MARKER='<!-- BEROKA-GOVERNANCE:END -->'
 REGISTRY=$CONFIG_ROOT/registered-repos
@@ -30,7 +31,8 @@ usage() {
     '  beroka-governance rollback REPO --to VERSION [--dry-run]' \
     '  beroka-governance unregister REPO [--dry-run]' \
     '  beroka-governance uninstall [--force]' \
-    '  beroka-governance doctor REPO' \
+    '  beroka-governance setup-connectors [--client codex|claude|cursor] [--non-interactive]' \
+    '  beroka-governance doctor REPO [--client codex|claude|cursor]' \
     '  beroka-governance context REPO' \
     '  beroka-governance show REPO governance|handbook|workflow' \
     '  beroka-governance show REPO template ai-agent-assignment|github-issue|jira-confluence|pull-request'
@@ -716,6 +718,231 @@ cmd_uninstall() {
   printf '%s\n' 'Result: PASS'
 }
 
+client_executable() {
+  case "$1" in
+    codex) printf '%s\n' codex ;;
+    claude) printf '%s\n' claude ;;
+    cursor) printf '%s\n' cursor-agent ;;
+    *) usage >&2; exit 2 ;;
+  esac
+}
+
+oauth_command() {
+  case "$1" in
+    codex) printf '%s\n' 'codex mcp login atlassian' ;;
+    claude) printf '%s\n' 'claude mcp login atlassian' ;;
+    cursor) printf '%s\n' 'cursor-agent mcp login atlassian' ;;
+    *) usage >&2; exit 2 ;;
+  esac
+}
+
+require_client() {
+  rc_client=$1
+  rc_executable=$(client_executable "$rc_client")
+  command -v "$rc_executable" >/dev/null 2>&1 ||
+    die DEPENDENCY_MISSING "Missing dependency: $rc_executable"
+  case "$rc_client" in
+    codex)
+      codex mcp login --help >/dev/null 2>&1 &&
+        codex app-server --help >/dev/null 2>&1 ||
+        die DEPENDENCY_MISSING 'Codex lacks required MCP/app-server commands'
+      ;;
+    claude)
+      claude mcp login --help >/dev/null 2>&1 ||
+        die DEPENDENCY_MISSING 'Claude Code lacks required MCP login support'
+      ;;
+    cursor)
+      cursor-agent mcp login --help >/dev/null 2>&1 ||
+        die DEPENDENCY_MISSING 'Cursor Agent lacks required MCP login support'
+      command -v jq >/dev/null 2>&1 ||
+        die DEPENDENCY_MISSING 'Missing dependency: jq'
+      ;;
+  esac
+}
+
+connector_state() {
+  cs_client=$1
+  case "$cs_client" in
+    codex)
+      cs_output=$(codex mcp get atlassian --json 2>/dev/null) || return 1
+      ;;
+    claude)
+      cs_output=$(claude mcp get atlassian 2>/dev/null) || return 1
+      ;;
+    cursor)
+      cs_file=$HOME/.cursor/mcp.json
+      [ -f "$cs_file" ] || return 1
+      jq -e --arg url "$ATLASSIAN_MCP_URL" \
+        '.mcpServers.atlassian.url == $url' "$cs_file" >/dev/null 2>&1 && return 0
+      jq -e '.mcpServers.atlassian != null' "$cs_file" >/dev/null 2>&1 && return 2
+      return 1
+      ;;
+  esac
+  case "$cs_output" in
+    *"$ATLASSIAN_MCP_URL"*) return 0 ;;
+    *atlassian*) return 2 ;;
+    *) return 1 ;;
+  esac
+}
+
+codex_configure_atlassian() {
+  cca_output=$(
+    printf '%s\n' \
+      '{"method":"initialize","id":0,"params":{"clientInfo":{"name":"beroka-governance","title":"Beroka Governance","version":"1"}}}' \
+      '{"method":"initialized","params":{}}' \
+      "{\"method\":\"config/value/write\",\"id\":1,\"params\":{\"keyPath\":\"mcp_servers.atlassian\",\"value\":{\"url\":\"$ATLASSIAN_MCP_URL\"},\"mergeStrategy\":\"upsert\"}}" |
+      codex app-server --stdio 2>&1
+  ) || die GOVERNANCE_NOT_READY 'Codex could not configure Atlassian MCP'
+  case "$cca_output" in
+    *'"id":1'*'"result"'*) ;;
+    *) die GOVERNANCE_NOT_READY 'Codex rejected Atlassian MCP configuration' ;;
+  esac
+}
+
+cursor_configure_atlassian() {
+  cuca_dir=$HOME/.cursor
+  cuca_file=$cuca_dir/mcp.json
+  assert_safe_user_path "$cuca_dir" 'Cursor config'
+  assert_safe_user_path "$cuca_file" 'Cursor MCP config'
+  mkdir -p "$cuca_dir" ||
+    die GOVERNANCE_NOT_READY 'Cannot create Cursor config directory'
+  cuca_temp=$(mktemp "$cuca_dir/.beroka-mcp.XXXXXX") ||
+    die GOVERNANCE_NOT_READY 'Cannot stage Cursor MCP config'
+  if [ -f "$cuca_file" ]; then
+    if ! jq --arg url "$ATLASSIAN_MCP_URL" \
+      '.mcpServers = (.mcpServers // {}) | .mcpServers.atlassian = {"url": $url}' \
+      "$cuca_file" >"$cuca_temp"
+    then
+      rm -f "$cuca_temp" || :
+      die GOVERNANCE_NOT_READY 'Cursor MCP config is invalid JSON'
+    fi
+  elif ! printf '%s\n' '{}' | jq --arg url "$ATLASSIAN_MCP_URL" \
+    '.mcpServers = {"atlassian":{"url":$url}}' >"$cuca_temp"
+  then
+    rm -f "$cuca_temp" || :
+    die GOVERNANCE_NOT_READY 'Cannot stage Cursor MCP config'
+  fi
+  apply_user_file "$cuca_temp" "$cuca_file" cursor-mcp-config
+  rm -f "$cuca_temp" || :
+}
+
+configure_connector() {
+  case "$1" in
+    codex) codex_configure_atlassian ;;
+    claude)
+      claude mcp add --transport http --scope user atlassian "$ATLASSIAN_MCP_URL" \
+        >/dev/null 2>&1 ||
+        die GOVERNANCE_NOT_READY 'Claude Code could not configure Atlassian MCP'
+      ;;
+    cursor) cursor_configure_atlassian ;;
+  esac
+}
+
+detect_client() {
+  dc_count=0 dc_1= dc_2= dc_3=
+  for dc_client in codex claude cursor; do
+    dc_executable=$(client_executable "$dc_client")
+    if command -v "$dc_executable" >/dev/null 2>&1; then
+      dc_count=$((dc_count + 1))
+      case "$dc_count" in
+        1) dc_1=$dc_client ;;
+        2) dc_2=$dc_client ;;
+        3) dc_3=$dc_client ;;
+      esac
+    fi
+  done
+  case "$dc_count" in
+    0) die DEPENDENCY_MISSING 'No supported client detected' ;;
+    1)
+      dc_client=$dc_1
+      printf '%s\n' "Detected client: $dc_client" >&2
+      printf 'Use this client? [y/N] ' >&2
+      IFS= read -r dc_answer || dc_answer=
+      case "$dc_answer" in
+        y|Y|yes|YES) printf '%s\n' "$dc_client" ;;
+        *) die GOVERNANCE_NOT_READY 'Connector setup cancelled' ;;
+      esac
+      ;;
+    *)
+      printf '%s\n' 'Select one client:' "  1) $dc_1" "  2) $dc_2" >&2
+      [ -z "$dc_3" ] || printf '%s\n' "  3) $dc_3" >&2
+      printf 'Client: ' >&2
+      IFS= read -r dc_answer || dc_answer=
+      case "$dc_answer" in
+        1) dc_client=$dc_1 ;;
+        2) dc_client=$dc_2 ;;
+        3) dc_client=$dc_3 ;;
+        *) usage >&2; exit 2 ;;
+      esac
+      [ -n "$dc_client" ] || { usage >&2; exit 2; }
+      printf '%s\n' "$dc_client"
+      ;;
+  esac
+}
+
+auth_required() {
+  ar_client=$1
+  printf '%s\n' \
+    "Client: $ar_client" \
+    'Authentication: AUTH_REQUIRED' \
+    "Remediation: $(oauth_command "$ar_client")"
+  die ATLASSIAN_AUTH_REQUIRED
+}
+
+cmd_setup_connectors() {
+  setup_client= setup_non_interactive=0
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --client)
+        [ -z "$setup_client" ] && [ "$#" -ge 2 ] || { usage >&2; exit 2; }
+        setup_client=$(client_executable "$2")
+        case "$setup_client" in
+          cursor-agent) setup_client=cursor ;;
+        esac
+        shift 2
+        ;;
+      --non-interactive)
+        [ "$setup_non_interactive" -eq 0 ] || { usage >&2; exit 2; }
+        setup_non_interactive=1
+        shift
+        ;;
+      *) usage >&2; exit 2 ;;
+    esac
+  done
+  setup_interactive=0
+  if [ "$setup_non_interactive" -eq 0 ] && [ -t 0 ] && [ -t 1 ]; then
+    setup_interactive=1
+  fi
+  if [ -z "$setup_client" ]; then
+    [ "$setup_interactive" -eq 1 ] || { usage >&2; exit 2; }
+    setup_client=$(detect_client)
+  fi
+  require_client "$setup_client"
+  setup_state=0
+  connector_state "$setup_client" || setup_state=$?
+  case "$setup_state" in
+    0) ;;
+    1) configure_connector "$setup_client" ;;
+    2) die CONNECTOR_MISSING "Existing atlassian connector has an unexpected URL for $setup_client" ;;
+    *) die GOVERNANCE_NOT_READY "Cannot inspect $setup_client Atlassian connector" ;;
+  esac
+  if [ "$setup_interactive" -eq 1 ]; then
+    printf '%s\n' "Client: $setup_client" 'Authentication: AUTH_REQUIRED'
+    printf 'Start OAuth now? [y/N] '
+    IFS= read -r setup_answer || setup_answer=
+    case "$setup_answer" in
+      y|Y|yes|YES)
+        case "$setup_client" in
+          codex) codex mcp login atlassian ;;
+          claude) claude mcp login atlassian ;;
+          cursor) cursor-agent mcp login atlassian ;;
+        esac
+        ;;
+    esac
+  fi
+  auth_required "$setup_client"
+}
+
 cmd_doctor() {
   verify_registration "$1"
   printf '%s\n' "Repository: $LOCK_REPOSITORY" "Version: $LOCK_VERSION" "Commit: $LOCK_COMMIT" 'Result: PASS'
@@ -752,6 +979,7 @@ main() {
     rollback) [ "$#" -ge 4 ] && [ "$#" -le 5 ] || { usage >&2; exit 2; }; cmd_repin rollback "${2:-}" "${3:-}" "${4:-}" "${5:-}" ;;
     unregister) [ "$#" -ge 2 ] && [ "$#" -le 3 ] || { usage >&2; exit 2; }; cmd_unregister "${2:-}" "${3:-}" ;;
     uninstall) [ "$#" -le 2 ] || { usage >&2; exit 2; }; cmd_uninstall "${2:-}" ;;
+    setup-connectors) shift; cmd_setup_connectors "$@" ;;
     doctor) [ "$#" -eq 2 ] || { usage >&2; exit 2; }; cmd_doctor "$2" ;;
     context) [ "$#" -eq 2 ] || { usage >&2; exit 2; }; cmd_context "$2" ;;
     show) [ "$#" -ge 3 ] && [ "$#" -le 4 ] || { usage >&2; exit 2; }; cmd_show "$2" "$3" "${4:-}" ;;
