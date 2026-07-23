@@ -77,10 +77,16 @@ case "$*" in
           healthy-metadata-tool)
             printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"getJiraIssue":{}},"metadata":{"createJiraIssue":{}},"authStatus":"oAuth"}]}}'
             ;;
+          healthy-nested-tool-metadata)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"metadata":{"createJiraIssue":{},"getJiraIssue":{}}},"authStatus":"oAuth"}]}}'
+            ;;
+          healthy-nested-metadata)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"other","metadata":{"name":"atlassian","tools":{"metadata":{"createJiraIssue":{},"getJiraIssue":{}}},"authStatus":"oAuth"}}]}}'
+            ;;
           auth-required|'')
             printf '%s\n' \
               '{"method":"mcpServer/startupStatus/updated","params":{"name":"atlassian","failureReason":"reauthenticationRequired"}}' \
-              '{"id":1,"result":{"data":[{"name":"atlassian","tools":{},"authStatus":"oAuth"}]}}'
+              '{"id":1,"result":{"data":[{"name":"atlassian","tools":{},"authStatus":"notLoggedIn"}]}}'
             ;;
           *) exit 1 ;;
         esac
@@ -377,6 +383,24 @@ then
   fail 'metadata outside the tools object satisfied Jira write'
 fi
 assert_contains "$output" 'Capability state: UNSUPPORTED'
+
+printf '%s\n' healthy-nested-tool-metadata \
+  >"$XDG_CONFIG_HOME/fake-codex-health"
+if output=$($CLI preflight "$consumer" \
+  --client codex --operation jira-write --non-interactive 2>&1)
+then
+  fail 'nested tool metadata satisfied Jira write'
+fi
+assert_contains "$output" 'Capability state: UNSUPPORTED'
+
+printf '%s\n' healthy-nested-metadata >"$XDG_CONFIG_HOME/fake-codex-health"
+if output=$($CLI preflight "$consumer" \
+  --client codex --operation jira-write --non-interactive 2>&1)
+then
+  fail 'nested server and tool metadata satisfied Jira write'
+fi
+assert_contains "$output" 'Result: GOVERNANCE_NOT_READY'
+assert_not_contains "$output" 'Capability state: SUPPORTED'
 
 : >"$XDG_CONFIG_HOME/fake-claude-configured"
 printf '%s\n' auth-required-multiserver \
