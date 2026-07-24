@@ -1057,12 +1057,17 @@ connector_state() {
           >/dev/null 2>&1 || return 2
       printf '%s\n' "$cs_output" |
         jq -e -s --stream --arg url "$ATLASSIAN_MCP_URL" '
-          ([.[] |
-            select(length == 2 and .[0] == ["name"]) |
-            .[1]] == ["atlassian"]) and
-          ([.[] |
-            select(length == 2 and .[0] == ["url"]) |
-            .[1]] == [$url])
+          def values($path):
+            [.[] | select(length == 2 and .[0] == $path) | .[1]];
+          (values(["name"]) == ["atlassian"]) and
+          (
+            (values(["url"]) == [$url] and
+             values(["transport", "url"]) == [] and
+             values(["transport", "type"]) == []) or
+            (values(["url"]) == [] and
+             values(["transport", "url"]) == [$url] and
+             values(["transport", "type"]) == ["streamable_http"])
+          )
         ' >/dev/null 2>&1 && return 0
       return 2
       ;;
@@ -1726,7 +1731,7 @@ connector_health() {
           ch_tools=$(printf '%s\n' "$ch_record" |
             json_top_level_tools) || return 2
           [ -n "$ch_tools" ] && return 0
-          return 2
+          return 1
           ;;
         *) return 2 ;;
       esac
@@ -1909,6 +1914,7 @@ auth_required() {
   ar_client=$1
   printf '%s\n' \
     "Client: $ar_client" \
+    'Provider: atlassian' \
     'Authentication: AUTH_REQUIRED' \
     "Remediation: $(oauth_command "$ar_client")"
   [ "$ar_client" != claude ] ||
@@ -2047,7 +2053,10 @@ cmd_preflight() {
       pf_interactive=1
     fi
     if [ "$pf_interactive" -eq 1 ]; then
-      printf '%s\n' "Client: $pf_client" 'Authentication: AUTH_REQUIRED'
+      printf '%s\n' \
+        "Client: $pf_client" \
+        'Provider: atlassian' \
+        'Authentication: AUTH_REQUIRED'
       printf 'Start OAuth now? [y/N] '
       IFS= read -r pf_answer || pf_answer=
       case "$pf_answer" in
@@ -2135,7 +2144,10 @@ cmd_setup_connectors() {
     *) die GOVERNANCE_NOT_READY "Cannot verify $setup_client Atlassian connector health" ;;
   esac
   if [ "$setup_interactive" -eq 1 ]; then
-    printf '%s\n' "Client: $setup_client" 'Authentication: AUTH_REQUIRED'
+    printf '%s\n' \
+      "Client: $setup_client" \
+      'Provider: atlassian' \
+      'Authentication: AUTH_REQUIRED'
     printf 'Start OAuth now? [y/N] '
     IFS= read -r setup_answer || setup_answer=
     case "$setup_answer" in

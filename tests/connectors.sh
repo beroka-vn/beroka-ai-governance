@@ -99,6 +99,18 @@ case "$*" in
       missing-url)
         printf '%s\n' '{"name":"atlassian","metadata":{"url":"https://mcp.atlassian.com/v1/mcp/authv2"}}'
         ;;
+      transport-url)
+        printf '%s\n' \
+          '{"name":"atlassian","enabled":true,"transport":{"type":"streamable_http","url":"https://mcp.atlassian.com/v1/mcp/authv2","bearer_token_env_var":null,"http_headers":null,"env_http_headers":null}}'
+        ;;
+      duplicate-transport-url)
+        printf '%s\n' \
+          '{"name":"atlassian","transport":{"type":"streamable_http","url":"https://wrong.invalid/mcp","url":"https://mcp.atlassian.com/v1/mcp/authv2"}}'
+        ;;
+      both-url-shapes)
+        printf '%s\n' \
+          '{"name":"atlassian","url":"https://mcp.atlassian.com/v1/mcp/authv2","transport":{"type":"streamable_http","url":"https://mcp.atlassian.com/v1/mcp/authv2"}}'
+        ;;
       wrong-name)
         printf '%s\n' '{"name":"atlassian-helper","url":"https://mcp.atlassian.com/v1/mcp/authv2"}'
         ;;
@@ -121,6 +133,8 @@ case "$*" in
     esac
     ;;
   'mcp login atlassian')
+    printf '%s\n' \
+      'OAuth URL: https://auth.example.test/authorize?state=one-time'
     printf '%s\n' healthy >"$XDG_CONFIG_HOME/fake-codex-health"
     ;;
   'app-server --stdio')
@@ -275,7 +289,7 @@ assert_not_contains "$(cat "$CALLS")" 'codex app-server --stdio'
 printf '%s\n' healthy >"$XDG_CONFIG_HOME/fake-codex-health"
 for invalid_endpoint in \
   metadata-url duplicate-url missing-url wrong-name malformed-json \
-  split-documents trailing-document
+  split-documents trailing-document duplicate-transport-url both-url-shapes
 do
   printf '%s\n' "$invalid_endpoint" >"$XDG_CONFIG_HOME/fake-codex-endpoint"
   if output=$($CLI setup-connectors --client codex --non-interactive 2>&1)
@@ -286,6 +300,20 @@ do
   fi
 done
 rm -f "$XDG_CONFIG_HOME/fake-codex-endpoint"
+
+printf '%s\n' transport-url >"$XDG_CONFIG_HOME/fake-codex-endpoint"
+output=$($CLI setup-connectors --client codex --non-interactive)
+fix_wave_contains "$output" 'Authentication: PASS'
+rm -f "$XDG_CONFIG_HOME/fake-codex-endpoint"
+
+printf '%s\n' failed >"$XDG_CONFIG_HOME/fake-codex-health"
+if output=$($CLI setup-connectors --client codex --non-interactive 2>&1)
+then
+  fix_wave_fail 'Codex OAuth with an empty tool inventory passed'
+else
+  fix_wave_contains "$output" 'Provider: atlassian'
+  fix_wave_contains "$output" 'Result: ATLASSIAN_AUTH_REQUIRED'
+fi
 
 : >"$XDG_CONFIG_HOME/fake-claude-configured"
 printf '%s\n' healthy >"$XDG_CONFIG_HOME/fake-claude-health"
@@ -426,8 +454,16 @@ printf '%s\n' auth-required >"$XDG_CONFIG_HOME/fake-codex-health"
 : >"$CALLS"
 output=$(printf 'y\n' | script -qec "$CLI setup-connectors --client codex" /dev/null 2>&1)
 assert_contains "$output" 'Authentication: AUTH_REQUIRED'
+assert_contains "$output" 'Provider: atlassian'
+assert_contains "$output" \
+  'OAuth URL: https://auth.example.test/authorize?state=one-time'
 assert_contains "$output" 'Result: PASS'
 assert_contains "$(cat "$CALLS")" 'codex mcp login atlassian'
+if rg -l -F 'auth.example.test' \
+  "$HOME" "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" >/dev/null 2>&1
+then
+  fail 'Governance persisted the provider OAuth URL'
+fi
 
 printf '%s\n' healthy >"$XDG_CONFIG_HOME/fake-claude-health"
 : >"$CALLS"
