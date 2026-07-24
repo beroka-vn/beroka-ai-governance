@@ -26,8 +26,8 @@ và hỏi developer; không tự chọn từ organization list.
 - Dùng account cá nhân của developer và least privilege.
 - Không đặt token trong repository, `.env` được commit, `AGENTS.md`,
   `CLAUDE.md`, Cursor rules, prompt, log hoặc tài liệu này.
-- Ưu tiên OAuth/connector UI. Nếu GitHub client bắt buộc PAT, lưu token trong
-  user-level secret/config, giới hạn quyền và rotate khi bị lộ.
+- Dùng OAuth/connector UI được client hỗ trợ. GitHub credential do client hoặc
+  OS keyring sở hữu; governance không nhận hoặc lưu developer token.
 - Không cấu hình đồng thời plugin và MCP trùng nhau cho cùng provider.
 - Cài đặt không đồng nghĩa với authorization. Developer phải hoàn thành OAuth
   và chọn đúng GitHub/Atlassian account.
@@ -35,10 +35,11 @@ và hỏi developer; không tự chọn từ organization list.
 
 ## Kích hoạt trong repository
 
-Package chỉ áp dụng cho repository được đăng ký rõ ràng. V1 pilot chỉ đăng ký
-một Backend repository do coordinator chỉ định; **không đăng ký Frontend
-repository**. Linux, macOS và Windows qua WSL là target environments; native
-Windows PowerShell không thuộc V1.
+Package chỉ áp dụng cho repository được đăng ký rõ ràng. Backend và Frontend
+đều được hỗ trợ chính thức. Mỗi lần bootstrap chỉ đăng ký đúng một repository
+đã truyền rõ; chạy lại explicit trong repository còn lại khi cần. Governance
+không tự scan hoặc đăng ký mọi repository trên máy. Linux, macOS và Windows qua
+WSL là target environments; native Windows PowerShell không thuộc V1.
 
 ### Điều kiện trước khi cài
 
@@ -46,10 +47,8 @@ Windows PowerShell không thuộc V1.
   repository; package không chứa credentials.
 - `$HOME/.local/bin` phải có trong `PATH` sau khi `install` để gọi
   `beroka-governance`.
-- Dùng một annotated SemVer tag đã được review và publish. `v1.1.0` là release
-  candidate hiện tại; chỉ publish sau khi release gate hoàn tất và coordinator
-  cho phép. `v1.0.0` là immutable legacy test sample; không push, move hoặc
-  reuse tag đó cho feature này.
+- Dùng một annotated SemVer tag đã được review và publish. `v1.0.0` là first
+  public stable release; sau khi publish không được move hoặc replace tag.
 - Repository đích là Git repository có đúng một canonical GitHub remote khớp
   repository identity. Tên local remote không bắt buộc là `origin`. Review
   diff của repository đích bằng PR trước khi merge; không đăng ký trực tiếp
@@ -60,38 +59,56 @@ Windows PowerShell không thuộc V1.
 
 ### Bootstrap và install
 
-Bootstrap checkout chỉ là tạm thời. `install` tạo local pinned checkout và
-user-level CLI; không sửa application repository.
+Bootstrap checkout chỉ là tạm thời. Chạy quick start từ repository Backend hoặc
+Frontend cần đăng ký:
 
 ```bash
-release=v1.1.0
-client=codex # codex | claude | cursor
+repo=$(git rev-parse --show-toplevel)
 bootstrap_dir=$(mktemp -d "${TMPDIR:-/tmp}/beroka-governance-bootstrap.XXXXXX")
-git clone --depth 1 --single-branch --branch "$release" \
+
+git clone --depth 1 --single-branch --branch v1.0.0 \
   https://github.com/beroka-vn/beroka-ai-governance.git \
   "$bootstrap_dir/repo"
-sh "$bootstrap_dir/repo/bin/beroka-governance" install "$release"
-beroka-governance setup-connectors --client "$client"
-beroka-governance doctor /srv/beroka/backend
-```
 
-Sau khi release có lệnh onboarding mới, có thể thay ba lệnh cuối bằng:
-
-```bash
-sh "$bootstrap_dir/repo/bin/beroka-governance" bootstrap \
-  /srv/beroka/backend --client "$client"
+sh "$bootstrap_dir/repo/bin/beroka-governance" bootstrap "$repo"
 ```
 
 Lần đăng ký interactive đầu tiên, `bootstrap` resolve latest stable annotated
 SemVer tag từ canonical remote, hiển thị exact version/commit và hỏi xác nhận.
-Repository đã đăng ký luôn giữ lock hiện tại; không silent upgrade. Automation
-phải truyền cả `--client` và exact `--version`. Sau khi command PASS, review và
-commit các managed files qua PR rồi mở **fresh AI session**; command không tự
-commit hoặc push.
+Nếu detect một client thì command hỏi xác nhận; nếu có nhiều client thì đưa
+numbered options để developer chọn đúng một. Có thể chọn explicit:
 
-`doctor` trước khi register sẽ trả `REPOSITORY_NOT_REGISTERED`; đó là expected.
-Sau khi install thành công, có thể xóa bootstrap checkout bằng
-`rm -rf "$bootstrap_dir"`.
+```bash
+sh "$bootstrap_dir/repo/bin/beroka-governance" bootstrap \
+  "$repo" --client codex
+```
+
+Automation phải truyền đầy đủ client và exact version:
+
+```bash
+sh "$bootstrap_dir/repo/bin/beroka-governance" bootstrap \
+  "$repo" \
+  --client codex \
+  --version v1.0.0 \
+  --non-interactive
+```
+
+Repository đã đăng ký luôn giữ lock hiện tại; không silent upgrade. Sau khi
+command PASS, review và commit các managed files qua PR rồi mở **fresh AI
+session**; command không tự commit hoặc push.
+
+### Thiếu context hoặc lựa chọn chưa rõ
+
+Target repository phải được truyền explicit; bootstrap không scan máy để tự
+chọn repository. Interactive mode hiển thị các client/release choices đã xác
+minh và yêu cầu developer chọn đúng một option. Nếu AI chưa resolve được target
+hoặc quyết định ảnh hưởng scope, ownership, routing hay external write, AI phải
+**Chuyển quyết định cho developer**, nêu các option và dừng cho đến khi
+developer xác nhận exact target. Không tự suy đoán theo tên gần giống.
+
+Non-interactive mode không chọn thay developer và không mở browser. Thiếu
+client, exact version, authentication hoặc routing phải trả stable fail-closed
+result cùng remediation phù hợp.
 
 ### Chọn đúng một client và setup Atlassian connector
 
@@ -158,7 +175,7 @@ vì vậy vẫn dùng được khi routing đang thiếu hoặc pending.
 
 ```bash
 repo=/srv/beroka/backend
-release=v1.1.0
+release=v1.0.0
 
 beroka-governance register "$repo" --version "$release"
 git -C "$repo" diff -- .beroka-governance.lock AGENTS.md CLAUDE.md .cursor/rules/beroka-governance.mdc
@@ -317,18 +334,10 @@ client `/mcp -> atlassian -> Authenticate`. Claude Code không dùng
 `claude mcp login atlassian`; package chỉ dùng `mcp add`, `mcp get`, `mcp list`
 cho setup/health, rồi launch `claude` sau khi developer xác nhận interactive.
 
-GitHub hosted MCP hiện cần GitHub PAT. Export PAT trong shell rồi thêm ở scope
-`local` mặc định; không dùng `--scope project` vì cách đó tạo shared
-`.mcp.json`:
-
-```bash
-claude mcp add-json github "{\"type\":\"http\",\"url\":\"https://api.githubcopilot.com/mcp\",\"headers\":{\"Authorization\":\"Bearer ${GITHUB_PAT}\"}}"
-claude mcp list
-claude mcp get github
-```
-
-Nếu `GITHUB_PAT` rỗng hoặc Claude version không hỗ trợ `add-json`, dừng và làm
-theo official GitHub MCP guide; không hardcode token vào project file.
+Governance không cấu hình GitHub hosted MCP hoặc nhận developer token cho
+Claude. GitHub push/PR dùng `github-write` preflight và OAuth flow của `gh`;
+GitHub app khác phải được developer cài qua official client UI, để client/keyring
+sở hữu authentication.
 
 ## Cursor
 
@@ -346,17 +355,11 @@ server khác. Nếu cần re-login, remediation là
 
 ### GitHub
 
-Dùng GitHub hosted MCP tại `https://api.githubcopilot.com/mcp/` theo official
-GitHub **Install in Cursor** flow. Nếu cấu hình thủ công, dùng user-level
-`~/.cursor/mcp.json`, không dùng project-level `.cursor/mcp.json` vì GitHub PAT
-không được chia sẻ qua repository. Giới hạn permission của file nếu có token:
-
-```bash
-chmod 600 ~/.cursor/mcp.json
-```
-
-Restart Cursor, rồi kiểm tra server có green status trong **Settings → Tools &
-Integrations → MCP Tools**. Cursor Agent CLI có thể kiểm tra thêm:
+Governance không cấu hình GitHub hosted MCP hoặc nhận developer token cho
+Cursor. Nếu developer cài GitHub app qua official **Install in Cursor** flow,
+Cursor/keyring phải sở hữu authentication; không ghi credential vào project
+`.cursor/mcp.json`. Restart Cursor rồi kiểm tra server trong **Settings → Tools
+& Integrations → MCP Tools**. Cursor Agent CLI có thể kiểm tra thêm:
 
 ```bash
 cursor-agent mcp list
@@ -431,130 +434,64 @@ tại. Sau khi developer sửa kết nối, agent phải chạy lại preflight.
 
 ## Release gate trước khi publish tag
 
-Tất cả manual gate bên dưới hiện là **UNVERIFIED**. Không được xem source-tree
-smoke trên Linux là bằng chứng thay thế, không được claim `v1.1.0` đã release,
-và không được publish candidate tag trước khi hoàn tất đúng thứ tự này.
-`v1.0.0` là immutable legacy test sample và không thuộc release gate này.
+`v1.0.0` là first public stable release. Trước mọi push, coordinator phải nhận:
 
-### Chạy unpublished candidate trong môi trường cô lập
+- exact local branch và release commit;
+- full automated validation output;
+- xác nhận canonical remote chưa có `v1.0.0`;
+- full interactive/non-interactive developer bootstrap workflow; và
+- các manual checks còn `UNVERIFIED`.
 
-Sau khi implementation PR đã merge, coordinator đã chọn exact Backend pilot,
-và local `main` là commit cần kiểm tra, tạo annotated tag **chỉ ở local**. Không
-push tag trong bước này:
+Không tạo hoặc push tag trước khi coordinator duyệt report này. Sau khi release
+PR merge, fetch canonical `main`, xác minh exact merge commit, xóa local test
+candidate, rồi tạo annotated `v1.0.0` tại commit đó. Nếu remote đã xuất hiện
+tag cùng tên thì dừng; không force hoặc overwrite.
 
-```bash
-governance_repo=$(git rev-parse --show-toplevel)
-pilot_repo=/exact/path/from/coordinator
-release=v1.1.0
-
-git -C "$governance_repo" switch main
-git -C "$governance_repo" pull --ff-only origin main
-git -C "$governance_repo" tag -a "$release" -m 'Beroka AI governance package v1.1.0'
-```
-
-Tạo một HOME/XDG/PATH riêng cho candidate. Git rewrite này chỉ nằm trong
-`$candidate_home/.gitconfig`; nó chuyển exact canonical HTTPS URL sang local
-checkout để `install` kiểm tra unpublished tag mà vẫn lưu canonical `origin`:
+Automated gate:
 
 ```bash
-original_home=$HOME
-original_path=$PATH
-candidate_root=$(mktemp -d "${TMPDIR:-/tmp}/beroka-governance-candidate.XXXXXX")
-candidate_home=$candidate_root/home
-canonical_url=https://github.com/beroka-vn/beroka-ai-governance.git
-
-export HOME=$candidate_home
-export XDG_DATA_HOME=$candidate_root/data
-export XDG_CONFIG_HOME=$candidate_root/config
-export BEROKA_GOV_BIN_DIR=$candidate_root/bin
-export PATH=$BEROKA_GOV_BIN_DIR:$original_path
-mkdir -p "$HOME" "$XDG_DATA_HOME" "$XDG_CONFIG_HOME" "$BEROKA_GOV_BIN_DIR"
-
-git config --global url."file://$governance_repo".insteadOf "$canonical_url"
-sh "$governance_repo/bin/beroka-governance" install "$release"
-git config --global --unset-all url."file://$governance_repo".insteadOf
-
-beroka-governance register "$pilot_repo" --version "$release"
-git -C "$pilot_repo" diff -- \
-  .beroka-governance.lock AGENTS.md CLAUDE.md \
-  .cursor/rules/beroka-governance.mdc
-beroka-governance doctor "$pilot_repo"
+sh -n bin/beroka-governance tests/*.sh
+sh tests/release.sh
+sh tests/bootstrap.sh
+sh tests/connectors.sh
+sh tests/documentation-architecture.sh
+sh tests/smoke.sh
 ```
 
-Phải remove Git rewrite ngay sau `install`, trước `register`/`doctor`. Nếu
-`install` fail, vẫn chạy lệnh `git config --global --unset-all ...` ở trên trước
-khi điều tra hoặc retry. Không export hoặc dùng CLI remote override.
+`tests/routing.sh` phải chạy trong isolated clone không kế thừa unpublished
+local tags. Linux automated evidence không thay thế manual macOS/WSL và fresh
+client-session checks.
 
-Thoát hoàn toàn các process client đang chạy, rồi launch từng client từ chính
-shell đang giữ candidate environment để process mới kế thừa HOME/XDG/PATH:
+Manual gate:
 
-```bash
-(cd "$pilot_repo" && claude)
-code --new-window "$pilot_repo"       # mở VS Code và dùng Codex extension
-cursor --new-window "$pilot_repo"
-```
+- [ ] **UNVERIFIED** — Bootstrap một exact Backend repository trong isolated
+      HOME/XDG, review managed-file diff và chạy governance/client Doctor.
+- [ ] **UNVERIFIED** — Bootstrap một exact Frontend repository độc lập với cùng
+      checks; không reuse Backend routing.
+- [ ] **UNVERIFIED** — Fresh Codex, Claude Code và Cursor sessions load đúng
+      pinned release trên các client thuộc rollout.
+- [ ] **UNVERIFIED** — Coordinator review full evidence và cho phép push release
+      branch/PR, rồi cho phép publish tag sau merge.
 
-Vì candidate HOME/XDG là cô lập, Claude Code, VS Code/Codex extension và Cursor
-có thể yêu cầu login và connector authentication riêng. Ghi evidence trong
-fresh session của từng client; không copy credential từ HOME thật vào candidate.
-Sau khi evidence hoàn tất, restore shell và xóa environment cô lập:
-
-```bash
-export HOME=$original_home
-export PATH=$original_path
-unset XDG_DATA_HOME XDG_CONFIG_HOME BEROKA_GOV_BIN_DIR
-rm -rf "$candidate_root"
-```
-
-- [ ] **UNVERIFIED** — Coordinator chỉ định một exact Backend pilot repository
-      và exact reviewed release-candidate commit; Frontend chưa được register.
-- [ ] **UNVERIFIED** — Tạo annotated candidate tag chỉ ở local trên đúng commit
-      để chạy gate; không push hoặc tái sử dụng tag nếu candidate thất bại.
-- [ ] **UNVERIFIED** — Chạy `sh -n bin/beroka-governance`,
-      `sh -n tests/smoke.sh` và `sh tests/smoke.sh` trên Linux, macOS và WSL từ
-      cùng candidate; lưu exact command, commit và output của từng môi trường.
-- [ ] **UNVERIFIED** — Cài candidate trong isolated test environment, tạo
-      reviewed registration diff cho Backend pilot, và xác nhận
-      `beroka-governance doctor <repo>` trả `Result: PASS`.
-- [ ] **UNVERIFIED** — Fresh Codex IDE session load `AGENTS.md` và đúng candidate.
-- [ ] **UNVERIFIED** — Fresh Claude Code session `/memory` hiển thị project import
-      và đúng candidate.
-- [ ] **UNVERIFIED** — Fresh Cursor session áp dụng dedicated project rule và
-      đúng candidate.
-- [ ] **UNVERIFIED** — Coordinator review toàn bộ automated/manual evidence và
-      đưa ra authorization rõ ràng cho việc publish annotated tag.
-- [ ] **UNVERIFIED** — Chỉ sau authorization, publish annotated `v1.1.0` từ chính
-      candidate commit đã pass; không move hoặc reuse tag.
-
-Nếu bất kỳ candidate gate nào fail, chỉ xóa local unpublished tag, sửa qua một
-reviewed implementation PR mới và chạy lại toàn bộ gate trên commit mới.
+Nếu gate fail, không publish. Sửa qua reviewed release PR và chạy lại từ exact
+commit mới.
 
 ## Deployment checklist sau khi publish
 
-Các bước này cũng đang **UNVERIFIED** và chỉ bắt đầu sau khi annotated tag đã
-được publish hợp lệ:
+- [ ] Install published `v1.0.0` từ canonical repository.
+- [ ] Bootstrap từng Backend/Frontend repository riêng, review và merge
+      managed-file diff bằng application-repository PR.
+- [ ] Mở fresh agent session và xác minh pinned version bằng Doctor.
+- [ ] Merge exact repository routing trước Jira/Confluence/cross-repository
+      writes; không dùng pending local routing.
+- [ ] Tạo hoặc xác minh Backend Capability Registry và globally unique
+      Confluence Folders trước documentation writes.
+- [ ] Không tự migration tài liệu Confluence cũ; missing exact content ID hoặc
+      parent phải dừng và chuyển quyết định cho developer.
+- [ ] Chạy operation-specific preflight ngay trước external write.
 
-- [ ] **UNVERIFIED** — Install published tag từ canonical central repository
-      trên client rollout.
-- [ ] **UNVERIFIED** — Chạy `register` cho exact Backend pilot; review và merge
-      application-repository diff bằng PR.
-- [ ] **UNVERIFIED** — Mở fresh agent session, xác nhận pinned published version,
-      entrypoint đã load và `doctor` trả `Result: PASS`.
-- [ ] **UNVERIFIED** — GitHub Backend và exact Frontend repository routing đã
-      được xác nhận nhưng Frontend vẫn chưa được register.
-- [ ] **UNVERIFIED** — Jira có Epic/Feature/Story/Task/Bug, backlog được enable,
-      status map đúng trên `BB/34` và `BF/35`, và link types `Relates`/`Blocks`
-      khả dụng trong required scope.
-- [ ] **UNVERIFIED** — Hai Confluence spaces có native Folder/page permissions;
-      FE mở được shared Integration Hub trong owning BE Folder.
-- [ ] **UNVERIFIED** — Plugin/MCP dùng đúng account, không duplicate, không chứa
-      secret trong repository, và connector preflight pass cho action thực tế.
-- [ ] **UNVERIFIED** — Một Backend pilot task thật, nhỏ đã pass trước team-wide
-      rollout; không tạo fake issue/page chỉ để test.
-
-Chỉ đăng ký thêm repository sau Backend pilot và post-publication evidence được
-coordinator review. Không register Frontend trước authorization riêng và không
-thêm automation đồng bộ nếu manual drift chưa thực sự lặp lại.
+Chỉ đăng ký repository developer đã chọn rõ; không bulk-register và không
+silent update.
 
 ## Troubleshooting nhanh
 
@@ -563,7 +500,7 @@ thêm automation đồng bộ nếu manual drift chưa thực sự lặp lại.
 | Không thấy tools | Plugin/MCP status, restart client hoặc mở session mới |
 | OAuth lặp lại | Đúng account, browser callback, workspace admin policy |
 | Đọc được nhưng không ghi được | Repository/project/space permission của account |
-| GitHub `401`/`403` | PAT hết hạn hoặc thiếu scope; không tăng scope nếu chưa cần |
+| GitHub `401`/`403` | Chạy `gh auth status`; nếu cần thì dùng exact OAuth remediation được preflight in ra. |
 | Jira có nhưng Confluence không có | Atlassian product access và space permission riêng |
 | Kết quả thuộc nhầm team | Authenticated identity và target URL/project/space |
 
