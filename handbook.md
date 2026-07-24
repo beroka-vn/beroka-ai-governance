@@ -94,8 +94,8 @@ sh "$bootstrap_dir/repo/bin/beroka-governance" bootstrap \
 ```
 
 Repository đã đăng ký luôn giữ lock hiện tại; không silent upgrade. Sau khi
-command PASS, review và commit các managed files qua PR rồi mở **fresh AI
-session**; command không tự commit hoặc push.
+command PASS, review và commit các managed files qua PR rồi mở **fresh AI session**;
+command không tự commit hoặc push.
 
 ### Thiếu context hoặc lựa chọn chưa rõ
 
