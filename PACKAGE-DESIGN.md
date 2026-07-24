@@ -175,6 +175,10 @@ multiple are found, and returns `DEPENDENCY_MISSING` when none are found. After
 registering the Atlassian MCP endpoint, it reports `AUTH_REQUIRED` and asks
 before starting that client's OAuth flow.
 
+Interactive OAuth commands remain attached directly to the terminal. The
+selected client prints the exact one-time URL or device URL/code; Governance
+does not parse, log, or store that output.
+
 `--non-interactive` requires explicit client selection and never opens a
 browser. Missing, expired, or invalid authentication returns
 `ATLASSIAN_AUTH_REQUIRED` and the exact remediation command:
@@ -190,6 +194,13 @@ The clients are configured through their own supported paths: Codex app-server
 configuration, Claude Code user-scoped MCP commands, and an atomic merge of
 Cursor's user-level MCP JSON. Claude authentication runs through interactive
 `/mcp`, not a Codex-style `mcp login` subcommand.
+
+`preflight ... --operation github-write` is a separate operation-scoped gate.
+It verifies registration, checks `gh auth status --hostname github.com`, and
+does not resolve Jira/Confluence routing or inspect Atlassian. Healthy GitHub
+auth is reused. Interactive auth-required runs
+`gh auth login --hostname github.com --web` after confirmation; non-interactive
+mode returns `GITHUB_AUTH_REQUIRED` with that exact remediation command.
 
 ### Register
 
@@ -306,6 +317,7 @@ The CLI and agent entrypoints use these stable results:
 | `DEPENDENCY_MISSING` | The selected client or required client command is missing |
 | `CONNECTOR_MISSING` | The selected client lacks the expected Atlassian connector |
 | `ATLASSIAN_AUTH_REQUIRED` | Atlassian OAuth is missing, expired, or invalid |
+| `GITHUB_AUTH_REQUIRED` | GitHub OAuth is missing, expired, or invalid for `github-write` |
 | `PASS` | All checks requested by the command passed |
 
 No failed command may leave a partial registration or version change. The CLI
@@ -320,6 +332,9 @@ targets do.
 - Atlassian OAuth state and credentials remain owned by the selected client or
   OS keyring. The CLI never accepts, requests, prints, logs, or stores a
   developer API token.
+- GitHub OAuth state and credentials remain owned by GitHub CLI or the OS
+  keyring. Governance runs the provider login process directly and never
+  captures its one-time URL, device code, or credentials.
 - Private-repository access uses each developer's existing least-privilege Git
   or GitHub authentication.
 - The CLI never uses `curl | sh`, executes a lock file, or fetches an unpinned

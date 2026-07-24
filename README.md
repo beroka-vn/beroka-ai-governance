@@ -31,6 +31,9 @@ beroka-governance context /srv/beroka/backend
 beroka-governance preflight /srv/beroka/backend \
   --client "$client" \
   --operation jira-write
+beroka-governance preflight /srv/beroka/backend \
+  --client "$client" \
+  --operation github-write
 ```
 
 Run connector setup only after the selected client and its MCP dependencies are
@@ -41,12 +44,23 @@ returns `ATLASSIAN_AUTH_REQUIRED` with client-specific remediation and does not
 open a browser. For Claude Code that remediation is `claude`, followed in the
 client by `/mcp -> atlassian -> Authenticate`.
 
+Interactive login streams provider OAuth output directly, including the exact
+one-time URL or device URL/code. Governance does not parse, log, or store that
+output. `github-write` checks `gh auth status` only for GitHub push and
+pull-request work. Healthy auth is reused; missing auth asks before running
+`gh auth login --hostname github.com --web`. Non-interactive mode instead
+returns `GITHUB_AUTH_REQUIRED` with that remediation command.
+
 `context` may continue source-only work while repository routing is unverified.
 Run `preflight` immediately before each routing-dependent external write; the
 exact selected client owns OAuth. Repository routing comes only from a freshly
 fetched default-branch baseline. Pending local routing can be committed,
 pushed, and reviewed, but cannot route Jira, Confluence, or cross-repository
 writes.
+
+`github-write` verifies repository registration but does not use repository
+routing or inspect Atlassian. It therefore remains available while routing is
+missing or pending.
 
 `cross-repo-write` currently returns `ROUTING_REQUIRED` before inspecting a
 client. The central release does not yet contain a reviewed exact counterpart

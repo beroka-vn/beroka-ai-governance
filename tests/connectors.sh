@@ -609,6 +609,13 @@ grep -F 'codex mcp login atlassian' "$ROOT/handbook.md" >/dev/null ||
   fail 'missing Codex remediation command'
 grep -F 'ATLASSIAN_AUTH_REQUIRED' "$ROOT/PACKAGE-DESIGN.md" >/dev/null ||
   fail 'missing authentication result in package design'
+grep -F 'GITHUB_AUTH_REQUIRED' "$ROOT/PACKAGE-DESIGN.md" >/dev/null ||
+  fail 'package design does not document GitHub authentication result'
+grep -F 'gh auth login --hostname github.com --web' "$ROOT/handbook.md" \
+  >/dev/null ||
+  fail 'handbook does not document GitHub OAuth remediation'
+grep -F 'provider OAuth output directly' "$ROOT/README.md" >/dev/null ||
+  fail 'README does not document OAuth URL pass-through'
 grep -F 'connector inspection requires `jq` for every selected client' \
   "$ROOT/PACKAGE-DESIGN.md" >/dev/null ||
   fix_wave_fail 'package design does not declare jq for connector inspection'
