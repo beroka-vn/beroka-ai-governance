@@ -261,6 +261,25 @@ assert_contains "$ignored_output" 'Result: WORKTREE_CONFLICT'
 [ "$(cat "$ignored_repo/AGENTS.md")" = 'ignored unmanaged rules' ] || fail 'ignored-target refusal changed AGENTS.md'
 [ ! -e "$ignored_repo/.beroka-governance.lock" ] || fail 'ignored-target refusal wrote a lock'
 
+ignored_new_repo=$TMP_ROOT/ignored-new-consumer
+new_repo "$ignored_new_repo"
+git -C "$ignored_new_repo" remote add origin \
+  https://github.com/beroka-vn/ignored-new-backend.git
+printf '.cursor/rules/beroka-governance.mdc\n' \
+  >"$ignored_new_repo/.gitignore"
+git -C "$ignored_new_repo" add .gitignore
+git -C "$ignored_new_repo" commit -qm 'test: ignore new managed target'
+if ignored_new_output=$($CLI register "$ignored_new_repo" \
+  --version v1.0.0 2>&1)
+then
+  fail 'register accepted a new ignored managed target'
+fi
+assert_contains "$ignored_new_output" 'Result: WORKTREE_CONFLICT'
+[ ! -e "$ignored_new_repo/.beroka-governance.lock" ] ||
+  fail 'ignored new-target refusal wrote a lock'
+[ ! -e "$ignored_new_repo/.cursor/rules/beroka-governance.mdc" ] ||
+  fail 'ignored new-target refusal wrote a Cursor rule'
+
 registry_path=$XDG_CONFIG_HOME/beroka-ai-governance/registered-repos
 registry_contents=$(cat "$registry_path")
 rm -f "$registry_path"
@@ -498,12 +517,14 @@ if $CLI uninstall >/dev/null 2>&1; then fail 'uninstall accepted a registered re
 ignored_unregister_repo=$TMP_ROOT/ignored-unregister-consumer
 new_repo "$ignored_unregister_repo"
 git -C "$ignored_unregister_repo" remote add origin https://github.com/beroka-vn/ignored-unregister-backend.git
-printf '.cursor/rules/beroka-governance.mdc\n' >"$ignored_unregister_repo/.gitignore"
-git -C "$ignored_unregister_repo" add .gitignore
-git -C "$ignored_unregister_repo" commit -qm 'test: ignore Cursor rule'
 $CLI register "$ignored_unregister_repo" --version v1.1.0
 git -C "$ignored_unregister_repo" add .
-git -C "$ignored_unregister_repo" commit -qm 'test: commit non-ignored registration files'
+git -C "$ignored_unregister_repo" commit -qm 'test: commit registration files'
+printf '.cursor/rules/beroka-governance.mdc\n' >"$ignored_unregister_repo/.gitignore"
+git -C "$ignored_unregister_repo" rm -q --cached \
+  .cursor/rules/beroka-governance.mdc
+git -C "$ignored_unregister_repo" add .gitignore
+git -C "$ignored_unregister_repo" commit -qm 'test: simulate legacy ignored Cursor rule'
 if ignored_unregister_output=$($CLI unregister "$ignored_unregister_repo" 2>&1); then
   fail 'unregister accepted an ignored managed target'
 fi
