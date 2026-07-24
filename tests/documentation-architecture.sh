@@ -57,4 +57,17 @@ require_text README.md 'Backend Capability Registry'
 require_text handbook.md 'globally unique Folder'
 reject_text templates/jira-confluence.md 'The Hub row is canonical'
 
+reject_text examples/homepage-market-overview-epic-packet.md \
+  'HOME-MARKET-INDEX-CHART'
+require_text examples/homepage-market-overview-epic-packet.md \
+  'MARKET-INDEX-SNAPSHOT'
+require_text examples/homepage-market-overview-epic-packet.md \
+  'MARKET-INDEX-HISTORY'
+require_text examples/homepage-market-overview-epic-packet.md \
+  'MARKET-INDEX-STREAM'
+require_text examples/homepage-market-overview-epic-packet.md \
+  'Backend Capability Registry'
+require_text examples/end-to-end-traceability.md 'PORTFOLIO-SUMMARY'
+require_text examples/end-to-end-traceability.md 'Registry reference'
+
 printf '%s\n' 'Documentation architecture tests: PASS'

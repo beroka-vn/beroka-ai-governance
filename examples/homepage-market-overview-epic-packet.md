@@ -87,15 +87,18 @@ biến thị trường và các mã họ quan tâm trước khi đi tới màn h
   error semantics, freshness definition và sanitized test evidence.
 - Frontend linked items: tạo trong `BF` dưới một BF Epic project-local. Hai Epic
   link bằng `Relates`; BB Feature `Blocks` một hoặc nhiều BF items có cùng
-  immutable Capability ID và cùng trỏ tới Integration Hub.
+  immutable Capability IDs, Backend Capability Registry rows và Integration
+  Hub references.
 - Handoff gate: FE-dependent work chỉ Ready sau khi exact contract version đạt
   `READY_FOR_FE` và FE owner ghi `ACKNOWLEDGED`.
 
 ## Links
 
 - Epic Integration Hub: https://beroka.atlassian.net/wiki/spaces/Berokaback/pages/68354049/HomePage+Integration+Hub
+- Backend Capability Registry: Pending — central Governance registration required
 - Backend initial Feature: [BB-7 — Market Index Chart](https://beroka.atlassian.net/browse/BB-7)
-- Capability ID: `HOME-MARKET-INDEX-CHART`
+- Capability IDs: `MARKET-INDEX-SNAPSHOT`, `MARKET-INDEX-HISTORY`,
+  `MARKET-INDEX-STREAM`
 - Frontend Epic/items/Folder: Pending until approved FE work
 - GitHub tracking: Pending — child issue owners update
 - Completion document: Pending — coordinator updates after delivery
@@ -113,7 +116,8 @@ biến thị trường và các mã họ quan tâm trước khi đi tới màn h
 | Priority | `High` |
 | Sprint/target | Unset; backlog |
 | Assignee | Unassigned |
-| Capability ID | `HOME-MARKET-INDEX-CHART` |
+| Capability IDs | `MARKET-INDEX-SNAPSHOT`, `MARKET-INDEX-HISTORY`, `MARKET-INDEX-STREAM` |
+| Registry rows | Pending — exact Registry content ID required |
 | Integration Hub | `https://beroka.atlassian.net/wiki/spaces/Berokaback/pages/68354049/HomePage+Integration+Hub` |
 
 ```markdown
@@ -152,7 +156,9 @@ versioned Backend contract.
 ## Links
 
 - Parent Epic: https://beroka.atlassian.net/browse/BB-5
-- Capability ID: `HOME-MARKET-INDEX-CHART`
+- Capability IDs: `MARKET-INDEX-SNAPSHOT`, `MARKET-INDEX-HISTORY`,
+  `MARKET-INDEX-STREAM`
+- Registry rows: Pending — exact Registry content ID required
 - Integration Hub: https://beroka.atlassian.net/wiki/spaces/Berokaback/pages/68354049/HomePage+Integration+Hub
 ```
 
@@ -166,7 +172,8 @@ versioned Backend contract.
 | Required parent location | Beroka-backend root |
 | Title | `HomePage — Integration Hub` |
 | Hub migration state | `FOLDER_CREATION_REQUIRED` |
-| Capability ID | `HOME-MARKET-INDEX-CHART` |
+| Backend Capability Registry | Pending — `ROUTING_REQUIRED` before capability-dependent write |
+| Capability IDs | `MARKET-INDEX-SNAPSHOT`, `MARKET-INDEX-HISTORY`, `MARKET-INDEX-STREAM` |
 | Backend Feature | `BB-7` |
 | Frontend Epic/items/Folder | Pending until approved FE work |
 
@@ -181,10 +188,11 @@ URL/ID và connector có thể xác minh `parentId`, `parentType = Folder`.
 
 - Owning space/native Epic Folder: Berokaback / `BB-5 — HomePage — Market Overview`
 - Folder status: FOLDER_CREATION_REQUIRED
+- Backend Capability Registry: Pending — exact content ID required
 - Coordinator: Unassigned; required before child items become Ready
 - Backend Epic: [BB-5 — HomePage — Market Overview](https://beroka.atlassian.net/browse/BB-5)
 - Frontend Epic/Folder: Pending until approved FE work
-- Frontend Index: Pending until approved FE work
+- Frontend Capability Index: `HomePage — Capability Index` — Pending
 - Backend repository issues/PRs: Pending — BE child owner updates
 - Frontend repository issues/PRs: Pending — FE child owner updates
 
@@ -194,20 +202,21 @@ URL/ID và connector có thể xác minh `parentId`, `parentType = Folder`.
 | --- | --- | --- | --- |
 | Paired Epics | BB-5 | Pending — BF Epic owner required after approved FE work | MAPPING_INCOMPLETE |
 
-## Capability mapping
+## Capability Registry references
 
-| Capability ID | BE Jira item | BF Jira item(s) | Contract artifact/version | Handoff state | Owners | Breaking |
-| --- | --- | --- | --- | --- | --- | --- |
-| `HOME-MARKET-INDEX-CHART` | [BB-7 — Market Index Chart](https://beroka.atlassian.net/browse/BB-7) | Pending until approved FE work | Pending — BE owner publishes | DRAFT | BE: Pending / BF: Pending | No |
+| Registry row | BE Jira item | BF Jira item(s) | Handoff state | Owners | Breaking |
+| --- | --- | --- | --- | --- | --- |
+| `MARKET-INDEX-SNAPSHOT` — Registry Pending | [BB-7 — Market Index Chart](https://beroka.atlassian.net/browse/BB-7) | Pending until approved FE work | DRAFT | BE: Pending / BF: Pending | No |
+| `MARKET-INDEX-HISTORY` — Registry Pending | [BB-7 — Market Index Chart](https://beroka.atlassian.net/browse/BB-7) | Pending until approved FE work | DRAFT | BE: Pending / BF: Pending | No |
+| `MARKET-INDEX-STREAM` — Registry Pending | [BB-7 — Market Index Chart](https://beroka.atlassian.net/browse/BB-7) | Pending until approved FE work | DRAFT | BE: Pending / BF: Pending | No |
 
 ## Shared decisions
 
 - Đây là Integration Hub duy nhất cho HomePage market overview.
-- Canonical OpenAPI/JSON Schema nằm trong BE repository; Hub chỉ link exact
-  artifact/version.
+- Backend Capability Registry sở hữu canonical Capability IDs và link exact
+  artifact/version/content ID; Hub chỉ tham chiếu Registry rows.
 - FE không tổng hợp contract từ nhiều issue descriptions hoặc chat messages.
-- `HOME-MARKET-INDEX-CHART` là mapping key canonical; title similarity không
-  được dùng để suy ra BB/BF relation.
+- Title similarity không được dùng để suy ra Registry hoặc BB/BF relation.
 - Contract thay đổi sau acknowledgement phải publish version mới, mark handoff
   cũ `SUPERSEDED` và notify linked FE item.
 
@@ -243,8 +252,9 @@ Không báo tạo thành công nếu chưa xác minh:
 - target period/Sprint đều unset;
 - Jira Epic link đúng Confluence Hub và Hub link ngược lại Epic;
 - không có Hub duplicate trong Confluence;
-- exact Capability ID và Jira `Relates`/`Blocks` links khớp canonical Hub row,
-  hoặc báo `MAPPING_INCOMPLETE` khi FE work chưa được duyệt;
+- exact Capability IDs, Registry rows, Hub references và Jira
+  `Relates`/`Blocks` links read back đúng, hoặc báo `ROUTING_REQUIRED` khi
+  Registry chưa được central Governance đăng ký;
 - Hub/page read back đúng native Folder bằng `parentId` và
   `parentType = Folder`; nếu Folder thiếu, báo `FOLDER_CREATION_REQUIRED`;
 - ít nhất một child `Feature`, `Story`, `Task` hoặc `Bug` read back đúng parent
