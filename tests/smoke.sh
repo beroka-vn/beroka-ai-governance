@@ -112,7 +112,8 @@ make_consumer_fixture() {
     'SOURCE=beroka-vn/beroka-ai-governance' \
     'REPOSITORY=beroka-vn/example-backend' \
     'VERSION=v1.0.0' \
-    "COMMIT=$RELEASE_COMMIT" >"$consumer/.beroka-governance.lock"
+    "COMMIT=$RELEASE_COMMIT" \
+    'CLIENTS=codex,claude,cursor' >"$consumer/.beroka-governance.lock"
   cp "$release_dir/templates/agent-entrypoints/AGENTS.md" "$consumer/AGENTS.md"
   cp "$release_dir/templates/agent-entrypoints/CLAUDE.md" "$consumer/CLAUDE.md"
   mkdir -p "$consumer/.cursor/rules"
@@ -189,7 +190,7 @@ fi
 lightweight_repo=$TMP_ROOT/lightweight-consumer
 new_repo "$lightweight_repo"
 git -C "$lightweight_repo" remote add origin https://github.com/beroka-vn/lightweight-backend.git
-if $CLI register "$lightweight_repo" --version v1.0.0 >/dev/null 2>&1; then
+if $CLI register "$lightweight_repo" --version v1.0.0 --client codex >/dev/null 2>&1; then
   fail 'register accepted lightweight tag'
 fi
 [ ! -e "$lightweight_repo/.beroka-governance.lock" ] || fail 'lightweight tag wrote a lock'
@@ -204,6 +205,91 @@ fi
 
 printf 'PASS: read-only package validation\n'
 
+codex_repo=$TMP_ROOT/codex-consumer
+new_repo "$codex_repo"
+git -C "$codex_repo" remote add origin \
+  https://github.com/beroka-vn/codex-consumer.git
+$CLI register "$codex_repo" --version v1.0.0 --client codex
+assert_contains "$(cat "$codex_repo/.beroka-governance.lock")" \
+  'CLIENTS=codex'
+[ -f "$codex_repo/AGENTS.md" ] ||
+  fail 'Codex registration omitted AGENTS.md'
+[ ! -e "$codex_repo/CLAUDE.md" ] ||
+  fail 'Codex registration created CLAUDE.md'
+[ ! -e "$codex_repo/.cursor" ] ||
+  fail 'Codex registration created .cursor'
+
+claude_repo=$TMP_ROOT/claude-consumer
+new_repo "$claude_repo"
+git -C "$claude_repo" remote add origin \
+  https://github.com/beroka-vn/claude-consumer.git
+$CLI register "$claude_repo" --version v1.0.0 --client claude
+assert_contains "$(cat "$claude_repo/.beroka-governance.lock")" \
+  'CLIENTS=claude'
+[ -f "$claude_repo/CLAUDE.md" ] ||
+  fail 'Claude registration omitted CLAUDE.md'
+[ ! -e "$claude_repo/AGENTS.md" ] ||
+  fail 'Claude registration created AGENTS.md'
+[ ! -e "$claude_repo/.cursor" ] ||
+  fail 'Claude registration created .cursor'
+
+cursor_repo=$TMP_ROOT/cursor-consumer
+new_repo "$cursor_repo"
+git -C "$cursor_repo" remote add origin \
+  https://github.com/beroka-vn/cursor-consumer.git
+$CLI register "$cursor_repo" --version v1.0.0 --client cursor
+assert_contains "$(cat "$cursor_repo/.beroka-governance.lock")" \
+  'CLIENTS=cursor'
+[ -f "$cursor_repo/.cursor/rules/beroka-governance.mdc" ] ||
+  fail 'Cursor registration omitted its rule'
+[ ! -e "$cursor_repo/AGENTS.md" ] ||
+  fail 'Cursor registration created AGENTS.md'
+[ ! -e "$cursor_repo/CLAUDE.md" ] ||
+  fail 'Cursor registration created CLAUDE.md'
+
+git -C "$codex_repo" add .
+git -C "$codex_repo" commit -qm 'test: commit Codex registration'
+codex_hash=$(git -C "$codex_repo" hash-object AGENTS.md)
+$CLI register "$codex_repo" --version v1.0.0 --client claude
+assert_contains "$(cat "$codex_repo/.beroka-governance.lock")" \
+  'CLIENTS=codex,claude'
+[ "$codex_hash" = "$(git -C "$codex_repo" hash-object AGENTS.md)" ] ||
+  fail 'adding Claude rewrote the Codex entrypoint'
+[ ! -e "$codex_repo/.cursor" ] ||
+  fail 'adding Claude created .cursor'
+
+before_repeat=$(git -C "$codex_repo" hash-object \
+  AGENTS.md CLAUDE.md .beroka-governance.lock)
+$CLI register "$codex_repo" --version v1.0.0 --client claude
+after_repeat=$(git -C "$codex_repo" hash-object \
+  AGENTS.md CLAUDE.md .beroka-governance.lock)
+[ "$before_repeat" = "$after_repeat" ] ||
+  fail 'repeated client registration changed repository state'
+
+cp "$codex_repo/.beroka-governance.lock" "$TMP_ROOT/codex.lock"
+printf '%s\n' 'CLIENTS=cursor,codex' \
+  >>"$codex_repo/.beroka-governance.lock"
+if output=$($CLI doctor "$codex_repo" 2>&1); then
+  fail 'Doctor accepted duplicate or non-canonical CLIENTS'
+fi
+assert_contains "$output" 'Result: GOVERNANCE_NOT_READY'
+cp "$TMP_ROOT/codex.lock" "$codex_repo/.beroka-governance.lock"
+
+mkdir -p "$claude_repo/.cursor/rules"
+cp "$source_repo/templates/agent-entrypoints/team-dev-ai-workflow.mdc" \
+  "$claude_repo/.cursor/rules/beroka-governance.mdc"
+if output=$($CLI doctor "$claude_repo" 2>&1); then
+  fail 'Doctor accepted an undeclared Cursor entrypoint'
+fi
+assert_contains "$output" 'Result: ENTRYPOINT_DRIFT'
+
+if output=$($CLI doctor "$codex_repo" --client cursor 2>&1); then
+  fail 'Doctor accepted an unregistered client'
+fi
+assert_contains "$output" 'Result: CLIENT_SETUP_REQUIRED'
+assert_contains "$output" \
+  "Remediation: beroka-governance bootstrap $codex_repo --client cursor"
+
 register_repo=$TMP_ROOT/register-consumer
 new_repo "$register_repo"
 git -C "$register_repo" remote add origin git@github.com:beroka-vn/register-backend.git
@@ -212,39 +298,42 @@ printf '# Existing Claude rules\n\nKeep this Claude line.\n' >"$register_repo/CL
 git -C "$register_repo" add AGENTS.md CLAUDE.md
 git -C "$register_repo" commit -qm 'test: add existing agent rules'
 
-$CLI register "$register_repo" --version v1.0.0
+$CLI register "$register_repo" --version v1.0.0 --client codex
+git -C "$register_repo" add .
+git -C "$register_repo" commit -qm 'test: commit Codex registration'
+$CLI register "$register_repo" --version v1.0.0 --client claude
+git -C "$register_repo" add .
+git -C "$register_repo" commit -qm 'test: commit Claude registration'
+$CLI register "$register_repo" --version v1.0.0 --client cursor
 first_hash=$(git -C "$register_repo" hash-object AGENTS.md CLAUDE.md .beroka-governance.lock .cursor/rules/beroka-governance.mdc)
-$CLI register "$register_repo" --version v1.0.0
+$CLI register "$register_repo" --version v1.0.0 --client codex
 second_hash=$(git -C "$register_repo" hash-object AGENTS.md CLAUDE.md .beroka-governance.lock .cursor/rules/beroka-governance.mdc)
 [ "$first_hash" = "$second_hash" ] || fail 'repeated register changed managed files'
 assert_contains "$(cat "$register_repo/AGENTS.md")" 'Keep this line.'
 assert_contains "$(cat "$register_repo/CLAUDE.md")" 'Keep this Claude line.'
 assert_contains "$(cat "$register_repo/.beroka-governance.lock")" 'REPOSITORY=beroka-vn/register-backend'
 rm -f "$XDG_CONFIG_HOME/beroka-ai-governance/registered-repos"
-$CLI register "$register_repo" --version v1.0.0
+$CLI register "$register_repo" --version v1.0.0 --client codex
 registry_row=$(cat "$XDG_CONFIG_HOME/beroka-ai-governance/registered-repos")
 assert_contains "$registry_row" "$register_repo"
 assert_contains "$registry_row" 'beroka-vn/register-backend'
 assert_contains "$registry_row" 'v1.0.0'
-idempotent_dry_output=$($CLI register "$register_repo" --version v1.0.0 --dry-run)
-assert_contains "$idempotent_dry_output" "$register_repo/.beroka-governance.lock"
-assert_contains "$idempotent_dry_output" "$register_repo/AGENTS.md"
-assert_contains "$idempotent_dry_output" "$register_repo/CLAUDE.md"
-assert_contains "$idempotent_dry_output" "$register_repo/.cursor/rules/beroka-governance.mdc"
+idempotent_dry_output=$($CLI register "$register_repo" --version v1.0.0 --client codex --dry-run)
+assert_contains "$idempotent_dry_output" 'Result: PASS'
 third_hash=$(git -C "$register_repo" hash-object AGENTS.md CLAUDE.md .beroka-governance.lock .cursor/rules/beroka-governance.mdc)
 [ "$second_hash" = "$third_hash" ] || fail 'idempotent dry-run changed managed files'
 
 dry_repo=$TMP_ROOT/dry-consumer
 new_repo "$dry_repo"
 git -C "$dry_repo" remote add origin https://github.com/beroka-vn/dry-backend.git
-$CLI register "$dry_repo" --version v1.0.0 --dry-run >/dev/null
+$CLI register "$dry_repo" --version v1.0.0 --client codex --dry-run >/dev/null
 [ ! -e "$dry_repo/.beroka-governance.lock" ] || fail 'dry-run created a lock'
 
 dirty_repo=$TMP_ROOT/dirty-consumer
 new_repo "$dirty_repo"
 git -C "$dirty_repo" remote add origin https://github.com/beroka-vn/dirty-backend.git
 printf 'uncommitted rules\n' >"$dirty_repo/AGENTS.md"
-if $CLI register "$dirty_repo" --version v1.0.0 >/dev/null 2>&1; then fail 'register accepted a dirty target entrypoint'; fi
+if $CLI register "$dirty_repo" --version v1.0.0 --client codex >/dev/null 2>&1; then fail 'register accepted a dirty target entrypoint'; fi
 [ "$(cat "$dirty_repo/AGENTS.md")" = 'uncommitted rules' ] || fail 'failed preflight modified AGENTS.md'
 
 ignored_repo=$TMP_ROOT/ignored-consumer
@@ -254,7 +343,7 @@ printf 'AGENTS.md\n' >"$ignored_repo/.gitignore"
 git -C "$ignored_repo" add .gitignore
 git -C "$ignored_repo" commit -qm 'test: ignore managed target'
 printf 'ignored unmanaged rules\n' >"$ignored_repo/AGENTS.md"
-if ignored_output=$($CLI register "$ignored_repo" --version v1.0.0 2>&1); then
+if ignored_output=$($CLI register "$ignored_repo" --version v1.0.0 --client codex 2>&1); then
   fail 'register accepted an ignored dirty target entrypoint'
 fi
 assert_contains "$ignored_output" 'Result: WORKTREE_CONFLICT'
@@ -270,7 +359,7 @@ printf '.cursor/rules/beroka-governance.mdc\n' \
 git -C "$ignored_new_repo" add .gitignore
 git -C "$ignored_new_repo" commit -qm 'test: ignore new managed target'
 if ignored_new_output=$($CLI register "$ignored_new_repo" \
-  --version v1.0.0 2>&1)
+  --version v1.0.0 --client cursor 2>&1)
 then
   fail 'register accepted a new ignored managed target'
 fi
@@ -284,7 +373,7 @@ registry_path=$XDG_CONFIG_HOME/beroka-ai-governance/registered-repos
 registry_contents=$(cat "$registry_path")
 rm -f "$registry_path"
 mkdir "$registry_path"
-if registry_dir_output=$($CLI register "$register_repo" --version v1.0.0 2>&1); then
+if registry_dir_output=$($CLI register "$register_repo" --version v1.0.0 --client codex 2>&1); then
   fail 'register accepted a registry directory'
 fi
 assert_contains "$registry_dir_output" 'Result: GOVERNANCE_NOT_READY'
@@ -296,7 +385,7 @@ rmdir "$registry_path"
 registry_sentinel=$TMP_ROOT/registry-sentinel
 printf 'keep registry target\n' >"$registry_sentinel"
 ln -s "$registry_sentinel" "$registry_path"
-if registry_link_output=$($CLI register "$register_repo" --version v1.0.0 2>&1); then
+if registry_link_output=$($CLI register "$register_repo" --version v1.0.0 --client codex 2>&1); then
   fail 'register accepted a symlinked registry'
 fi
 assert_contains "$registry_link_output" 'Result: GOVERNANCE_NOT_READY'
@@ -408,7 +497,7 @@ external_config=$TMP_ROOT/external-config
 mkdir -p "$external_config"
 printf 'keep config\n' >"$external_config/sentinel"
 ln -s "$external_config" "$HOME/config-link"
-if config_escape_output=$(XDG_CONFIG_HOME=$HOME/config-link "$CLI" register "$register_repo" --version v1.0.0 2>&1); then
+if config_escape_output=$(XDG_CONFIG_HOME=$HOME/config-link "$CLI" register "$register_repo" --version v1.0.0 --client codex 2>&1); then
   fail 'register accepted a symlinked config root'
 fi
 assert_contains "$config_escape_output" 'Result: GOVERNANCE_NOT_READY'
@@ -517,7 +606,7 @@ if $CLI uninstall >/dev/null 2>&1; then fail 'uninstall accepted a registered re
 ignored_unregister_repo=$TMP_ROOT/ignored-unregister-consumer
 new_repo "$ignored_unregister_repo"
 git -C "$ignored_unregister_repo" remote add origin https://github.com/beroka-vn/ignored-unregister-backend.git
-$CLI register "$ignored_unregister_repo" --version v1.1.0
+$CLI register "$ignored_unregister_repo" --version v1.1.0 --client cursor
 git -C "$ignored_unregister_repo" add .
 git -C "$ignored_unregister_repo" commit -qm 'test: commit registration files'
 printf '.cursor/rules/beroka-governance.mdc\n' >"$ignored_unregister_repo/.gitignore"
@@ -552,7 +641,7 @@ git -C "$release_dir" tag -a v1.0.0 -m 'v1.0.0' HEAD
 marker_repo=$TMP_ROOT/marker-consumer
 new_repo "$marker_repo"
 git -C "$marker_repo" remote add origin https://github.com/beroka-vn/marker-backend.git
-if $CLI register "$marker_repo" --version v1.0.0 >/dev/null 2>&1; then
+if $CLI register "$marker_repo" --version v1.0.0 --client codex >/dev/null 2>&1; then
   fail 'register accepted end-before-start template markers'
 fi
 [ ! -e "$marker_repo/.beroka-governance.lock" ] || fail 'malformed template wrote a lock'
@@ -565,7 +654,7 @@ $CLI install v1.1.0
 force_repo=$TMP_ROOT/force-consumer
 new_repo "$force_repo"
 git -C "$force_repo" remote add origin https://github.com/beroka-vn/force-backend.git
-$CLI register "$force_repo" --version v1.1.0
+$CLI register "$force_repo" --version v1.1.0 --client codex
 
 external_rules=$TMP_ROOT/external-rules
 mkdir -p "$external_rules"
@@ -573,7 +662,7 @@ cp "$source_repo/templates/agent-entrypoints/team-dev-ai-workflow.mdc" "$externa
 symlink_repo=$TMP_ROOT/symlink-consumer
 new_repo "$symlink_repo"
 git -C "$symlink_repo" remote add origin https://github.com/beroka-vn/symlink-backend.git
-$CLI register "$symlink_repo" --version v1.1.0
+$CLI register "$symlink_repo" --version v1.1.0 --client cursor
 rm -rf "$symlink_repo/.cursor/rules"
 ln -s "$external_rules" "$symlink_repo/.cursor/rules"
 if symlink_output=$($CLI unregister "$symlink_repo" 2>&1); then fail 'unregister accepted a managed-path symlink'; fi
@@ -586,7 +675,7 @@ new_repo "$create_repo"
 git -C "$create_repo" remote add origin https://github.com/beroka-vn/symlink-create-backend.git
 mkdir -p "$create_repo/.cursor"
 ln -s "$external_rules" "$create_repo/.cursor/rules"
-if create_output=$($CLI register "$create_repo" --version v1.1.0 2>&1); then fail 'register accepted a managed-path symlink'; fi
+if create_output=$($CLI register "$create_repo" --version v1.1.0 --client cursor 2>&1); then fail 'register accepted a managed-path symlink'; fi
 assert_contains "$create_output" 'Result: ENTRYPOINT_DRIFT'
 [ ! -e "$create_repo/.beroka-governance.lock" ] || fail 'symlinked register wrote a lock'
 [ -f "$external_rules/beroka-governance.mdc" ] || fail 'register deleted the external sentinel'

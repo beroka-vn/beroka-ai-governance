@@ -27,6 +27,7 @@ CONNECTOR_PROBE_TOOLS_OK=0
 CAPABILITY_INVENTORY= CAPABILITY_INVENTORY_COMPLETE=0
 CAPABILITY_INVENTORY_FORMAT= CAPABILITY_TOOLSET=UNAVAILABLE
 CAPABILITY_STATE= PREFLIGHT_CAPABILITY=
+LOCK_CLIENTS=
 
 die() {
   code=$1
@@ -42,7 +43,7 @@ usage() {
     'Usage:' \
     '  beroka-governance bootstrap REPO [--client codex|claude|cursor] [--version vX.Y.Z] [--non-interactive]' \
     '  beroka-governance install VERSION' \
-    '  beroka-governance register REPO --version VERSION [--dry-run]' \
+    '  beroka-governance register REPO --version VERSION --client codex|claude|cursor [--dry-run]' \
     '  beroka-governance update REPO --to VERSION [--dry-run]' \
     '  beroka-governance rollback REPO --to VERSION [--dry-run]' \
     '  beroka-governance unregister REPO [--dry-run]' \
@@ -860,7 +861,7 @@ cmd_bootstrap() {
   [ "$RELEASE_COMMIT" = "$bs_expected_commit" ] ||
     die VERSION_MISMATCH \
       'Installed release commit differs from the selected release'
-  cmd_register "$bs_repo" --version "$bs_version"
+  cmd_register "$bs_repo" --version "$bs_version" --client "$bs_client"
   bs_after=$(managed_repo_snapshot "$bs_repo")
 
   if [ "$bs_interactive" -eq 1 ]; then
@@ -882,8 +883,13 @@ cmd_bootstrap() {
 }
 
 write_lock_file() {
-  destination=$1 repository=$2 version=$3 commit=$4
-  printf '%s\n' "SOURCE=$SOURCE_SLUG" "REPOSITORY=$repository" "VERSION=$version" "COMMIT=$commit" >"$destination" ||
+  destination=$1 repository=$2 version=$3 commit=$4 clients=$5
+  printf '%s\n' \
+    "SOURCE=$SOURCE_SLUG" \
+    "REPOSITORY=$repository" \
+    "VERSION=$version" \
+    "COMMIT=$commit" \
+    "CLIENTS=$clients" >"$destination" ||
     die GOVERNANCE_NOT_READY 'Cannot stage governance lock'
 }
 
@@ -939,31 +945,48 @@ write_entrypoint() {
   cat "$TX_DIR/work/base" "$template" >"$destination" || die GOVERNANCE_NOT_READY 'Cannot stage AGENTS.md'
 }
 
-write_claude_entrypoint() {
-  existing=$1 template=$2 destination=$3
-  if [ -e "$existing" ]; then
-    [ -f "$existing" ] || die ENTRYPOINT_DRIFT "Entrypoint is not a file: $existing"
-    strip_managed_block "$existing" "$TX_DIR/work/base"
-  else
-    : >"$TX_DIR/work/base" || die GOVERNANCE_NOT_READY 'Cannot stage CLAUDE.md base content'
-  fi
-  if grep -Fqx '@AGENTS.md' "$TX_DIR/work/base"; then
-    cp "$TX_DIR/work/base" "$destination" || die GOVERNANCE_NOT_READY 'Cannot stage CLAUDE.md'
-  else
-    cat "$TX_DIR/work/base" "$template" >"$destination" || die GOVERNANCE_NOT_READY 'Cannot stage CLAUDE.md'
-  fi
-}
-
 same_target() {
   [ -f "$1" ] && cmp -s "$1" "$2"
+}
+
+client_list_contains() {
+  clc_list=$1 clc_client=$2
+  case ",$clc_list," in
+    *",$clc_client,"*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+validate_clients() {
+  case "$1" in
+    codex|claude|cursor|codex,claude|codex,cursor|claude,cursor|codex,claude,cursor) ;;
+    *) die GOVERNANCE_NOT_READY 'Invalid CLIENTS' ;;
+  esac
+}
+
+canonical_clients() {
+  cc_current=$1 cc_selected=$2 cc_result=
+  for cc_client in codex claude cursor; do
+    if client_list_contains "$cc_current" "$cc_client" ||
+      [ "$cc_selected" = "$cc_client" ]
+    then
+      if [ -n "$cc_result" ]; then
+        cc_result=$cc_result,$cc_client
+      else
+        cc_result=$cc_client
+      fi
+    fi
+  done
+  validate_clients "$cc_result"
+  printf '%s\n' "$cc_result"
 }
 
 read_lock() {
   repo=$1
   lock=$repo/.beroka-governance.lock
   [ -f "$lock" ] || die REPOSITORY_NOT_REGISTERED "Missing $lock"
-  LOCK_SOURCE= LOCK_REPOSITORY= LOCK_VERSION= LOCK_COMMIT=
-  seen_source= seen_repository= seen_version= seen_commit=
+  LOCK_SOURCE= LOCK_REPOSITORY= LOCK_VERSION= LOCK_COMMIT= LOCK_CLIENTS=
+  seen_source= seen_repository= seen_version= seen_commit= seen_clients=
   if ! {
     while IFS='=' read -r key value; do
       [ -n "$key" ] || continue
@@ -972,6 +995,7 @@ read_lock() {
         REPOSITORY) [ -z "$seen_repository" ] || die GOVERNANCE_NOT_READY 'Duplicate REPOSITORY'; LOCK_REPOSITORY=$value; seen_repository=1 ;;
         VERSION) [ -z "$seen_version" ] || die GOVERNANCE_NOT_READY 'Duplicate VERSION'; LOCK_VERSION=$value; seen_version=1 ;;
         COMMIT) [ -z "$seen_commit" ] || die GOVERNANCE_NOT_READY 'Duplicate COMMIT'; LOCK_COMMIT=$value; seen_commit=1 ;;
+        CLIENTS) [ -z "$seen_clients" ] || die GOVERNANCE_NOT_READY 'Duplicate CLIENTS'; LOCK_CLIENTS=$value; seen_clients=1 ;;
         *) die GOVERNANCE_NOT_READY "Unknown lock key: $key" ;;
       esac
     done <"$lock"
@@ -982,6 +1006,7 @@ read_lock() {
   printf '%s\n' "$LOCK_REPOSITORY" | grep -Eq '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' || die GOVERNANCE_NOT_READY 'Invalid REPOSITORY'
   printf '%s\n' "$LOCK_VERSION" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$' || die GOVERNANCE_NOT_READY 'Invalid VERSION'
   printf '%s\n' "$LOCK_COMMIT" | grep -Eq '^[0-9a-f]{40}$' || die GOVERNANCE_NOT_READY 'Invalid COMMIT'
+  validate_clients "$LOCK_CLIENTS"
 }
 
 verify_release() {
@@ -994,30 +1019,89 @@ verify_entrypoints() {
   agents_template=$entrypoints_release/templates/agent-entrypoints/AGENTS.md
   claude_template=$entrypoints_release/templates/agent-entrypoints/CLAUDE.md
   cursor_template=$entrypoints_release/templates/agent-entrypoints/team-dev-ai-workflow.mdc
-  assert_valid_template "$agents_template"
-  assert_valid_template "$claude_template"
-  [ -f "$cursor_template" ] || die ENTRYPOINT_DRIFT "Missing Cursor rule in $entrypoints_release"
-  [ -f "$entrypoints_repo/AGENTS.md" ] || die ENTRYPOINT_DRIFT 'Missing AGENTS.md'
-  [ -f "$entrypoints_repo/.cursor/rules/beroka-governance.mdc" ] || die ENTRYPOINT_DRIFT 'Missing Cursor rule'
   entrypoints_dir=$(mktemp -d "${TMPDIR:-/tmp}/beroka-governance-entrypoints.XXXXXX") || die GOVERNANCE_NOT_READY 'Cannot create entrypoint verification directory'
-  if ! extract_managed_block "$entrypoints_repo/AGENTS.md" "$entrypoints_dir/agents" || ! cmp -s "$entrypoints_dir/agents" "$agents_template"; then
+
+  if client_list_contains "$LOCK_CLIENTS" codex; then
+    assert_valid_template "$agents_template"
+    [ -f "$entrypoints_repo/AGENTS.md" ] || die ENTRYPOINT_DRIFT 'Missing AGENTS.md'
+    if ! extract_managed_block "$entrypoints_repo/AGENTS.md" \
+      "$entrypoints_dir/agents" ||
+      ! cmp -s "$entrypoints_dir/agents" "$agents_template"
+    then
+      rm -rf "$entrypoints_dir" || :
+      die ENTRYPOINT_DRIFT 'AGENTS.md managed block differs from the release'
+    fi
+  elif grep -Fq "$START_MARKER" "$entrypoints_repo/AGENTS.md" 2>/dev/null ||
+    grep -Fq "$END_MARKER" "$entrypoints_repo/AGENTS.md" 2>/dev/null
+  then
     rm -rf "$entrypoints_dir" || :
-    die ENTRYPOINT_DRIFT 'AGENTS.md managed block differs from the release'
+    die ENTRYPOINT_DRIFT 'Undeclared AGENTS.md managed block'
   fi
-  if grep -Fq "$START_MARKER" "$entrypoints_repo/CLAUDE.md" 2>/dev/null || grep -Fq "$END_MARKER" "$entrypoints_repo/CLAUDE.md" 2>/dev/null; then
-    if ! extract_managed_block "$entrypoints_repo/CLAUDE.md" "$entrypoints_dir/claude" || ! cmp -s "$entrypoints_dir/claude" "$claude_template"; then
+
+  if client_list_contains "$LOCK_CLIENTS" claude; then
+    assert_valid_template "$claude_template"
+    [ -f "$entrypoints_repo/CLAUDE.md" ] || die ENTRYPOINT_DRIFT 'Missing CLAUDE.md'
+    if ! extract_managed_block "$entrypoints_repo/CLAUDE.md" \
+      "$entrypoints_dir/claude" ||
+      ! cmp -s "$entrypoints_dir/claude" "$claude_template"
+    then
       rm -rf "$entrypoints_dir" || :
       die ENTRYPOINT_DRIFT 'CLAUDE.md managed block differs from the release'
     fi
-  elif ! grep -Fqx '@AGENTS.md' "$entrypoints_repo/CLAUDE.md" 2>/dev/null; then
+  elif grep -Fq "$START_MARKER" "$entrypoints_repo/CLAUDE.md" 2>/dev/null ||
+    grep -Fq "$END_MARKER" "$entrypoints_repo/CLAUDE.md" 2>/dev/null
+  then
     rm -rf "$entrypoints_dir" || :
-    die ENTRYPOINT_DRIFT 'Missing managed CLAUDE.md content'
+    die ENTRYPOINT_DRIFT 'Undeclared CLAUDE.md managed block'
   fi
-  if ! cmp -s "$entrypoints_repo/.cursor/rules/beroka-governance.mdc" "$cursor_template"; then
+
+  if client_list_contains "$LOCK_CLIENTS" cursor; then
+    [ -f "$cursor_template" ] || die ENTRYPOINT_DRIFT "Missing Cursor rule in $entrypoints_release"
+    [ -f "$entrypoints_repo/.cursor/rules/beroka-governance.mdc" ] || die ENTRYPOINT_DRIFT 'Missing Cursor rule'
+    if ! cmp -s "$entrypoints_repo/.cursor/rules/beroka-governance.mdc" "$cursor_template"; then
+      rm -rf "$entrypoints_dir" || :
+      die ENTRYPOINT_DRIFT 'Cursor rule differs from the release'
+    fi
+  elif [ -e "$entrypoints_repo/.cursor/rules/beroka-governance.mdc" ]; then
     rm -rf "$entrypoints_dir" || :
-    die ENTRYPOINT_DRIFT 'Cursor rule differs from the release'
+    die ENTRYPOINT_DRIFT 'Undeclared Cursor rule'
   fi
   rm -rf "$entrypoints_dir" || die GOVERNANCE_NOT_READY 'Cannot remove entrypoint verification directory'
+}
+
+stage_client_entrypoint() {
+  sce_repo=$1 sce_release=$2 sce_client=$3
+  case "$sce_client" in
+    codex)
+      sce_template=$sce_release/templates/agent-entrypoints/AGENTS.md
+      assert_valid_template "$sce_template"
+      write_entrypoint "$sce_repo/AGENTS.md" "$sce_template" \
+        "$TX_DIR/work/agents"
+      tx_stage_write AGENTS.md "$TX_DIR/work/agents"
+      ;;
+    claude)
+      sce_template=$sce_release/templates/agent-entrypoints/CLAUDE.md
+      assert_valid_template "$sce_template"
+      write_entrypoint "$sce_repo/CLAUDE.md" "$sce_template" \
+        "$TX_DIR/work/claude"
+      tx_stage_write CLAUDE.md "$TX_DIR/work/claude"
+      ;;
+    cursor)
+      sce_template=$sce_release/templates/agent-entrypoints/team-dev-ai-workflow.mdc
+      [ -f "$sce_template" ] ||
+        die ENTRYPOINT_DRIFT "Missing Cursor rule in $sce_release"
+      tx_stage_write .cursor/rules/beroka-governance.mdc "$sce_template"
+      ;;
+    *) usage >&2; exit 2 ;;
+  esac
+}
+
+stage_client_entrypoints() {
+  sces_repo=$1 sces_release=$2 sces_clients=$3
+  for sces_client in codex claude cursor; do
+    client_list_contains "$sces_clients" "$sces_client" || continue
+    stage_client_entrypoint "$sces_repo" "$sces_release" "$sces_client"
+  done
 }
 
 verify_registration() {
@@ -1030,38 +1114,61 @@ verify_registration() {
 }
 
 cmd_register() {
-  requested=$1 version_flag=$2 version=$3 dry_run=${4:-}
-  [ "$version_flag" = --version ] || { usage >&2; exit 2; }
-  [ -n "$version" ] || { usage >&2; exit 2; }
-  [ -z "$dry_run" ] || [ "$dry_run" = --dry-run ] || { usage >&2; exit 2; }
+  requested=$1
+  shift
+  version= client= dry_run=
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --version)
+        [ -z "$version" ] && [ "$#" -ge 2 ] || { usage >&2; exit 2; }
+        version=$2
+        shift 2
+        ;;
+      --client)
+        [ -z "$client" ] && [ "$#" -ge 2 ] || { usage >&2; exit 2; }
+        client=$2
+        shift 2
+        ;;
+      --dry-run)
+        [ -z "$dry_run" ] || { usage >&2; exit 2; }
+        dry_run=$1
+        shift
+        ;;
+      *) usage >&2; exit 2 ;;
+    esac
+  done
+  [ -n "$version" ] && [ -n "$client" ] || { usage >&2; exit 2; }
+  client_executable "$client" >/dev/null
+  printf '%s\n' "$version" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$' || die GOVERNANCE_NOT_READY "Invalid version: $version"
 
   REPO=$(canonical_repo "$requested")
   assert_safe_managed_paths "$REPO"
   assert_registry_path
-  resolve_canonical_remote "$REPO"
-  repository=$(normalize_github_url "$CANONICAL_REMOTE_URL") ||
-    die REMOTE_MISMATCH 'Canonical remote is not a supported GitHub repository'
+  if [ -f "$REPO/.beroka-governance.lock" ]; then
+    verify_registration "$REPO"
+    [ "$version" = "$LOCK_VERSION" ] ||
+      die VERSION_MISMATCH \
+        "Repository is pinned to $LOCK_VERSION; use update to change it"
+    repository=$LOCK_REPOSITORY
+    clients=$(canonical_clients "$LOCK_CLIENTS" "$client")
+  else
+    resolve_canonical_remote "$REPO"
+    repository=$(normalize_github_url "$CANONICAL_REMOTE_URL") ||
+      die REMOTE_MISMATCH 'Canonical remote is not a supported GitHub repository'
+    clients=$client
+  fi
   release_for_version "$version"
-  agents_template=$RELEASE_DIR/templates/agent-entrypoints/AGENTS.md
-  claude_template=$RELEASE_DIR/templates/agent-entrypoints/CLAUDE.md
-  cursor_template=$RELEASE_DIR/templates/agent-entrypoints/team-dev-ai-workflow.mdc
-  assert_valid_template "$agents_template"
-  assert_valid_template "$claude_template"
-  [ -f "$cursor_template" ] || die ENTRYPOINT_DRIFT "Missing Cursor rule in $RELEASE_DIR"
 
   tx_begin "$REPO"
-  write_lock_file "$TX_DIR/work/lock" "$repository" "$version" "$RELEASE_COMMIT"
+  write_lock_file "$TX_DIR/work/lock" "$repository" "$version" "$RELEASE_COMMIT" "$clients"
   tx_stage_write .beroka-governance.lock "$TX_DIR/work/lock"
-  write_entrypoint "$REPO/AGENTS.md" "$agents_template" "$TX_DIR/work/agents"
-  tx_stage_write AGENTS.md "$TX_DIR/work/agents"
-  write_claude_entrypoint "$REPO/CLAUDE.md" "$claude_template" "$TX_DIR/work/claude"
-  tx_stage_write CLAUDE.md "$TX_DIR/work/claude"
-  tx_stage_write .cursor/rules/beroka-governance.mdc "$cursor_template"
+  stage_client_entrypoint "$REPO" "$RELEASE_DIR" "$client"
   prepare_registry_row "$REPO" "$repository" "$version"
 
   if [ "$dry_run" = --dry-run ]; then
+    tx_print_actions
     tx_commit
-    printf '%s\n' "Version: $version" "$REPO/.beroka-governance.lock" "$REPO/AGENTS.md" "$REPO/CLAUDE.md" "$REPO/.cursor/rules/beroka-governance.mdc" 'Result: PASS'
+    printf '%s\n' "Version: $version" 'Result: PASS'
     return
   fi
 
@@ -1082,6 +1189,7 @@ cmd_repin() {
   verify_registration "$requested"
   assert_registry_path
   repository=$LOCK_REPOSITORY
+  clients=$LOCK_CLIENTS
   current_major=${LOCK_VERSION#v}
   current_major=${current_major%%.*}
   target_major=${version#v}
@@ -1096,20 +1204,9 @@ cmd_repin() {
 
   tx_begin "$REPO"
   prepare_release "$version"
-  agents_template=$RELEASE_DIR/templates/agent-entrypoints/AGENTS.md
-  claude_template=$RELEASE_DIR/templates/agent-entrypoints/CLAUDE.md
-  cursor_template=$RELEASE_DIR/templates/agent-entrypoints/team-dev-ai-workflow.mdc
-  assert_valid_template "$agents_template"
-  assert_valid_template "$claude_template"
-  [ -f "$cursor_template" ] || die ENTRYPOINT_DRIFT "Missing Cursor rule in $RELEASE_DIR"
-
-  write_lock_file "$TX_DIR/work/lock" "$repository" "$version" "$RELEASE_COMMIT"
+  write_lock_file "$TX_DIR/work/lock" "$repository" "$version" "$RELEASE_COMMIT" "$clients"
   tx_stage_write .beroka-governance.lock "$TX_DIR/work/lock"
-  write_entrypoint "$REPO/AGENTS.md" "$agents_template" "$TX_DIR/work/agents"
-  tx_stage_write AGENTS.md "$TX_DIR/work/agents"
-  write_claude_entrypoint "$REPO/CLAUDE.md" "$claude_template" "$TX_DIR/work/claude"
-  tx_stage_write CLAUDE.md "$TX_DIR/work/claude"
-  tx_stage_write .cursor/rules/beroka-governance.mdc "$cursor_template"
+  stage_client_entrypoints "$REPO" "$RELEASE_DIR" "$clients"
   prepare_registry_row "$REPO" "$repository" "$version"
 
   if [ "$dry_run" = --dry-run ]; then
@@ -1136,14 +1233,16 @@ cmd_unregister() {
   assert_registry_path
   tx_begin "$REPO"
 
-  strip_managed_block "$REPO/AGENTS.md" "$TX_DIR/work/agents.unmanaged"
-  if grep -q '[^[:space:]]' "$TX_DIR/work/agents.unmanaged"; then
-    tx_stage_write AGENTS.md "$TX_DIR/work/agents.unmanaged"
-  else
-    tx_stage_delete AGENTS.md
+  if client_list_contains "$LOCK_CLIENTS" codex; then
+    strip_managed_block "$REPO/AGENTS.md" "$TX_DIR/work/agents.unmanaged"
+    if grep -q '[^[:space:]]' "$TX_DIR/work/agents.unmanaged"; then
+      tx_stage_write AGENTS.md "$TX_DIR/work/agents.unmanaged"
+    else
+      tx_stage_delete AGENTS.md
+    fi
   fi
 
-  if grep -Fq "$START_MARKER" "$REPO/CLAUDE.md" 2>/dev/null || grep -Fq "$END_MARKER" "$REPO/CLAUDE.md" 2>/dev/null; then
+  if client_list_contains "$LOCK_CLIENTS" claude; then
     strip_managed_block "$REPO/CLAUDE.md" "$TX_DIR/work/claude.unmanaged"
     if grep -q '[^[:space:]]' "$TX_DIR/work/claude.unmanaged"; then
       tx_stage_write CLAUDE.md "$TX_DIR/work/claude.unmanaged"
@@ -1152,7 +1251,9 @@ cmd_unregister() {
     fi
   fi
   tx_stage_delete .beroka-governance.lock
-  tx_stage_delete .cursor/rules/beroka-governance.mdc
+  if client_list_contains "$LOCK_CLIENTS" cursor; then
+    tx_stage_delete .cursor/rules/beroka-governance.mdc
+  fi
   prepare_registry_removal "$REPO"
 
   if [ "$dry_run" = --dry-run ]; then
@@ -2453,6 +2554,12 @@ cmd_doctor() {
     esac
   fi
   verify_registration "$requested"
+  if [ -n "$doctor_client" ] &&
+    ! client_list_contains "$LOCK_CLIENTS" "$doctor_client"
+  then
+    die CLIENT_SETUP_REQUIRED \
+      "Remediation: beroka-governance bootstrap $REPO --client $doctor_client"
+  fi
   if [ -n "$doctor_client" ]; then
     require_client "$doctor_client"
     doctor_state=0
@@ -2535,7 +2642,7 @@ main() {
   case "$command" in
     bootstrap) shift; cmd_bootstrap "$@" ;;
     install) [ "$#" -eq 2 ] || { usage >&2; exit 2; }; cmd_install "$2" ;;
-    register) [ "$#" -ge 4 ] && [ "$#" -le 5 ] || { usage >&2; exit 2; }; cmd_register "${2:-}" "${3:-}" "${4:-}" "${5:-}" ;;
+    register) [ "$#" -ge 6 ] && [ "$#" -le 7 ] || { usage >&2; exit 2; }; shift; cmd_register "$@" ;;
     update) [ "$#" -ge 4 ] && [ "$#" -le 5 ] || { usage >&2; exit 2; }; cmd_repin update "${2:-}" "${3:-}" "${4:-}" "${5:-}" ;;
     rollback) [ "$#" -ge 4 ] && [ "$#" -le 5 ] || { usage >&2; exit 2; }; cmd_repin rollback "${2:-}" "${3:-}" "${4:-}" "${5:-}" ;;
     unregister) [ "$#" -ge 2 ] && [ "$#" -le 3 ] || { usage >&2; exit 2; }; cmd_unregister "${2:-}" "${3:-}" ;;
