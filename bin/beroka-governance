@@ -864,6 +864,20 @@ cmd_bootstrap() {
   cmd_register "$bs_repo" --version "$bs_version" --client "$bs_client"
   bs_after=$(managed_repo_snapshot "$bs_repo")
 
+  if [ "$bs_before" = "$bs_after" ]; then
+    bs_registration=NO_CHANGE
+    bs_entrypoint=ALREADY_CONFIGURED
+    bs_changes=NONE
+  else
+    bs_registration=PASS
+    bs_entrypoint=ADDED
+    bs_changes=REVIEW_REQUIRED
+  fi
+  printf '%s\n' \
+    'Release: PASS' \
+    "Repository registration: $bs_registration" \
+    "Client entrypoint: $bs_entrypoint"
+
   if [ "$bs_interactive" -eq 1 ]; then
     cmd_setup_connectors --client "$bs_client"
   else
@@ -872,8 +886,6 @@ cmd_bootstrap() {
   cmd_doctor "$bs_repo"
   cmd_doctor "$bs_repo" --client "$bs_client"
 
-  bs_changes=REVIEW_REQUIRED
-  [ "$bs_before" != "$bs_after" ] || bs_changes=NONE
   printf '%s\n' \
     "Version: $bs_version" \
     "Selected client: $bs_client" \
@@ -2304,6 +2316,30 @@ auth_required() {
   die ATLASSIAN_AUTH_REQUIRED
 }
 
+auth_pending() {
+  ap_client=$1
+  printf '%s\n' \
+    "Client: $ap_client" \
+    'Provider: atlassian' \
+    'Authentication: AUTH_REQUIRED' \
+    'Connector: AUTH_PENDING' \
+    "Remediation: $(oauth_command "$ap_client")" \
+    "Resume: beroka-governance setup-connectors --client $ap_client"
+  [ "$ap_client" != claude ] ||
+    printf '%s\n' 'In Claude: /mcp -> atlassian -> Authenticate'
+  die AUTH_PENDING
+}
+
+connector_health_unavailable() {
+  chu_client=$1
+  printf '%s\n' \
+    "Client: $chu_client" \
+    'Provider: atlassian' \
+    'Connector: HEALTH_UNAVAILABLE' \
+    "Resume: beroka-governance setup-connectors --client $chu_client"
+  die CONNECTOR_HEALTH_UNAVAILABLE
+}
+
 github_auth_required() {
   gar_client=$1
   printf '%s\n' \
@@ -2525,7 +2561,7 @@ cmd_preflight() {
     fi
   elif [ "$pf_health" -ne 0 ]; then
     routing_cleanup
-    die GOVERNANCE_NOT_READY 'Cannot verify Atlassian connector health'
+    connector_health_unavailable "$pf_client"
   fi
 
   if [ -n "$PREFLIGHT_CAPABILITY" ]; then
@@ -2588,7 +2624,7 @@ cmd_setup_connectors() {
       return
       ;;
     1) ;;
-    *) die GOVERNANCE_NOT_READY "Cannot verify $setup_client Atlassian connector health" ;;
+    *) connector_health_unavailable "$setup_client" ;;
   esac
   if [ "$setup_interactive" -eq 1 ]; then
     printf '%s\n' \
@@ -2599,18 +2635,21 @@ cmd_setup_connectors() {
     IFS= read -r setup_answer || setup_answer=
     case "$setup_answer" in
       y|Y|yes|YES)
-        run_oauth "$setup_client" || auth_required "$setup_client"
+        run_oauth "$setup_client" || auth_pending "$setup_client"
         setup_health=0
         connector_health "$setup_client" || setup_health=$?
-        [ "$setup_health" -eq 0 ] || {
-          [ "$setup_health" -eq 1 ] && auth_required "$setup_client"
-          die GOVERNANCE_NOT_READY "Cannot verify $setup_client Atlassian connector health"
-        }
+        case "$setup_health" in
+          0) ;;
+          1) auth_pending "$setup_client" ;;
+          *) connector_health_unavailable "$setup_client" ;;
+        esac
         printf '%s\n' "Client: $setup_client" 'Connector: PASS' 'Authentication: PASS' 'Result: PASS'
         return
         ;;
     esac
   fi
+  [ "$setup_interactive" -eq 0 ] ||
+    auth_pending "$setup_client"
   auth_required "$setup_client"
 }
 
@@ -2642,7 +2681,7 @@ cmd_doctor() {
     case "$doctor_health" in
       0) ;;
       1) auth_required "$doctor_client" ;;
-      *) die GOVERNANCE_NOT_READY "Cannot verify $doctor_client Atlassian connector health" ;;
+      *) connector_health_unavailable "$doctor_client" ;;
     esac
     printf '%s\n' "Client: $doctor_client" 'Connector: PASS' 'Authentication: PASS'
   fi

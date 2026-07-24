@@ -207,6 +207,9 @@ output=$(printf 'y\ny\n' | script -qec \
 assert_contains "$output" 'Detected client: codex'
 assert_contains "$output" 'Resolved release: v1.2.0'
 assert_contains "$output" "Release commit: $v1_2_commit"
+assert_contains "$output" 'Release: PASS'
+assert_contains "$output" 'Repository registration: PASS'
+assert_contains "$output" 'Client entrypoint: ADDED'
 assert_contains "$output" 'Selected client: codex'
 assert_contains "$output" 'Repository changes: REVIEW_REQUIRED'
 assert_contains "$output" 'Result: PASS'
@@ -234,6 +237,8 @@ after=$(snapshot_repo "$repo")
 [ "$before" = "$after" ] ||
   fail 'bootstrap changed an already registered repository'
 assert_contains "$output" 'Version: v1.2.0'
+assert_contains "$output" 'Repository registration: NO_CHANGE'
+assert_contains "$output" 'Client entrypoint: ALREADY_CONFIGURED'
 assert_contains "$output" 'Selected client: codex'
 assert_contains "$output" 'Repository changes: NONE'
 

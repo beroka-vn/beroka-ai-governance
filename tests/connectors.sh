@@ -230,7 +230,7 @@ if output=$($CLI setup-connectors --client codex --non-interactive 2>&1)
 then
   fail 'Codex probe without a response passed'
 fi
-assert_contains "$output" 'Result: GOVERNANCE_NOT_READY'
+assert_contains "$output" 'Result: CONNECTOR_HEALTH_UNAVAILABLE'
 unset FAKE_CODEX_READY_AFTER
 
 rm -f "$XDG_CONFIG_HOME/fake-codex-configured"
@@ -239,8 +239,31 @@ if output=$(printf 'y\nn\n' | script -qec "$CLI setup-connectors" /dev/null 2>&1
   fail 'interactive setup accepted declined Codex authentication'
 fi
 assert_contains "$output" 'Detected client: codex'
-assert_contains "$output" 'Result: ATLASSIAN_AUTH_REQUIRED'
+assert_contains "$output" 'Result: AUTH_PENDING'
 assert_contains "$(cat "$CALLS")" 'codex app-server --stdio'
+
+printf '%s\n' auth-required >"$XDG_CONFIG_HOME/fake-codex-health"
+if output=$(printf 'n\n' |
+  script -qec "$CLI setup-connectors --client codex" /dev/null 2>&1)
+then
+  fail 'interactive setup accepted pending authentication'
+fi
+assert_contains "$output" 'Connector: AUTH_PENDING'
+assert_contains "$output" 'Result: AUTH_PENDING'
+assert_contains "$output" \
+  'Resume: beroka-governance setup-connectors --client codex'
+
+export FAKE_CODEX_READY_AFTER=never
+rm -f \
+  "$XDG_CONFIG_HOME/fake-codex-polls" \
+  "$XDG_CONFIG_HOME/fake-codex-ready"
+if output=$($CLI setup-connectors --client codex --non-interactive 2>&1)
+then
+  fail 'setup accepted unavailable connector health'
+fi
+assert_contains "$output" 'Connector: HEALTH_UNAVAILABLE'
+assert_contains "$output" 'Result: CONNECTOR_HEALTH_UNAVAILABLE'
+unset FAKE_CODEX_READY_AFTER
 
 cat >"$FAKE_BIN/claude" <<'EOF'
 #!/bin/sh
@@ -420,7 +443,7 @@ if output=$($CLI setup-connectors --client claude --non-interactive 2>&1)
 then
   fix_wave_fail 'similarly named Claude server passed health'
 else
-  fix_wave_contains "$output" 'Result: GOVERNANCE_NOT_READY'
+  fix_wave_contains "$output" 'Result: CONNECTOR_HEALTH_UNAVAILABLE'
 fi
 
 cat >"$FAKE_BIN/cursor-agent" <<'EOF'
@@ -548,7 +571,7 @@ printf '%s\n' ready-tools-failed >"$XDG_CONFIG_HOME/fake-cursor-health"
 if output=$($CLI setup-connectors --client cursor --non-interactive 2>&1); then
   fail 'Cursor setup accepted a failed tool inventory'
 fi
-assert_contains "$output" 'Result: GOVERNANCE_NOT_READY'
+assert_contains "$output" 'Result: CONNECTOR_HEALTH_UNAVAILABLE'
 
 printf '%s\n' auth-required >"$XDG_CONFIG_HOME/fake-cursor-health"
 : >"$CALLS"

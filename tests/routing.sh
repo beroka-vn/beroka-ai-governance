@@ -570,7 +570,7 @@ if output=$($CLI preflight "$consumer" \
 then
   fail 'nested server and tool metadata satisfied Jira write'
 fi
-assert_contains "$output" 'Result: GOVERNANCE_NOT_READY'
+assert_contains "$output" 'Result: CONNECTOR_HEALTH_UNAVAILABLE'
 assert_not_contains "$output" 'Capability state: SUPPORTED'
 
 for invalid_response in \
@@ -583,7 +583,7 @@ do
   then
     fail "$invalid_response supplied the Atlassian inventory"
   fi
-  assert_contains "$output" 'Result: GOVERNANCE_NOT_READY'
+  assert_contains "$output" 'Result: CONNECTOR_HEALTH_UNAVAILABLE'
   assert_not_contains "$output" 'Capability state: SUPPORTED'
 done
 
@@ -612,7 +612,12 @@ for negative_health in not-connected disconnected; do
   then
     fail "Claude $negative_health status passed"
   fi
-  assert_contains "$output" 'Result: GOVERNANCE_NOT_READY'
+  case "$negative_health" in
+    disconnected)
+      assert_contains "$output" 'Result: CONNECTOR_HEALTH_UNAVAILABLE'
+      ;;
+    *) assert_contains "$output" 'Result: GOVERNANCE_NOT_READY' ;;
+  esac
 done
 
 if output=$($CLI preflight "$consumer" --client codex \
