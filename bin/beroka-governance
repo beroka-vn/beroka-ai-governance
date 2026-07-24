@@ -13,10 +13,25 @@ END_MARKER='<!-- BEROKA-GOVERNANCE:END -->'
 REGISTRY=$CONFIG_ROOT/registered-repos
 TX_DIR= TX_REPO= TX_COMMITTED=0 TX_RELEASE_NEW=0 TX_RELEASE_TARGET= TX_RELEASE_STAGE= TX_RELEASE_OWNED=0
 TX_CLI_PATH= TX_CLI_SNAPSHOT=0 TX_REGISTRY_SNAPSHOT=0 TX_REGISTRY_ACTION=none
+ROUTING_FILE=.beroka-governance.conf
+ROUTING_STATE= ROUTING_BASELINE_PRESENT=0 ROUTING_BASELINE_COMMIT=
+ROUTING_BASELINE_FILE= ROUTING_TEMP_DIR=
+ROUTE_SCHEMA_VERSION= ROUTE_PROFILE= ROUTE_JIRA_PROJECT_KEY=
+ROUTE_JIRA_BOARD_ID= ROUTE_CONFLUENCE_SPACE_KEY=
+ROUTE_CONFLUENCE_ROOT_CONTENT_ID= ROUTE_CONFLUENCE_ROOT_CONTENT_TYPE=
+ROUTE_INTEGRATION_PROFILE= ROUTE_CROSS_REPO_POLICY= DEPENDENCY_STATE=
+CONNECTOR_PROBE_CLIENT= CONNECTOR_PROBE_OUTPUT= CONNECTOR_PROBE_STATUS=
+CONNECTOR_PROBE_STATE=
+CONNECTOR_PROBE_TOOLS=
+CONNECTOR_PROBE_TOOLS_OK=0
+CAPABILITY_INVENTORY= CAPABILITY_INVENTORY_COMPLETE=0
+CAPABILITY_INVENTORY_FORMAT= CAPABILITY_TOOLSET=UNAVAILABLE
+CAPABILITY_STATE= PREFLIGHT_CAPABILITY=
 
 die() {
   code=$1
   shift
+  [ -z "$ROUTING_TEMP_DIR" ] || routing_cleanup
   printf '%s\n' "Result: $code" >&2
   if [ "$#" -gt 0 ]; then printf '%s\n' "$*" >&2; fi
   exit 1
@@ -33,6 +48,7 @@ usage() {
     '  beroka-governance uninstall [--force]' \
     '  beroka-governance setup-connectors [--client codex|claude|cursor] [--non-interactive]' \
     '  beroka-governance doctor REPO [--client codex|claude|cursor]' \
+    '  beroka-governance preflight REPO --client codex|claude|cursor --operation OPERATION [--non-interactive]' \
     '  beroka-governance context REPO' \
     '  beroka-governance show REPO governance|handbook|workflow' \
     '  beroka-governance show REPO template ai-agent-assignment|github-issue|jira-confluence|pull-request'
@@ -125,20 +141,271 @@ assert_safe_managed_paths() {
   done
 }
 
-normalize_origin() {
-  repo=$1
-  url=$(git -C "$repo" remote get-url origin 2>/dev/null) || die REMOTE_MISMATCH 'Git origin is missing'
-  case "$url" in
-    https://github.com/*) slug=${url#https://github.com/} ;;
-    git@github.com:*) slug=${url#git@github.com:} ;;
-    ssh://git@github.com/*) slug=${url#ssh://git@github.com/} ;;
-    *) die REMOTE_MISMATCH "Unsupported GitHub origin: $url" ;;
+normalize_github_url() {
+  ngu_url=$1
+  case "$ngu_url" in
+    https://github.com/*) ngu_slug=${ngu_url#https://github.com/} ;;
+    git@github.com:*) ngu_slug=${ngu_url#git@github.com:} ;;
+    ssh://git@github.com/*) ngu_slug=${ngu_url#ssh://git@github.com/} ;;
+    *) return 1 ;;
   esac
-  while [ "${slug%/}" != "$slug" ]; do slug=${slug%/}; done
-  slug=${slug%.git}
-  printf '%s\n' "$slug" | grep -Eq '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' ||
-    die REMOTE_MISMATCH "Invalid GitHub repository slug: $slug"
-  printf '%s\n' "$slug"
+  while [ "${ngu_slug%/}" != "$ngu_slug" ]; do ngu_slug=${ngu_slug%/}; done
+  ngu_slug=${ngu_slug%.git}
+  printf '%s\n' "$ngu_slug" |
+    grep -Eq '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' || return 1
+  printf '%s\n' "$ngu_slug"
+}
+
+resolve_canonical_remote() {
+  rcr_repo=$1 rcr_expected=${2:-}
+  CANONICAL_REMOTE_NAME= CANONICAL_REMOTE_URL=
+  rcr_matches=0
+  for rcr_name in $(git -C "$rcr_repo" remote); do
+    rcr_url=$(git -C "$rcr_repo" config --get "remote.$rcr_name.url" 2>/dev/null) ||
+      continue
+    rcr_slug=$(normalize_github_url "$rcr_url") || continue
+    if [ -n "$rcr_expected" ]; then
+      [ "$rcr_slug" = "$rcr_expected" ] || continue
+    elif [ "$rcr_name" != origin ]; then
+      continue
+    fi
+    rcr_matches=$((rcr_matches + 1))
+    CANONICAL_REMOTE_NAME=$rcr_name
+    CANONICAL_REMOTE_URL=$rcr_url
+  done
+  if [ -z "$rcr_expected" ] && [ "$rcr_matches" -eq 0 ]; then
+    for rcr_name in $(git -C "$rcr_repo" remote); do
+      rcr_url=$(git -C "$rcr_repo" config --get "remote.$rcr_name.url" 2>/dev/null) ||
+        continue
+      normalize_github_url "$rcr_url" >/dev/null 2>&1 || continue
+      rcr_matches=$((rcr_matches + 1))
+      CANONICAL_REMOTE_NAME=$rcr_name
+      CANONICAL_REMOTE_URL=$rcr_url
+    done
+  fi
+  [ "$rcr_matches" -eq 1 ] ||
+    die REMOTE_MISMATCH 'Cannot resolve exactly one canonical GitHub remote'
+}
+
+routing_cleanup() {
+  rc_temp=$ROUTING_TEMP_DIR
+  ROUTING_TEMP_DIR=
+  [ -z "$rc_temp" ] || rm -rf "$rc_temp"
+  trap - EXIT HUP INT TERM
+}
+
+fetch_routing_baseline() {
+  ROUTING_BASELINE_PRESENT=0 ROUTING_BASELINE_COMMIT= ROUTING_BASELINE_FILE=
+  rfb_advertised=$(git ls-remote --symref "$CANONICAL_REMOTE_URL" HEAD 2>/dev/null) || return 1
+  rfb_ref=$(printf '%s\n' "$rfb_advertised" |
+    awk '$1 == "ref:" && $3 == "HEAD" { print $2; exit }')
+  rfb_commit=$(printf '%s\n' "$rfb_advertised" |
+    awk '$2 == "HEAD" && $1 ~ /^[0-9a-f]{40}$/ { print $1; exit }')
+  case "$rfb_ref:$rfb_commit" in
+    refs/heads/*:[0-9a-f][0-9a-f]*) ;;
+    *) return 1 ;;
+  esac
+
+  ROUTING_TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/beroka-routing-fetch.XXXXXX") || return 1
+  trap 'routing_cleanup' EXIT
+  trap 'routing_cleanup; exit 1' HUP INT TERM
+  git -C "$ROUTING_TEMP_DIR" init -q --bare || {
+    routing_cleanup
+    return 1
+  }
+  git -C "$ROUTING_TEMP_DIR" fetch -q --depth 1 \
+    "$CANONICAL_REMOTE_URL" "$rfb_ref" || {
+    routing_cleanup
+    return 1
+  }
+  ROUTING_BASELINE_COMMIT=$(git -C "$ROUTING_TEMP_DIR" rev-parse FETCH_HEAD 2>/dev/null) || {
+    routing_cleanup
+    return 1
+  }
+  [ "$ROUTING_BASELINE_COMMIT" = "$rfb_commit" ] || {
+    routing_cleanup
+    return 1
+  }
+
+  ROUTING_BASELINE_FILE=$ROUTING_TEMP_DIR/baseline.conf
+  if git -C "$ROUTING_TEMP_DIR" cat-file -e \
+    "$ROUTING_BASELINE_COMMIT:$ROUTING_FILE" 2>/dev/null
+  then
+    rfb_mode=$(git -C "$ROUTING_TEMP_DIR" ls-tree \
+      "$ROUTING_BASELINE_COMMIT" -- "$ROUTING_FILE" |
+      awk '{ print $1; exit }')
+    case "$rfb_mode" in
+      100644|100755) ;;
+      *) routing_cleanup; return 2 ;;
+    esac
+    git -C "$ROUTING_TEMP_DIR" show \
+      "$ROUTING_BASELINE_COMMIT:$ROUTING_FILE" \
+      >"$ROUTING_BASELINE_FILE" || {
+      routing_cleanup
+      return 1
+    }
+    ROUTING_BASELINE_PRESENT=1
+  else
+    : >"$ROUTING_BASELINE_FILE"
+  fi
+}
+
+local_routing_present() {
+  git -C "$REPO" cat-file -e "HEAD:$ROUTING_FILE" 2>/dev/null ||
+    git -C "$REPO" ls-files --error-unmatch "$ROUTING_FILE" >/dev/null 2>&1 ||
+    [ -e "$REPO/$ROUTING_FILE" ] || [ -L "$REPO/$ROUTING_FILE" ]
+}
+
+local_routing_matches_baseline() {
+  [ ! -L "$REPO/$ROUTING_FILE" ] && [ -f "$REPO/$ROUTING_FILE" ] || return 1
+  lrm_baseline=$(git -C "$ROUTING_TEMP_DIR" ls-tree \
+    "$ROUTING_BASELINE_COMMIT" -- "$ROUTING_FILE")
+  lrm_head=$(git -C "$REPO" ls-tree HEAD -- "$ROUTING_FILE")
+  lrm_index=$(git -C "$REPO" ls-files -s -- "$ROUTING_FILE")
+  [ -n "$lrm_baseline" ] && [ -n "$lrm_head" ] && [ -n "$lrm_index" ] ||
+    return 1
+  lrm_mode=$(printf '%s\n' "$lrm_baseline" | awk '{ print $1 }')
+  lrm_blob=$(printf '%s\n' "$lrm_baseline" | awk '{ print $3 }')
+  [ "$(printf '%s\n' "$lrm_head" | awk '{ print $1, $3 }')" = "$lrm_mode $lrm_blob" ] ||
+    return 1
+  [ "$(printf '%s\n' "$lrm_index" | awk '{ print $1, $2 }')" = "$lrm_mode $lrm_blob" ] ||
+    return 1
+  case "$lrm_mode" in
+    100644) [ ! -x "$REPO/$ROUTING_FILE" ] || return 1 ;;
+    100755) [ -x "$REPO/$ROUTING_FILE" ] || return 1 ;;
+    *) return 1 ;;
+  esac
+  cmp -s "$REPO/$ROUTING_FILE" "$ROUTING_BASELINE_FILE"
+}
+
+resolve_routing() {
+  ROUTING_STATE=
+  rr_fetch=0
+  fetch_routing_baseline || rr_fetch=$?
+  case "$rr_fetch" in
+    0) ;;
+    2) ROUTING_STATE=ROUTING_INVALID; return 0 ;;
+    *) ROUTING_STATE=ROUTING_VERIFICATION_REQUIRED; return 0 ;;
+  esac
+  if [ "$ROUTING_BASELINE_PRESENT" -eq 0 ]; then
+    if local_routing_present; then
+      ROUTING_STATE=ROUTING_CHANGE_PENDING
+    else
+      ROUTING_STATE=ROUTING_REQUIRED
+    fi
+  elif local_routing_matches_baseline; then
+    ROUTING_STATE=ROUTING_ACTIVE
+  else
+    ROUTING_STATE=ROUTING_CHANGE_PENDING
+  fi
+  if [ "$ROUTING_BASELINE_PRESENT" -eq 1 ] &&
+     ! parse_routing "$ROUTING_BASELINE_FILE"
+  then
+    ROUTING_STATE=ROUTING_INVALID
+    return 0
+  fi
+  if [ "$ROUTING_STATE" = ROUTING_CHANGE_PENDING ] &&
+     [ -e "$REPO/$ROUTING_FILE" ]
+  then
+    if (parse_routing "$REPO/$ROUTING_FILE"); then
+      printf '%s\n' 'Local routing validation: PASS'
+    else
+      printf '%s\n' 'Local routing validation: INVALID'
+    fi
+  fi
+}
+
+clear_routing_values() {
+  ROUTE_SCHEMA_VERSION= ROUTE_PROFILE= ROUTE_JIRA_PROJECT_KEY=
+  ROUTE_JIRA_BOARD_ID= ROUTE_CONFLUENCE_SPACE_KEY=
+  ROUTE_CONFLUENCE_ROOT_CONTENT_ID=
+  ROUTE_CONFLUENCE_ROOT_CONTENT_TYPE=
+  ROUTE_INTEGRATION_PROFILE= ROUTE_CROSS_REPO_POLICY=
+  DEPENDENCY_STATE=
+}
+
+parse_routing() {
+  pr_file=$1
+  clear_routing_values
+  [ ! -L "$pr_file" ] && [ -f "$pr_file" ] || return 1
+  pr_parsed=$(
+    awk -F= '
+      /^[[:space:]]*$/ { next }
+      index($0, "=") == 0 { exit 42 }
+      {
+        key=$1
+        value=substr($0, length(key) + 2)
+        if (key !~ /^[A-Z][A-Z0-9_]*$/ || value == "" || seen[key]++) exit 42
+        if (key != "SCHEMA_VERSION" &&
+            key != "PROFILE" &&
+            key != "JIRA_PROJECT_KEY" &&
+            key != "JIRA_BOARD_ID" &&
+            key != "CONFLUENCE_SPACE_KEY" &&
+            key != "CONFLUENCE_ROOT_CONTENT_ID" &&
+            key != "CONFLUENCE_ROOT_CONTENT_TYPE" &&
+            key != "INTEGRATION_PROFILE" &&
+            key != "CROSS_REPO_POLICY") exit 42
+        print key "\t" value
+      }
+    ' "$pr_file"
+  ) || return 1
+  while IFS="$(printf '\t')" read -r pr_key pr_value; do
+    case "$pr_key" in
+      SCHEMA_VERSION) ROUTE_SCHEMA_VERSION=$pr_value ;;
+      PROFILE) ROUTE_PROFILE=$pr_value ;;
+      JIRA_PROJECT_KEY) ROUTE_JIRA_PROJECT_KEY=$pr_value ;;
+      JIRA_BOARD_ID) ROUTE_JIRA_BOARD_ID=$pr_value ;;
+      CONFLUENCE_SPACE_KEY) ROUTE_CONFLUENCE_SPACE_KEY=$pr_value ;;
+      CONFLUENCE_ROOT_CONTENT_ID) ROUTE_CONFLUENCE_ROOT_CONTENT_ID=$pr_value ;;
+      CONFLUENCE_ROOT_CONTENT_TYPE) ROUTE_CONFLUENCE_ROOT_CONTENT_TYPE=$pr_value ;;
+      INTEGRATION_PROFILE) ROUTE_INTEGRATION_PROFILE=$pr_value ;;
+      CROSS_REPO_POLICY) ROUTE_CROSS_REPO_POLICY=$pr_value ;;
+    esac
+  done <<EOF
+$pr_parsed
+EOF
+
+  [ "$ROUTE_SCHEMA_VERSION" = 1 ] || return 1
+  case "$ROUTE_PROFILE" in standalone|backend|frontend) ;; *) return 1 ;; esac
+  case "$ROUTE_INTEGRATION_PROFILE" in none|beroka-be-fe) ;; *) return 1 ;; esac
+  case "$ROUTE_CROSS_REPO_POLICY" in explicit-only|profile-controlled) ;; *) return 1 ;; esac
+  [ -z "$ROUTE_JIRA_PROJECT_KEY" ] ||
+    printf '%s\n' "$ROUTE_JIRA_PROJECT_KEY" |
+      grep -Eq '^[A-Z][A-Z0-9_]*$' || return 1
+  [ -z "$ROUTE_JIRA_BOARD_ID" ] ||
+    printf '%s\n' "$ROUTE_JIRA_BOARD_ID" |
+      grep -Eq '^[1-9][0-9]*$' || return 1
+  [ -z "$ROUTE_CONFLUENCE_SPACE_KEY" ] ||
+    printf '%s\n' "$ROUTE_CONFLUENCE_SPACE_KEY" |
+      grep -Eq '^[A-Za-z0-9._~-]+$' || return 1
+  [ -z "$ROUTE_CONFLUENCE_ROOT_CONTENT_ID" ] ||
+    printf '%s\n' "$ROUTE_CONFLUENCE_ROOT_CONTENT_ID" |
+      grep -Eq '^[1-9][0-9]*$' || return 1
+  case "$ROUTE_CONFLUENCE_ROOT_CONTENT_TYPE" in ''|page|folder) ;; *) return 1 ;; esac
+
+  [ "$ROUTE_INTEGRATION_PROFILE" != none ] ||
+    [ "$ROUTE_CROSS_REPO_POLICY" = explicit-only ] || return 1
+  [ "$ROUTE_PROFILE" != standalone ] ||
+    [ "$ROUTE_INTEGRATION_PROFILE:$ROUTE_CROSS_REPO_POLICY" = none:explicit-only ] ||
+    return 1
+  [ "$ROUTE_INTEGRATION_PROFILE" != beroka-be-fe ] ||
+    [ "$ROUTE_PROFILE" = backend ] || [ "$ROUTE_PROFILE" = frontend ] ||
+    return 1
+  if [ "$ROUTE_INTEGRATION_PROFILE" = beroka-be-fe ]; then
+    awk -F '\t' \
+      -v repository="$LOCK_REPOSITORY" \
+      -v profile="$ROUTE_PROFILE" '
+        $0 !~ /^#/ && $1 == repository && $2 == profile { found=1 }
+        END { exit !found }
+      ' "$RELEASE_DIR/runtime/integrations/beroka-be-fe.repositories" ||
+      return 1
+  fi
+
+  if [ "$ROUTE_INTEGRATION_PROFILE" = none ]; then
+    DEPENDENCY_STATE=NO_DEPENDENCY_DECLARED
+  else
+    DEPENDENCY_STATE=MAPPING_VERIFICATION_REQUIRED
+  fi
 }
 
 target_dirty() {
@@ -344,6 +611,23 @@ validate_release_checkout() {
   do
     assert_release_file "$vrc_checkout" "$vrc_required"
   done
+  if [ -e "$vrc_checkout/runtime/routing-schema" ]; then
+    assert_release_file "$vrc_checkout" runtime/routing-schema
+    [ "$(sed -n '1p' "$vrc_checkout/runtime/routing-schema")" = 1 ] ||
+      die VERSION_MISMATCH 'Unsupported routing schema in installed release'
+    for vrc_routing_file in \
+      runtime/rules/general.md \
+      runtime/profiles/standalone.md runtime/profiles/backend.md \
+      runtime/profiles/frontend.md runtime/integrations/beroka-be-fe.md \
+      runtime/integrations/beroka-be-fe.repositories \
+      runtime/compatibility/atlassian.tsv
+    do
+      assert_release_file "$vrc_checkout" "$vrc_routing_file"
+    done
+    [ "$(sed -n '1p' \
+      "$vrc_checkout/runtime/compatibility/atlassian.tsv")" = '# schema=1' ] ||
+      die VERSION_MISMATCH 'Unsupported Atlassian compatibility schema'
+  fi
   [ "$(sed -n '1p' "$vrc_checkout/VERSION" 2>/dev/null)" = "$vrc_version" ] || die VERSION_MISMATCH 'Installed VERSION does not match requested version'
   [ "$(git -C "$vrc_checkout" cat-file -t "$vrc_version" 2>/dev/null)" = tag ] || die VERSION_MISMATCH 'Installed tag is not annotated'
   RELEASE_COMMIT=$(git -C "$vrc_checkout" rev-parse "$vrc_version^{commit}" 2>/dev/null) || die VERSION_MISMATCH "Installed tag is missing: $vrc_version"
@@ -560,8 +844,7 @@ verify_registration() {
   REPO=$(canonical_repo "$1")
   assert_safe_managed_paths "$REPO"
   read_lock "$REPO"
-  origin_slug=$(normalize_origin "$REPO")
-  [ "$origin_slug" = "$LOCK_REPOSITORY" ] || die REMOTE_MISMATCH "Origin $origin_slug differs from $LOCK_REPOSITORY"
+  resolve_canonical_remote "$REPO" "$LOCK_REPOSITORY"
   verify_release
   verify_entrypoints "$REPO" "$RELEASE_DIR"
 }
@@ -575,7 +858,9 @@ cmd_register() {
   REPO=$(canonical_repo "$requested")
   assert_safe_managed_paths "$REPO"
   assert_registry_path
-  repository=$(normalize_origin "$REPO")
+  resolve_canonical_remote "$REPO"
+  repository=$(normalize_github_url "$CANONICAL_REMOTE_URL") ||
+    die REMOTE_MISMATCH 'Canonical remote is not a supported GitHub repository'
   release_for_version "$version"
   agents_template=$RELEASE_DIR/templates/agent-entrypoints/AGENTS.md
   claude_template=$RELEASE_DIR/templates/agent-entrypoints/CLAUDE.md
@@ -730,7 +1015,7 @@ client_executable() {
 oauth_command() {
   case "$1" in
     codex) printf '%s\n' 'codex mcp login atlassian' ;;
-    claude) printf '%s\n' 'claude mcp login atlassian' ;;
+    claude) printf '%s\n' 'claude' ;;
     cursor) printf '%s\n' 'cursor-agent mcp login atlassian' ;;
     *) usage >&2; exit 2 ;;
   esac
@@ -741,6 +1026,8 @@ require_client() {
   rc_executable=$(client_executable "$rc_client")
   command -v "$rc_executable" >/dev/null 2>&1 ||
     die DEPENDENCY_MISSING "Missing dependency: $rc_executable"
+  command -v jq >/dev/null 2>&1 ||
+    die DEPENDENCY_MISSING 'Missing dependency: jq'
   case "$rc_client" in
     codex)
       codex mcp login --help >/dev/null 2>&1 &&
@@ -748,14 +1035,14 @@ require_client() {
         die DEPENDENCY_MISSING 'Codex lacks required MCP/app-server commands'
       ;;
     claude)
-      claude mcp login --help >/dev/null 2>&1 ||
-        die DEPENDENCY_MISSING 'Claude Code lacks required MCP login support'
+      claude mcp add --help >/dev/null 2>&1 &&
+        claude mcp get --help >/dev/null 2>&1 &&
+        claude mcp list --help >/dev/null 2>&1 ||
+        die DEPENDENCY_MISSING 'Claude Code lacks required MCP commands'
       ;;
     cursor)
       cursor-agent mcp login --help >/dev/null 2>&1 ||
         die DEPENDENCY_MISSING 'Cursor Agent lacks required MCP login support'
-      command -v jq >/dev/null 2>&1 ||
-        die DEPENDENCY_MISSING 'Missing dependency: jq'
       ;;
   esac
 }
@@ -765,9 +1052,26 @@ connector_state() {
   case "$cs_client" in
     codex)
       cs_output=$(codex mcp get atlassian --json 2>/dev/null) || return 1
+      printf '%s\n' "$cs_output" |
+        jq -e -s 'length == 1 and (.[0] | type == "object")' \
+          >/dev/null 2>&1 || return 2
+      printf '%s\n' "$cs_output" |
+        jq -e -s --stream --arg url "$ATLASSIAN_MCP_URL" '
+          ([.[] |
+            select(length == 2 and .[0] == ["name"]) |
+            .[1]] == ["atlassian"]) and
+          ([.[] |
+            select(length == 2 and .[0] == ["url"]) |
+            .[1]] == [$url])
+        ' >/dev/null 2>&1 && return 0
+      return 2
       ;;
     claude)
       cs_output=$(claude mcp get atlassian 2>/dev/null) || return 1
+      printf '%s\n' "$cs_output" |
+        claude_atlassian_endpoint "$ATLASSIAN_MCP_URL" >/dev/null &&
+        return 0
+      return 2
       ;;
     cursor)
       cs_file=$HOME/.cursor/mcp.json
@@ -777,11 +1081,6 @@ connector_state() {
       jq -e '.mcpServers.atlassian != null' "$cs_file" >/dev/null 2>&1 && return 2
       return 1
       ;;
-  esac
-  case "$cs_output" in
-    *"$ATLASSIAN_MCP_URL"*) return 0 ;;
-    *atlassian*) return 2 ;;
-    *) return 1 ;;
   esac
 }
 
@@ -841,67 +1140,614 @@ configure_connector() {
   esac
 }
 
-connector_health() {
-  ch_client=$1
-  case "$ch_client" in
+atlassian_status_line() {
+  awk -F: '{
+    label=$1
+    sub(/^[[:space:]]*/, "", label)
+    sub(/[[:space:]]*$/, "", label)
+    if (tolower(label) == "atlassian") {
+      print
+      exit
+    }
+  }'
+}
+
+claude_atlassian_endpoint() {
+  cae_url=$1
+  awk -v expected_url="$cae_url" '
+    /^[[:space:]]*Name:[[:space:]]*/ {
+      name=$0
+      sub(/^[[:space:]]*Name:[[:space:]]*/, "", name)
+      if (name == "") invalid=1
+      name_matches++
+    }
+    /^[[:space:]]*URL:[[:space:]]*/ {
+      endpoint=$0
+      sub(/^[[:space:]]*URL:[[:space:]]*/, "", endpoint)
+      if (endpoint == "") invalid=1
+      url_matches++
+    }
+    END {
+      if (invalid ||
+          name_matches != 1 || name != "atlassian" ||
+          url_matches != 1 || endpoint != expected_url) exit 42
+    }
+  '
+}
+
+connector_probe() {
+  cp_client=$1
+  [ "${CONNECTOR_PROBE_CLIENT:-}" = "$cp_client" ] && return 0
+  CONNECTOR_PROBE_CLIENT=$cp_client
+  CONNECTOR_PROBE_OUTPUT=
+  CONNECTOR_PROBE_STATUS=
+  CONNECTOR_PROBE_STATE=
+  CONNECTOR_PROBE_TOOLS=
+  CONNECTOR_PROBE_TOOLS_OK=0
+  case "$cp_client" in
     codex)
-      ch_output=$(
+      CONNECTOR_PROBE_OUTPUT=$(
         {
           printf '%s\n' \
             '{"method":"initialize","id":0,"params":{"clientInfo":{"name":"beroka-governance","title":"Beroka Governance","version":"1"}}}' \
             '{"method":"initialized","params":{}}' \
             '{"method":"mcpServerStatus/list","id":1,"params":{"detail":"toolsAndAuthOnly","limit":100}}'
           sleep 3
-        } |
-          codex app-server --stdio 2>&1
-      ) || return 2
-      case "$ch_output" in
-        *'server atlassian:'*unauthorized_client*|\
-        *'server atlassian:'*'401 Unauthorized'*|\
-        *'server atlassian:'*'403 Forbidden'*) return 1 ;;
+        } | codex app-server --stdio 2>&1
+      ) || return 1
+      ;;
+    claude)
+      CONNECTOR_PROBE_OUTPUT=$(claude mcp list 2>&1) || :
+      CONNECTOR_PROBE_STATUS=$(printf '%s\n' "$CONNECTOR_PROBE_OUTPUT" |
+        atlassian_status_line)
+      CONNECTOR_PROBE_STATE=$(printf '%s\n' "$CONNECTOR_PROBE_STATUS" |
+        awk '{
+          sub(/^[^:]*:[[:space:]]*/, "")
+          sub(/[[:space:]]*$/, "")
+          print tolower($0)
+        }')
+      case "$CONNECTOR_PROBE_STATE" in
+        connected|*' - ✓ connected')
+          CONNECTOR_PROBE_STATE=connected
+          ;;
+        'authentication required'|'! needs authentication'|\
+        *' - authentication required'|*' - ! needs authentication')
+          CONNECTOR_PROBE_STATE=authentication-required
+          ;;
+        *)
+          CONNECTOR_PROBE_STATE=unknown
+          ;;
       esac
-      if printf '%s\n' "$ch_output" |
-        awk '/"name":"atlassian"/ && /"failureReason":"reauthenticationRequired"/ { found=1 } END { exit !found }'
+      ;;
+    cursor)
+      CONNECTOR_PROBE_OUTPUT=$(cursor-agent mcp list 2>&1) || :
+      CONNECTOR_PROBE_STATUS=$(printf '%s\n' "$CONNECTOR_PROBE_OUTPUT" |
+        atlassian_status_line)
+      CONNECTOR_PROBE_STATE=$(printf '%s\n' "$CONNECTOR_PROBE_STATUS" |
+        awk '{
+          sub(/^[^:]*:[[:space:]]*/, "")
+          sub(/[[:space:]]*$/, "")
+          print tolower($0)
+        }')
+      case "$CONNECTOR_PROBE_STATE" in
+        ready|connected)
+          if CONNECTOR_PROBE_TOOLS=$(
+            cursor-agent mcp list-tools atlassian 2>&1
+          ); then
+            CONNECTOR_PROBE_TOOLS_OK=1
+          fi
+          ;;
+      esac
+      ;;
+  esac
+}
+
+codex_atlassian_record() {
+  awk '
+    function string_at(start,    i, c, escaped) {
+      parsed_string=""
+      escaped=0
+      if (substr(raw, start, 1) != "\"") return 0
+      for (i=start+1; i<=length(raw); i++) {
+        c=substr(raw, i, 1)
+        if (escaped) {
+          parsed_string=parsed_string c
+          escaped=0
+        } else if (c == "\\") {
+          escaped=1
+        } else if (c == "\"") {
+          parsed_end=i
+          return 1
+        } else {
+          parsed_string=parsed_string c
+        }
+      }
+      return 0
+    }
+    function nonspace(start,    i) {
+      i=start
+      while (substr(raw, i, 1) ~ /[[:space:]]/) i++
+      return i
+    }
+    {
+      if (NR > 1) raw=raw "\n"
+      raw=raw $0
+    }
+    END {
+      depth=0
+      array_depth=0
+      result_depth=0
+      data_array_depth=0
+      server_depth=0
+      id1_responses=0
+      invalid=0
+      for (i=1; i<=length(raw); i++) {
+        c=substr(raw, i, 1)
+        if (c == "\"") {
+          if (!string_at(i)) exit 42
+          key=parsed_string
+          key_end=parsed_end
+          separator=nonspace(key_end + 1)
+          if (substr(raw, separator, 1) == ":") {
+            value_start=nonspace(separator + 1)
+            if (message_depth && depth == message_depth && key == "id") {
+              message_id_count++
+              value_end=nonspace(value_start + 1)
+              if (substr(raw, value_start, 1) == "1" &&
+                  substr(raw, value_end, 1) ~ /[,}]/) {
+                message_id_one=1
+                message_id_valid=1
+              }
+            }
+            if (message_depth && depth == message_depth && key == "result") {
+              message_result_count++
+              if (substr(raw, value_start, 1) == "{")
+                result_open=value_start
+              else
+                message_result_invalid=1
+            }
+            if (result_depth && depth == result_depth && key == "data") {
+              message_data_count++
+              if (substr(raw, value_start, 1) == "[")
+                data_open=value_start
+              else
+                message_data_invalid=1
+            }
+            if (server_depth && depth == server_depth && key == "name") {
+              server_name_count++
+              if (!string_at(value_start)) server_name_invalid=1
+              else server_name=parsed_string
+            }
+          }
+          i=key_end
+        } else if (c == "{") {
+          parent_depth=depth
+          if (parent_depth == 0 && array_depth == 0) {
+            message_depth=1
+            message_id_count=0
+            message_id_one=0
+            message_id_valid=0
+            message_result_count=0
+            message_result_invalid=0
+            message_data_count=0
+            message_data_invalid=0
+            message_server_matches=0
+            message_record=""
+            result_open=0
+            result_depth=0
+            data_open=0
+            data_array_depth=0
+            server_depth=0
+          }
+          depth++
+          if (i == result_open) result_depth=depth
+          if (data_array_depth && array_depth == data_array_depth &&
+              parent_depth == result_depth) {
+            server_depth=depth
+            server_start=i
+            server_name=""
+            server_name_count=0
+            server_name_invalid=0
+          }
+        } else if (c == "}") {
+          if (server_depth && depth == server_depth) {
+            if (!server_name_invalid && server_name_count == 1 &&
+                server_name == "atlassian") {
+              message_server_matches++
+              message_record=substr(raw, server_start, i - server_start + 1)
+            }
+            server_depth=0
+          }
+          if (result_depth && depth == result_depth) result_depth=0
+          if (message_depth && depth == message_depth) {
+            if (message_id_one) {
+              id1_responses++
+              if (message_id_count != 1 || !message_id_valid ||
+                  message_result_count != 1 || message_result_invalid ||
+                  message_data_count != 1 || message_data_invalid ||
+                  message_server_matches != 1)
+                invalid=1
+              else
+                record=message_record
+            }
+            message_depth=0
+          }
+          depth--
+        } else if (c == "[") {
+          array_depth++
+          if (i == data_open) data_array_depth=array_depth
+        } else if (c == "]") {
+          if (data_array_depth && array_depth == data_array_depth)
+            data_array_depth=0
+          array_depth--
+        }
+      }
+      if (depth != 0 || array_depth != 0 ||
+          invalid || id1_responses != 1) exit 42
+      print record
+    }
+  '
+}
+
+json_top_level_string() {
+  jtls_key=$1
+  awk -v wanted="$jtls_key" '
+    function string_at(start,    i, c, escaped) {
+      parsed_string=""
+      escaped=0
+      if (substr(raw, start, 1) != "\"") return 0
+      for (i=start+1; i<=length(raw); i++) {
+        c=substr(raw, i, 1)
+        if (escaped) {
+          parsed_string=parsed_string c
+          escaped=0
+        } else if (c == "\\") {
+          escaped=1
+        } else if (c == "\"") {
+          parsed_end=i
+          return 1
+        } else {
+          parsed_string=parsed_string c
+        }
+      }
+      return 0
+    }
+    function nonspace(start,    i) {
+      i=start
+      while (substr(raw, i, 1) ~ /[[:space:]]/) i++
+      return i
+    }
+    {
+      if (NR > 1) raw=raw "\n"
+      raw=raw $0
+    }
+    END {
+      depth=0
+      matches=0
+      for (i=1; i<=length(raw); i++) {
+        c=substr(raw, i, 1)
+        if (c == "{") {
+          depth++
+        } else if (c == "}") {
+          depth--
+        } else if (c == "\"") {
+          if (!string_at(i)) exit 42
+          key=parsed_string
+          key_end=parsed_end
+          separator=nonspace(key_end + 1)
+          if (depth == 1 && key == wanted &&
+              substr(raw, separator, 1) == ":") {
+            value_start=nonspace(separator + 1)
+            if (!string_at(value_start)) exit 42
+            value=parsed_string
+            matches++
+          }
+          i=key_end
+        }
+      }
+      if (matches != 1) exit 42
+      print value
+    }
+  '
+}
+
+json_top_level_object() {
+  jtlo_key=$1
+  awk -v wanted="$jtlo_key" '
+    {
+      if (NR > 1) raw=raw "\n"
+      raw=raw $0
+    }
+    END {
+      length_raw=length(raw)
+      depth=0
+      in_string=0
+      escaped=0
+      matches=0
+      for (i=1; i<=length_raw; i++) {
+        c=substr(raw, i, 1)
+        if (in_string) {
+          if (escaped) escaped=0
+          else if (c == "\\") escaped=1
+          else if (c == "\"") in_string=0
+          continue
+        }
+        if (c == "{") {
+          depth++
+          continue
+        }
+        if (c == "}") {
+          depth--
+          continue
+        }
+        if (c != "\"" || depth != 1) continue
+
+        key=""
+        key_escaped=0
+        for (j=i+1; j<=length_raw; j++) {
+          d=substr(raw, j, 1)
+          if (key_escaped) {
+            key=key d
+            key_escaped=0
+          } else if (d == "\\") {
+            key_escaped=1
+          } else if (d == "\"") {
+            break
+          } else {
+            key=key d
+          }
+        }
+        if (j > length_raw) exit 42
+        k=j+1
+        while (substr(raw, k, 1) ~ /[[:space:]]/) k++
+        if (substr(raw, k, 1) != ":") {
+          i=j
+          continue
+        }
+        k++
+        while (substr(raw, k, 1) ~ /[[:space:]]/) k++
+        if (key != wanted) {
+          i=j
+          continue
+        }
+        if (substr(raw, k, 1) != "{") exit 42
+
+        object_start=k
+        object_depth=0
+        object_string=0
+        object_escaped=0
+        closed=0
+        for (l=k; l<=length_raw; l++) {
+          d=substr(raw, l, 1)
+          if (object_string) {
+            if (object_escaped) object_escaped=0
+            else if (d == "\\") object_escaped=1
+            else if (d == "\"") object_string=0
+          } else if (d == "\"") {
+            object_string=1
+          } else if (d == "{") {
+            object_depth++
+          } else if (d == "}") {
+            object_depth--
+            if (object_depth == 0) {
+              object=substr(raw, object_start, l - object_start + 1)
+              matches++
+              closed=1
+              i=l
+              break
+            }
+          }
+        }
+        if (!closed) exit 42
+      }
+      if (matches != 1) exit 42
+      print object
+    }
+  '
+}
+
+json_top_level_keys() {
+  awk '
+    {
+      if (NR > 1) object=object "\n"
+      object=object $0
+    }
+    END {
+      depth=0
+      roots=0
+      invalid=0
+      for (i=1; i<=length(object); i++) {
+        c=substr(object, i, 1)
+        if (depth == 0 && c ~ /[[:space:]]/) {
+          continue
+        } else if (depth == 0 && c == "{" && roots == 0) {
+          depth++
+          roots++
+        } else if (depth == 0) {
+          invalid=1
+        } else if (c == "{") {
+          depth++
+        } else if (c == "}") {
+          depth--
+          if (depth < 0) invalid=1
+        } else if (c == "\"") {
+          key=""
+          key_escaped=0
+          for (j=i+1; j<=length(object); j++) {
+            d=substr(object, j, 1)
+            if (key_escaped) {
+              key=key d
+              key_escaped=0
+            } else if (d == "\\") {
+              key_escaped=1
+            } else if (d == "\"") {
+              break
+            } else {
+              key=key d
+            }
+          }
+          if (j > length(object)) exit 42
+          k=j+1
+          while (substr(object, k, 1) ~ /[[:space:]]/) k++
+          if (depth == 1 && substr(object, k, 1) == ":") print key
+          i=j
+        }
+      }
+      if (invalid || roots != 1 || depth != 0) exit 42
+    }
+  '
+}
+
+json_top_level_tools() {
+  json_top_level_object tools | json_top_level_keys
+}
+
+codex_reauthentication_required() {
+  crr_matches=0
+  while IFS= read -r crr_message; do
+    crr_method=$(printf '%s\n' "$crr_message" |
+      json_top_level_string method) || continue
+    [ "$crr_method" = mcpServer/startupStatus/updated ] || continue
+    crr_params=$(printf '%s\n' "$crr_message" |
+      json_top_level_object params) || continue
+    crr_name=$(printf '%s\n' "$crr_params" |
+      json_top_level_string name) || continue
+    crr_reason=$(printf '%s\n' "$crr_params" |
+      json_top_level_string failureReason) || continue
+    [ "$crr_name" = atlassian ] &&
+      [ "$crr_reason" = reauthenticationRequired ] || continue
+    crr_matches=$((crr_matches + 1))
+  done
+  [ "$crr_matches" -gt 0 ]
+}
+
+codex_http_auth_required() {
+  awk '
+    {
+      line=$0
+      sub(/^[[:space:]]*/, "", line)
+      sub(/[[:space:]]*$/, "", line)
+      if (line ~ /^server atlassian:/ &&
+          (line ~ /unauthorized_client/ ||
+           line ~ /401 Unauthorized/ ||
+           line ~ /403 Forbidden/)) found=1
+    }
+    END { exit !found }
+  '
+}
+
+inventory_has_tool() {
+  iht_tool=$1
+  case "$CAPABILITY_INVENTORY_FORMAT" in
+    json)
+      printf '%s\n' "$CAPABILITY_INVENTORY" |
+        grep -Fx "$iht_tool" >/dev/null
+      ;;
+    text)
+      printf '%s\n' "$CAPABILITY_INVENTORY" |
+        awk -v tool="$iht_tool" '
+          {
+            count=split($0, words, /[^A-Za-z0-9_]/)
+            for (i=1; i<=count; i++) if (words[i] == tool) found=1
+          }
+          END { exit !found }
+        '
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+connector_inventory() {
+  ci_client=$1
+  CAPABILITY_INVENTORY=
+  CAPABILITY_INVENTORY_COMPLETE=0
+  CAPABILITY_INVENTORY_FORMAT=
+  CAPABILITY_TOOLSET=UNAVAILABLE
+  case "$ci_client" in
+    codex)
+      connector_probe codex || return 1
+      ci_record=$(printf '%s\n' "$CONNECTOR_PROBE_OUTPUT" |
+        codex_atlassian_record) || return 1
+      CAPABILITY_INVENTORY=$(printf '%s\n' "$ci_record" |
+        json_top_level_tools) || return 1
+      CAPABILITY_INVENTORY_FORMAT=json
+      CAPABILITY_INVENTORY_COMPLETE=1
+      ;;
+    claude)
+      CAPABILITY_INVENTORY_COMPLETE=0
+      ;;
+    cursor)
+      connector_probe cursor || return 1
+      [ "$CONNECTOR_PROBE_TOOLS_OK" -eq 1 ] &&
+        [ -n "$CONNECTOR_PROBE_TOOLS" ] || return 1
+      CAPABILITY_INVENTORY=$CONNECTOR_PROBE_TOOLS
+      CAPABILITY_INVENTORY_FORMAT=text
+      CAPABILITY_INVENTORY_COMPLETE=1
+      ;;
+  esac
+  [ "$CAPABILITY_INVENTORY_COMPLETE" -eq 1 ] || return 0
+  CAPABILITY_TOOLSET=
+  for ci_tool in \
+    createConfluencePage createJiraIssue getConfluencePage getJiraIssue
+  do
+    if inventory_has_tool "$ci_tool"; then
+      if [ -n "$CAPABILITY_TOOLSET" ]; then
+        CAPABILITY_TOOLSET=$CAPABILITY_TOOLSET,$ci_tool
+      else
+        CAPABILITY_TOOLSET=$ci_tool
+      fi
+    fi
+  done
+  [ -n "$CAPABILITY_TOOLSET" ] || CAPABILITY_TOOLSET=EMPTY
+}
+
+connector_health() {
+  ch_client=$1
+  connector_probe "$ch_client" || return 2
+  case "$ch_client" in
+    codex)
+      if printf '%s\n' "$CONNECTOR_PROBE_OUTPUT" |
+        codex_reauthentication_required
       then
         return 1
       fi
-      ch_status=$(
-        printf '%s\n' "$ch_output" |
-          sed 's/},{"name":/}\
-{"name":/g' |
-          awk '/"name":"atlassian"/ && /"authStatus":/ { print; exit }'
-      )
-      case "$ch_status" in
-        *'"authStatus":"notLoggedIn"'*) return 1 ;;
-        *'"authStatus":"oAuth"'*)
-          case "$ch_status" in
-            *'"tools":{}'*) return 2 ;;
-            *'"tools":{'*) return 0 ;;
-            *) return 2 ;;
-          esac
+      if printf '%s\n' "$CONNECTOR_PROBE_OUTPUT" |
+        codex_http_auth_required
+      then
+        return 1
+      fi
+      ch_record=$(printf '%s\n' "$CONNECTOR_PROBE_OUTPUT" |
+        codex_atlassian_record) || return 2
+      ch_auth=$(printf '%s\n' "$ch_record" |
+        json_top_level_string authStatus) || return 2
+      case "$ch_auth" in
+        notLoggedIn) return 1 ;;
+        oAuth)
+          ch_tools=$(printf '%s\n' "$ch_record" |
+            json_top_level_tools) || return 2
+          [ -n "$ch_tools" ] && return 0
+          return 2
           ;;
         *) return 2 ;;
       esac
       ;;
     claude)
-      ch_output=$(claude mcp list 2>&1) || :
-      case "$ch_output" in
-        *atlassian*Connected*|*atlassian*connected*) return 0 ;;
-        *atlassian*auth*|*atlassian*Auth*|*atlassian*login*|*atlassian*401*|*atlassian*403*) return 1 ;;
+      case "$CONNECTOR_PROBE_STATE" in
+        connected) return 0 ;;
+        *auth*|*login*|*401*|*403*) return 1 ;;
         *) return 2 ;;
       esac
       ;;
     cursor)
-      ch_output=$(cursor-agent mcp list 2>&1) || :
-      case "$ch_output" in
-        *atlassian*ready*|*atlassian*Ready*|*atlassian*connected*|*atlassian*Connected*)
-          ch_output=$(cursor-agent mcp list-tools atlassian 2>&1) && return 0
-          case "$ch_output" in
+      case "$CONNECTOR_PROBE_STATE" in
+        ready|connected)
+          [ "$CONNECTOR_PROBE_TOOLS_OK" -eq 0 ] || return 0
+          case "$CONNECTOR_PROBE_TOOLS" in
             *auth*|*Auth*|*login*|*401*|*403*) return 1 ;;
             *) return 2 ;;
           esac
           ;;
-        *atlassian*auth*|*atlassian*Auth*|*atlassian*login*|*atlassian*401*|*atlassian*403*) return 1 ;;
+        *auth*|*login*|*401*|*403*) return 1 ;;
         *) return 2 ;;
       esac
       ;;
@@ -911,8 +1757,109 @@ connector_health() {
 run_oauth() {
   case "$1" in
     codex) codex mcp login atlassian ;;
-    claude) claude mcp login atlassian ;;
+    claude)
+      printf '%s\n' 'In Claude: /mcp -> atlassian -> Authenticate'
+      claude
+      ;;
     cursor) cursor-agent mcp login atlassian ;;
+  esac || return $?
+  CONNECTOR_PROBE_CLIENT=
+  CONNECTOR_PROBE_OUTPUT=
+  CONNECTOR_PROBE_STATUS=
+  CONNECTOR_PROBE_STATE=
+  CONNECTOR_PROBE_TOOLS=
+  CONNECTOR_PROBE_TOOLS_OK=0
+}
+
+runtime_capability() {
+  rc_capability=$1
+  CAPABILITY_STATE=UNKNOWN
+  case "$rc_capability" in
+    jira-issue-write)
+      if [ "$CAPABILITY_INVENTORY_COMPLETE" -eq 1 ] &&
+         { ! inventory_has_tool createJiraIssue ||
+           ! inventory_has_tool getJiraIssue; }
+      then
+        CAPABILITY_STATE=UNSUPPORTED
+      fi
+      ;;
+    confluence-page-parent-write)
+      if [ "$CAPABILITY_INVENTORY_COMPLETE" -eq 1 ] &&
+         { ! inventory_has_tool createConfluencePage ||
+           ! inventory_has_tool getConfluencePage; }
+      then
+        CAPABILITY_STATE=UNSUPPORTED
+      fi
+      ;;
+    jira-board-verification|confluence-folder-parent-write)
+      CAPABILITY_STATE=UNKNOWN
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+compatibility_capability() {
+  cc_client=$1 cc_capability=$2
+  cc_file=$RELEASE_DIR/runtime/compatibility/atlassian.tsv
+  [ "$(sed -n '1p' "$cc_file" 2>/dev/null)" = '# schema=1' ] || return 1
+  cc_executable=$(client_executable "$cc_client")
+  cc_version=$("$cc_executable" --version 2>/dev/null |
+    awk 'NR == 1 {
+      for (i=1; i<=NF; i++) {
+        if ($i ~ /^v?[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$/) {
+          sub(/^v/, "", $i)
+          print $i
+          exit
+        }
+      }
+    }') || return 1
+  [ -n "$cc_version" ] || return 1
+  awk -F '\t' \
+    -v client="$cc_client" \
+    -v version="$cc_version" \
+    -v endpoint="$ATLASSIAN_MCP_URL" \
+    -v toolset="$CAPABILITY_TOOLSET" \
+    -v capability="$cc_capability" '
+      /^[[:space:]]*$/ || /^#/ { next }
+      {
+        if (NF != 7 ||
+            $1 !~ /^(codex|claude|cursor)$/ ||
+            $2 !~ /^[A-Za-z0-9._+-]+$/ ||
+            $3 == "" ||
+            $4 == "" ||
+            $5 !~ /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/ ||
+            $6 !~ /^[a-z][a-z0-9-]+$/ ||
+            $7 !~ /^(SUPPORTED|UNSUPPORTED)$/) invalid=1
+        if ($1 == client &&
+            $2 == version &&
+            $3 == endpoint &&
+            $4 == toolset &&
+            $6 == capability) {
+          matches++
+          result=$7
+        }
+      }
+      END {
+        if (invalid || matches > 1) exit 42
+        if (matches == 1) print result
+        else exit 1
+      }
+    ' "$cc_file"
+}
+
+resolve_capability() {
+  rcap_client=$1 rcap_capability=$2
+  connector_inventory "$rcap_client" || {
+    CAPABILITY_STATE=UNKNOWN
+    return 0
+  }
+  runtime_capability "$rcap_capability" || return 1
+  [ "$CAPABILITY_STATE" = UNKNOWN ] || return 0
+  rcap_compat=$(compatibility_capability \
+    "$rcap_client" "$rcap_capability") || rcap_compat=
+  case "$rcap_compat" in
+    SUPPORTED|UNSUPPORTED) CAPABILITY_STATE=$rcap_compat ;;
+    *) CAPABILITY_STATE=UNKNOWN ;;
   esac
 }
 
@@ -964,7 +1911,180 @@ auth_required() {
     "Client: $ar_client" \
     'Authentication: AUTH_REQUIRED' \
     "Remediation: $(oauth_command "$ar_client")"
+  [ "$ar_client" != claude ] ||
+    printf '%s\n' 'In Claude: /mcp -> atlassian -> Authenticate'
   die ATLASSIAN_AUTH_REQUIRED
+}
+
+require_operation_routing() {
+  ror_operation=$1
+  case "$ror_operation" in
+    jira-write)
+      [ -n "$ROUTE_JIRA_PROJECT_KEY" ] ||
+        die ROUTING_REQUIRED 'JIRA_PROJECT_KEY is required for jira-write'
+      PREFLIGHT_CAPABILITY=jira-issue-write
+      ;;
+    jira-board-verify)
+      [ -n "$ROUTE_JIRA_PROJECT_KEY" ] ||
+        die ROUTING_REQUIRED 'JIRA_PROJECT_KEY is required for jira-board-verify'
+      [ -n "$ROUTE_JIRA_BOARD_ID" ] ||
+        die ROUTING_REQUIRED 'JIRA_BOARD_ID is required for jira-board-verify'
+      PREFLIGHT_CAPABILITY=jira-board-verification
+      ;;
+    confluence-write)
+      [ -n "$ROUTE_CONFLUENCE_SPACE_KEY" ] &&
+        [ -n "$ROUTE_CONFLUENCE_ROOT_CONTENT_ID" ] &&
+        [ -n "$ROUTE_CONFLUENCE_ROOT_CONTENT_TYPE" ] ||
+        die ROUTING_REQUIRED 'Confluence space, root content ID, and root type are required'
+      case "$ROUTE_CONFLUENCE_ROOT_CONTENT_TYPE" in
+        page) PREFLIGHT_CAPABILITY=confluence-page-parent-write ;;
+        folder) PREFLIGHT_CAPABILITY=confluence-folder-parent-write ;;
+      esac
+      ;;
+    cross-repo-write)
+      die ROUTING_REQUIRED \
+        'Centrally reviewed exact counterpart and workflow mapping are required for cross-repo-write'
+      ;;
+    *) usage >&2; exit 2 ;;
+  esac
+}
+
+print_preflight_result() {
+  ppr_client=$1 ppr_operation=$2
+  printf '%s\n' \
+    "Client: $ppr_client" \
+    "Routing baseline commit: $ROUTING_BASELINE_COMMIT" \
+    "Profile: $ROUTE_PROFILE" \
+    "Integration profile: $ROUTE_INTEGRATION_PROFILE" \
+    "Cross-repository policy: $ROUTE_CROSS_REPO_POLICY" \
+    "Operation: $ppr_operation"
+  case "$ppr_operation" in
+    jira-write)
+      printf '%s\n' "Jira project: $ROUTE_JIRA_PROJECT_KEY"
+      ;;
+    jira-board-verify)
+      printf '%s\n' \
+        "Jira project: $ROUTE_JIRA_PROJECT_KEY" \
+        "Jira board: $ROUTE_JIRA_BOARD_ID"
+      ;;
+    confluence-write)
+      printf '%s\n' \
+        "Confluence space: $ROUTE_CONFLUENCE_SPACE_KEY" \
+        "Confluence root content: $ROUTE_CONFLUENCE_ROOT_CONTENT_ID" \
+        "Confluence root type: $ROUTE_CONFLUENCE_ROOT_CONTENT_TYPE"
+      ;;
+  esac
+  printf '%s\n' \
+    "Capability: $PREFLIGHT_CAPABILITY" \
+    "Capability state: $CAPABILITY_STATE" \
+    'Result: PASS'
+}
+
+cmd_preflight() {
+  pf_repo=$1
+  shift
+  pf_client= pf_operation= pf_non_interactive=0
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --client)
+        [ -z "$pf_client" ] && [ "$#" -ge 2 ] ||
+          { usage >&2; exit 2; }
+        case "$2" in
+          codex|claude|cursor) pf_client=$2 ;;
+          *) usage >&2; exit 2 ;;
+        esac
+        shift 2
+        ;;
+      --operation)
+        [ -z "$pf_operation" ] && [ "$#" -ge 2 ] ||
+          { usage >&2; exit 2; }
+        pf_operation=$2
+        shift 2
+        ;;
+      --non-interactive)
+        [ "$pf_non_interactive" -eq 0 ] || { usage >&2; exit 2; }
+        pf_non_interactive=1
+        shift
+        ;;
+      *) usage >&2; exit 2 ;;
+    esac
+  done
+  [ -n "$pf_client" ] && [ -n "$pf_operation" ] ||
+    { usage >&2; exit 2; }
+
+  verify_registration "$pf_repo"
+  [ -f "$RELEASE_DIR/runtime/routing-schema" ] &&
+    [ "$(sed -n '1p' "$RELEASE_DIR/runtime/routing-schema")" = 1 ] ||
+    die GOVERNANCE_NOT_READY \
+      'Update the repository to a release with runtime/routing-schema=1 before preflight'
+  resolve_routing
+  case "$ROUTING_STATE" in
+    ROUTING_ACTIVE) ;;
+    ROUTING_REQUIRED) routing_cleanup; die ROUTING_REQUIRED ;;
+    ROUTING_CHANGE_PENDING) routing_cleanup; die ROUTING_CHANGE_PENDING ;;
+    ROUTING_INVALID) routing_cleanup; die ROUTING_INVALID ;;
+    *) routing_cleanup; die ROUTING_VERIFICATION_REQUIRED ;;
+  esac
+  parse_routing "$ROUTING_BASELINE_FILE" || {
+    routing_cleanup
+    die ROUTING_INVALID
+  }
+  require_operation_routing "$pf_operation"
+
+  require_client "$pf_client"
+  pf_connector=0
+  connector_state "$pf_client" || pf_connector=$?
+  [ "$pf_connector" -eq 0 ] || {
+    routing_cleanup
+    die CONNECTOR_MISSING \
+      "Missing compatible Atlassian connector for $pf_client"
+  }
+  pf_health=0
+  connector_health "$pf_client" || pf_health=$?
+  if [ "$pf_health" -eq 1 ]; then
+    pf_interactive=0
+    if [ "$pf_non_interactive" -eq 0 ] && [ -t 0 ] && [ -t 1 ]; then
+      pf_interactive=1
+    fi
+    if [ "$pf_interactive" -eq 1 ]; then
+      printf '%s\n' "Client: $pf_client" 'Authentication: AUTH_REQUIRED'
+      printf 'Start OAuth now? [y/N] '
+      IFS= read -r pf_answer || pf_answer=
+      case "$pf_answer" in
+        y|Y|yes|YES)
+          run_oauth "$pf_client" || {
+            routing_cleanup
+            auth_required "$pf_client"
+          }
+          connector_health "$pf_client" || {
+            routing_cleanup
+            auth_required "$pf_client"
+          }
+          ;;
+        *) routing_cleanup; auth_required "$pf_client" ;;
+      esac
+    else
+      routing_cleanup
+      auth_required "$pf_client"
+    fi
+  elif [ "$pf_health" -ne 0 ]; then
+    routing_cleanup
+    die GOVERNANCE_NOT_READY 'Cannot verify Atlassian connector health'
+  fi
+
+  if [ -n "$PREFLIGHT_CAPABILITY" ]; then
+    resolve_capability "$pf_client" "$PREFLIGHT_CAPABILITY"
+    if [ "$CAPABILITY_STATE" != SUPPORTED ]; then
+      printf '%s\n' \
+        "Operation: $pf_operation" \
+        "Capability: $PREFLIGHT_CAPABILITY" \
+        "Capability state: $CAPABILITY_STATE"
+      routing_cleanup
+      die CONNECTOR_CAPABILITY_REQUIRED
+    fi
+  fi
+  print_preflight_result "$pf_client" "$pf_operation"
+  routing_cleanup
 }
 
 cmd_setup_connectors() {
@@ -1067,6 +2187,43 @@ cmd_doctor() {
 cmd_context() {
   verify_registration "$1"
   cat "$RELEASE_DIR/runtime/entrypoint.md" || die GOVERNANCE_NOT_READY 'Cannot read runtime entrypoint'
+  [ -e "$RELEASE_DIR/runtime/routing-schema" ] || return 0
+  resolve_routing
+  printf '%s\n' \
+    "Routing: $ROUTING_STATE" \
+    "Routing baseline commit: ${ROUTING_BASELINE_COMMIT:-UNVERIFIED}"
+  render_routing_context
+  case "$ROUTING_STATE" in
+    ROUTING_ACTIVE) printf '%s\n' 'External routing-dependent writes: PREFLIGHT_REQUIRED' ;;
+    *) printf '%s\n' 'External routing-dependent writes: BLOCKED' ;;
+  esac
+  routing_cleanup
+}
+
+render_routing_context() {
+  cat "$RELEASE_DIR/runtime/rules/general.md" ||
+    die GOVERNANCE_NOT_READY 'Cannot read general runtime rules'
+  [ "$ROUTING_BASELINE_PRESENT" -eq 1 ] || return 0
+  case "$ROUTING_STATE" in
+    ROUTING_ACTIVE|ROUTING_CHANGE_PENDING) ;;
+    *) return 0 ;;
+  esac
+  printf '%s\n' \
+    "Profile: $ROUTE_PROFILE" \
+    "Dependency state: $DEPENDENCY_STATE" \
+    "Jira project: ${ROUTE_JIRA_PROJECT_KEY:-ROUTING_REQUIRED}" \
+    "Jira board: ${ROUTE_JIRA_BOARD_ID:-NOT_DECLARED}" \
+    "Confluence space: ${ROUTE_CONFLUENCE_SPACE_KEY:-ROUTING_REQUIRED}" \
+    "Confluence root content: ${ROUTE_CONFLUENCE_ROOT_CONTENT_ID:-ROUTING_REQUIRED}" \
+    "Confluence root type: ${ROUTE_CONFLUENCE_ROOT_CONTENT_TYPE:-ROUTING_REQUIRED}" \
+    "Integration profile: $ROUTE_INTEGRATION_PROFILE" \
+    "Cross-repository policy: $ROUTE_CROSS_REPO_POLICY"
+  cat "$RELEASE_DIR/runtime/profiles/$ROUTE_PROFILE.md" ||
+    die GOVERNANCE_NOT_READY 'Cannot read repository profile'
+  if [ "$ROUTE_INTEGRATION_PROFILE" != none ]; then
+    cat "$RELEASE_DIR/runtime/integrations/$ROUTE_INTEGRATION_PROFILE.md" ||
+      die GOVERNANCE_NOT_READY 'Cannot read integration profile'
+  fi
 }
 
 cmd_show() {
@@ -1099,6 +2256,13 @@ main() {
     doctor)
       { [ "$#" -eq 2 ] || [ "$#" -eq 4 ]; } || { usage >&2; exit 2; }
       cmd_doctor "$2" "${3:-}" "${4:-}"
+      ;;
+    preflight)
+      [ "$#" -ge 6 ] || { usage >&2; exit 2; }
+      shift
+      pf_repo=$1
+      shift
+      cmd_preflight "$pf_repo" "$@"
       ;;
     context) [ "$#" -eq 2 ] || { usage >&2; exit 2; }; cmd_context "$2" ;;
     show) [ "$#" -ge 3 ] && [ "$#" -le 4 ] || { usage >&2; exit 2; }; cmd_show "$2" "$3" "${4:-}" ;;

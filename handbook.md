@@ -15,8 +15,9 @@ trước khi đọc hoặc ghi GitHub, Jira hay Confluence.
 | Confluence Backend | Space [`Beroka-backend`](https://beroka.atlassian.net/wiki/spaces/Berokaback/overview) |
 | Confluence Frontend | Space [`Beroka-frontend`](https://beroka.atlassian.net/wiki/spaces/Berokafron) |
 
-Read access tới cả `BB` và `BF` là bắt buộc cho counterpart discovery. Write
-access chỉ dùng trong project/repository/space thuộc request đã xác nhận. Nếu
+Read access chỉ cần cho selected profile, requested operation và selected integration profile.
+BE–FE targets chỉ áp dụng khi reviewed beroka-be-fe integration profile được chọn và operation yêu cầu.
+Write access chỉ dùng trong project/repository/space thuộc request đã xác nhận. Nếu
 Frontend repository chưa resolve thành một exact URL, agent dừng external write
 và hỏi developer; không tự chọn từ organization list.
 
@@ -45,11 +46,14 @@ Windows PowerShell không thuộc V1.
   repository; package không chứa credentials.
 - `$HOME/.local/bin` phải có trong `PATH` sau khi `install` để gọi
   `beroka-governance`.
-- Dùng một annotated SemVer tag đã được review và publish. `v1.0.0` chưa được
-  publish cho đến khi release gate hoàn tất và coordinator cho phép.
-- Repository đích là Git repository có `origin` GitHub chính xác. Review diff
-  của repository đích bằng PR trước khi merge; không đăng ký trực tiếp vào
-  production branch chỉ để thử nghiệm.
+- Dùng một annotated SemVer tag đã được review và publish. `v1.1.0` là release
+  candidate hiện tại; chỉ publish sau khi release gate hoàn tất và coordinator
+  cho phép. `v1.0.0` là immutable legacy test sample; không push, move hoặc
+  reuse tag đó cho feature này.
+- Repository đích là Git repository có đúng một canonical GitHub remote khớp
+  repository identity. Tên local remote không bắt buộc là `origin`. Review
+  diff của repository đích bằng PR trước khi merge; không đăng ký trực tiếp
+  vào production branch chỉ để thử nghiệm.
 - macOS, WSL và fresh-session checks của Codex IDE, Claude Code, Cursor vẫn
   **UNVERIFIED** cho đến khi release-gate evidence được ghi nhận. Linux
   automated shell smoke không thay thế các manual checks này.
@@ -60,7 +64,7 @@ Bootstrap checkout chỉ là tạm thời. `install` tạo local pinned checkout
 user-level CLI; không sửa application repository.
 
 ```bash
-release=v1.0.0
+release=v1.1.0
 client=codex # codex | claude | cursor
 bootstrap_dir=$(mktemp -d "${TMPDIR:-/tmp}/beroka-governance-bootstrap.XXXXXX")
 git clone --depth 1 --single-branch --branch "$release" \
@@ -103,7 +107,8 @@ trả `ATLASSIAN_AUTH_REQUIRED` và in đúng một remediation command:
 
 ```bash
 codex mcp login atlassian
-claude mcp login atlassian
+claude
+# Trong Claude: /mcp -> atlassian -> Authenticate
 cursor-agent mcp login atlassian
 ```
 
@@ -114,14 +119,14 @@ nhận, in, log hay lưu Atlassian developer API token.
 
 ```bash
 repo=/srv/beroka/backend
-release=v1.0.0
+release=v1.1.0
 
 beroka-governance register "$repo" --version "$release"
 git -C "$repo" diff -- .beroka-governance.lock AGENTS.md CLAUDE.md .cursor/rules/beroka-governance.mdc
 beroka-governance doctor "$repo"
 beroka-governance doctor "$repo" --client codex
 
-beroka-governance update "$repo" --to v1.1.0
+beroka-governance update "$repo" --to "$release"
 beroka-governance rollback "$repo" --to "$release"
 beroka-governance unregister "$repo"
 beroka-governance uninstall
@@ -132,6 +137,59 @@ merge application-repository diff trước khi package version mới có hiệu 
 sau đó mở **fresh agent session**. `unregister` chỉ xóa managed markers, lock và
 Cursor rule; `uninstall` chỉ xóa local package khi registry không còn repository
 đăng ký. `uninstall --force` cũng không sửa application repositories.
+
+### Repository routing lifecycle
+
+`context` load general rules cùng **selected profile** và **selected integration
+profile**; không load mọi Backend, Frontend và standalone profile. Khi chưa có
+baseline routing đã xác minh, agent vẫn có thể làm source-only work, nhưng mọi
+external write phụ thuộc routing phải chờ `preflight` mới ngay trước operation.
+Routing chỉ lấy từ default branch baseline vừa fetch, không lấy từ local branch,
+index hay worktree.
+
+Repository standalone mới dùng file `.beroka-governance.conf` strict sau:
+
+```text
+SCHEMA_VERSION=1
+PROFILE=standalone
+JIRA_PROJECT_KEY=APP
+CONFLUENCE_SPACE_KEY=APP
+CONFLUENCE_ROOT_CONTENT_ID=123456
+CONFLUENCE_ROOT_CONTENT_TYPE=page
+INTEGRATION_PROFILE=none
+CROSS_REPO_POLICY=explicit-only
+```
+
+Backend profile được review dùng schema sau; `JIRA_BOARD_ID` optional và chỉ
+cần cho board/backlog/sprint verification:
+
+```text
+SCHEMA_VERSION=1
+PROFILE=backend
+JIRA_PROJECT_KEY=BB
+JIRA_BOARD_ID=34
+CONFLUENCE_SPACE_KEY=Berokaback
+CONFLUENCE_ROOT_CONTENT_ID=123456
+CONFLUENCE_ROOT_CONTENT_TYPE=page
+INTEGRATION_PROFILE=beroka-be-fe
+CROSS_REPO_POLICY=profile-controlled
+```
+
+`JIRA_BOARD_ID` là routing data, không bao giờ chứng minh Board capability.
+
+Lifecycle onboarding:
+
+1. Không có trusted hoặc local routing thì `ROUTING_REQUIRED`.
+2. Thêm file trên branch đầu tiên thì `ROUTING_CHANGE_PENDING` cho đến khi PR
+   routing được merge; local routing không được dùng cho external write.
+3. PR đầu tiên phải tham chiếu Jira issue được tạo thủ công hoặc issue trong
+   **central governance onboarding project**, độc lập với pending routing.
+4. Branch, commit, push, current-repository Issue và PR vẫn được phép khi
+   routing pending.
+5. Sau merge, mở fresh session rồi chạy `context` mới và `preflight` mới trước
+   external write phụ thuộc routing.
+6. Khi offline, `context` chỉ block routing-dependent external writes;
+   source-only work vẫn tiếp tục.
 
 ### Lock và thin entrypoints
 
@@ -145,16 +203,17 @@ templates vào application repository:
 
 Entrypoints mỏng (thin) chỉ route agent tới release đã pin. Khi mở session mới,
 Codex, Claude Code hoặc Cursor đọc entrypoint theo client, xác minh lock và
-`origin`, rồi chạy `beroka-governance context` để load runtime English từ đúng
-release. Repository chưa register không được package áp dụng.
+canonical remote đã discover, rồi chạy `beroka-governance context` để load
+runtime English từ đúng release. Repository chưa register không được package
+áp dụng.
 
 ## Quyền tối thiểu
 
 | Provider | Read bắt buộc | Write chỉ khi request cần | Không yêu cầu mặc định |
 | --- | --- | --- | --- |
-| GitHub | Repositories, Issues, PRs, checks | Create/update Issue, comment, branch/PR trong owned scope | Repository admin, secret management, destructive actions |
-| Jira | Browse `BB` và `BF`, board/backlog, users, links | Create/edit/assign/link/transition item trong confirmed project | Jira admin, sửa board filter/workflow/scheme |
-| Confluence | Đọc hai team spaces và shared Integration Hub | Tạo/update Folder/page trong confirmed owning space | Space admin, delete/move hàng loạt |
+| GitHub | Current repository; exact counterpart chỉ khi selected integration/operation cần | Create/update Issue, comment, branch/PR trong owned scope | Repository admin, secret management, destructive actions |
+| Jira | Project của selected profile; board/backlog chỉ khi operation yêu cầu và Board capability được chứng minh | Create/edit/assign/link/transition item trong confirmed project | Jira admin, sửa board filter/workflow/scheme |
+| Confluence | Space/root của selected profile; shared Integration Hub chỉ khi selected integration/operation cần | Tạo/update Folder/page trong confirmed owning space | Space admin, delete/move hàng loạt |
 
 Permission không được mở rộng chỉ để làm preflight pass. Nếu action thực tế cần
 quyền cao hơn, agent báo exact target/action và chờ người có authority.
@@ -186,8 +245,10 @@ Atlassian dùng user-scoped remote MCP và OAuth:
 beroka-governance setup-connectors --client claude
 ```
 
-Nếu cần re-login, remediation là `claude mcp login atlassian`. Package gọi
-Claude Code MCP commands riêng; không giả định chúng giống Codex.
+Nếu cần authenticate lại, package in launch command `claude` và bước trong
+client `/mcp -> atlassian -> Authenticate`. Claude Code không dùng
+`claude mcp login atlassian`; package chỉ dùng `mcp add`, `mcp get`, `mcp list`
+cho setup/health, rồi launch `claude` sau khi developer xác nhận interactive.
 
 GitHub hosted MCP hiện cần GitHub PAT. Export PAT trong shell rồi thêm ở scope
 `local` mặc định; không dùng `--scope project` vì cách đó tạo shared
@@ -239,36 +300,52 @@ cursor-agent mcp list-tools atlassian
 ## Preflight connector bắt buộc
 
 Sau khi `beroka-governance doctor <repo>` trả `Result: PASS`, agent chạy
-`beroka-governance doctor <repo> --client <client>` rồi chạy read-only connector
-preflight trước workflow. Governance-only `doctor <repo>`, `context`, `show`,
-register/update/rollback/remove không kiểm tra hoặc kích hoạt OAuth. GitHub
-authentication vẫn được complete riêng trên từng client.
+`beroka-governance doctor <repo> --client <client>`, `context`, rồi preflight
+mới ngay trước mỗi routing-dependent external write:
 
-1. Xác định authenticated GitHub và Atlassian account.
-2. Đọc metadata của Backend repository; nếu request thuộc FE, resolve và đọc
-   exact Frontend repository.
-3. Đọc project `BB`/board `34` và project `BF`/board `35` để counterpart
-   discovery hoạt động hai chiều.
-4. Đọc hai Confluence spaces và xác nhận agent mở được shared Integration Hub;
-   chỉ kiểm tra Folder/page hierarchy của owning space liên quan.
-5. Chỉ kiểm tra write permission khi request thực tế cần external write; không
-   tạo test record.
+```bash
+beroka-governance preflight <repo> --client <client> --operation jira-write
+```
+
+Preflight xác minh routing trước bất kỳ OAuth prompt nào. Governance-only
+`doctor <repo>`, `context`, `show`, register/update/rollback/remove không kiểm
+tra hoặc kích hoạt OAuth. GitHub authentication vẫn được complete riêng trên
+từng client.
+
+1. Xác định authenticated GitHub và Atlassian account của đúng client được
+   chọn.
+2. Load chỉ general rules, selected `PROFILE` và selected allowlisted
+   `INTEGRATION_PROFILE` từ trusted routing baseline.
+3. Kiểm tra target và capability đúng operation: `jira-write` chỉ cần selected
+   Jira project; `jira-board-verify` chỉ kiểm tra `JIRA_BOARD_ID` khi operation
+   đó được yêu cầu, và Board capability vẫn phải được chứng minh riêng.
+4. `confluence-write` chỉ kiểm tra selected space và root content; Page/Folder
+   hierarchy chỉ theo root type đã route. Mọi `cross-repo-write` hiện trả
+   `ROUTING_REQUIRED` trước khi inspect client vì central release chưa có exact
+   reviewed counterpart/workflow mapping và CLI chưa nhận exact target.
+   `INTEGRATION_PROFILE=none` không trigger BE–FE hoặc cross-repository
+   discovery.
+5. Chỉ kiểm tra write permission khi request thực tế cần routing-dependent
+   external write; không tạo test record.
 
 Kết quả đạt yêu cầu:
 
 ```text
-Integration preflight
-- Client: Codex | Claude Code | Cursor
-- GitHub identity/Backend read: PASS
-- GitHub Frontend target/read: PASS | NOT_REQUIRED | TARGET_REQUIRED
-- Jira identity/BB read: PASS
-- Jira BF read: PASS
-- Confluence Beroka-backend read: PASS
-- Confluence Beroka-frontend read: PASS
-- Shared Integration Hub access: PASS | NOT_REQUIRED | FAIL
-- Required write scope: NOT_REQUIRED | PASS | FAIL
-- Result: PASS | INTEGRATION_BLOCKED
+Client: <selected client>
+Routing baseline commit: <fresh default-branch commit>
+Profile: <selected profile>
+Integration profile: <selected integration profile>
+Cross-repository policy: <selected policy>
+Operation: <requested operation>
+Jira project: <only for jira-write>
+Capability: <only for the requested capability>
+Capability state: SUPPORTED
+Result: PASS
 ```
+
+Output `PASS` trên áp dụng cho operation có exact routed target và reviewed
+capability evidence; `cross-repo-write` hiện không có PASS hoặc “next
+preflight”.
 
 Khi thất bại, agent dừng phần phụ thuộc và báo đúng nguyên nhân:
 
@@ -288,8 +365,9 @@ tại. Sau khi developer sửa kết nối, agent phải chạy lại preflight.
 ## Release gate trước khi publish tag
 
 Tất cả manual gate bên dưới hiện là **UNVERIFIED**. Không được xem source-tree
-smoke trên Linux là bằng chứng thay thế, không được claim `v1.0.0` đã release,
-và không được publish tag trước khi hoàn tất đúng thứ tự này:
+smoke trên Linux là bằng chứng thay thế, không được claim `v1.1.0` đã release,
+và không được publish candidate tag trước khi hoàn tất đúng thứ tự này.
+`v1.0.0` là immutable legacy test sample và không thuộc release gate này.
 
 ### Chạy unpublished candidate trong môi trường cô lập
 
@@ -300,11 +378,11 @@ push tag trong bước này:
 ```bash
 governance_repo=$(git rev-parse --show-toplevel)
 pilot_repo=/exact/path/from/coordinator
-release=v1.0.0
+release=v1.1.0
 
 git -C "$governance_repo" switch main
 git -C "$governance_repo" pull --ff-only origin main
-git -C "$governance_repo" tag -a "$release" -m 'Beroka AI governance package v1.0.0'
+git -C "$governance_repo" tag -a "$release" -m 'Beroka AI governance package v1.1.0'
 ```
 
 Tạo một HOME/XDG/PATH riêng cho candidate. Git rewrite này chỉ nằm trong
@@ -378,7 +456,7 @@ rm -rf "$candidate_root"
       đúng candidate.
 - [ ] **UNVERIFIED** — Coordinator review toàn bộ automated/manual evidence và
       đưa ra authorization rõ ràng cho việc publish annotated tag.
-- [ ] **UNVERIFIED** — Chỉ sau authorization, publish annotated `v1.0.0` từ chính
+- [ ] **UNVERIFIED** — Chỉ sau authorization, publish annotated `v1.1.0` từ chính
       candidate commit đã pass; không move hoặc reuse tag.
 
 Nếu bất kỳ candidate gate nào fail, chỉ xóa local unpublished tag, sửa qua một
@@ -429,7 +507,7 @@ CLI fail closed với các stable result codes sau:
 | `GOVERNANCE_NOT_READY` | Thiếu release hoặc registration hợp lệ; cài release đúng hoặc sửa lock. |
 | `GOVERNANCE_ACCESS_DENIED` | Không đọc được central private repository; kiểm tra Git/GitHub access, không thêm credential vào repo. |
 | `REPOSITORY_NOT_REGISTERED` | Thiếu lock/managed entrypoint hợp lệ; register đúng repository qua reviewed PR. |
-| `REMOTE_MISMATCH` | Git `origin` không khớp `REPOSITORY` trong lock; dùng đúng clone hoặc sửa qua lifecycle CLI. |
+| `REMOTE_MISMATCH` | Canonical remote không khớp `REPOSITORY` trong lock; dùng đúng clone hoặc sửa qua lifecycle CLI. |
 | `VERSION_MISMATCH` | Tag, commit hoặc installed release khác lock; install/pin lại reviewed version. |
 | `ENTRYPOINT_DRIFT` | Managed content bị sửa ngoài CLI; restore/reconcile qua reviewed CLI lifecycle. |
 | `WORKTREE_CONFLICT` | Target entrypoint có uncommitted changes; review, commit hoặc stash thay đổi trước khi chạy lại. |
@@ -437,6 +515,22 @@ CLI fail closed với các stable result codes sau:
 | `CONNECTOR_MISSING` | Atlassian connector thiếu hoặc URL hiện tại xung đột; chạy `setup-connectors --client <client>` và review config. |
 | `ATLASSIAN_AUTH_REQUIRED` | OAuth thiếu, hết hạn hoặc invalid; chạy exact remediation command được in ra. |
 | `PASS` | Governance và, khi có `--client`, connector/authentication health đều đạt. |
+
+Routing và selected-client preflight trả các result sau:
+
+| Result | Remediation |
+| --- | --- |
+| `ROUTING_REQUIRED` | Add exact routing through the reviewed onboarding workflow. |
+| `ROUTING_INVALID` | Fix the strict schema on a branch and merge it. |
+| `ROUTING_CHANGE_PENDING` | Review and merge the routing PR; do not use local routing for writes. |
+| `ROUTING_VERIFICATION_REQUIRED` | Restore authenticated remote access and rerun fresh preflight. |
+| `DEPENDENCY_MISSING` | Install the explicitly selected client/helper. |
+| `CONNECTOR_MISSING` | Run `beroka-governance setup-connectors --client <client>`. |
+| `ATLASSIAN_AUTH_REQUIRED` | Run the exact remediation command printed for the selected client. |
+| `CONNECTOR_CAPABILITY_REQUIRED` | Use a supported operation/client or add a reviewed compatibility record after an isolated pilot. |
+
+`SUPPORTED`, `UNSUPPORTED` và `UNKNOWN` là operation-scoped. Folder và Board
+không bao giờ fallback sang Page, space root, JQL hoặc guessed capability.
 
 ## Tài liệu chính thức
 

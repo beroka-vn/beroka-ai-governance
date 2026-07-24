@@ -68,12 +68,13 @@ tests/
 
 `bin/beroka-governance` is one POSIX shell CLI. It depends only on standard
 POSIX utilities, Git, authenticated access to the private GitHub repository,
-and the explicitly selected client. Cursor setup additionally requires `jq` to
-preserve its user-level MCP JSON. It must not require Python, a daemon, or a new
-package manager.
+and the explicitly selected client. Selected-client
+connector inspection requires `jq` for every selected client; Cursor setup also
+uses it to preserve user-level MCP JSON. It must not require Python, a daemon,
+or a new package manager.
 
-Each release is an immutable annotated SemVer tag. The first package release is
-`v1.0.0`.
+Each release is an immutable annotated SemVer tag. `v1.0.0` is an immutable
+legacy test sample; it is not the routing/preflight release candidate.
 
 ## Developer-machine layout
 
@@ -114,7 +115,7 @@ or execute the lock file.
 The entrypoints contain routing only. They do not duplicate governance rules or
 templates. At session start they require the agent to:
 
-1. resolve the current Git `origin` and match it to `REPOSITORY`;
+1. resolve the canonical GitHub remote and match it to `REPOSITORY`;
 2. read and validate `.beroka-governance.lock`;
 3. verify that the matching local release exists and its commit matches the
    lock;
@@ -180,14 +181,15 @@ browser. Missing, expired, or invalid authentication returns
 
 ```text
 codex mcp login atlassian
-claude mcp login atlassian
+claude
+In Claude: /mcp -> atlassian -> Authenticate
 cursor-agent mcp login atlassian
 ```
 
 The clients are configured through their own supported paths: Codex app-server
 configuration, Claude Code user-scoped MCP commands, and an atomic merge of
-Cursor's user-level MCP JSON. Their OAuth commands are deliberately not
-treated as interchangeable.
+Cursor's user-level MCP JSON. Claude authentication runs through interactive
+`/mcp`, not a Codex-style `mcp login` subcommand.
 
 ### Register
 
@@ -195,10 +197,10 @@ treated as interchangeable.
 beroka-governance register /path/to/repo --version v1.0.0
 ```
 
-Register validates the Git repository, `origin`, installed version, and clean
-state of every target entrypoint. It then creates the lock and merges only
-marker-delimited managed content. It never replaces existing repository rules.
-Running the same command again is idempotent.
+Register validates the Git repository, uniquely discovered canonical remote,
+installed version, and clean state of every target entrypoint. It then creates
+the lock and merges only marker-delimited managed content. It never replaces
+existing repository rules. Running the same command again is idempotent.
 
 ### Doctor
 
@@ -297,7 +299,7 @@ The CLI and agent entrypoints use these stable results:
 | `GOVERNANCE_NOT_READY` | Required release or valid registration is missing |
 | `GOVERNANCE_ACCESS_DENIED` | The central private repository cannot be read |
 | `REPOSITORY_NOT_REGISTERED` | No valid lock or managed entrypoint exists |
-| `REMOTE_MISMATCH` | Current `origin` does not match `REPOSITORY` in the lock |
+| `REMOTE_MISMATCH` | The canonical remote does not match `REPOSITORY` in the lock |
 | `VERSION_MISMATCH` | Installed tag or commit differs from the lock |
 | `ENTRYPOINT_DRIFT` | Managed content was changed outside the CLI |
 | `WORKTREE_CONFLICT` | A target entrypoint has uncommitted changes |
@@ -390,9 +392,10 @@ commit.
 
 ## Initial rollout
 
-Implement and release the package from the central governance repository. Pilot
-`v1.0.0` with one explicitly selected Backend repository before registering
-additional Backend repositories. Frontend rollout remains a later, explicit
+Implement and release the package from the central governance repository.
+`v1.0.0` is an immutable legacy test sample and must not be reused or pushed.
+`v1.1.0` is the current unpublished candidate for one explicitly selected
+Backend pilot repository. Frontend rollout remains a later, explicit
 registration step. Do not bulk-register repositories or add automatic update
 automation during the pilot.
 
