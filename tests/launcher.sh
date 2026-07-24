@@ -24,6 +24,13 @@ assert_contains() {
   esac
 }
 
+assert_not_contains() {
+  case "$1" in
+    *"$2"*) fail "did not expect [$2] in [$1]" ;;
+    *) ;;
+  esac
+}
+
 source_repo=$TEST_ROOT/source
 target_repo=$TEST_ROOT/target
 calls=$TEST_ROOT/calls
@@ -73,6 +80,20 @@ sed \
   -e "s/@RELEASE_COMMIT@/$release_commit/g" \
   "$TEMPLATE" >"$asset"
 
+if output=$(cd "$TEST_ROOT" && sh "$asset" 2>&1); then
+  fail 'launcher accepted a missing client'
+fi
+assert_contains "$output" 'Usage:'
+assert_not_contains "$output" 'Result: REPOSITORY_REQUIRED'
+
+if output=$(cd "$TEST_ROOT" &&
+  sh "$asset" --client invalid --non-interactive 2>&1)
+then
+  fail 'launcher accepted an invalid client'
+fi
+assert_contains "$output" 'Usage:'
+assert_not_contains "$output" 'Result: REPOSITORY_REQUIRED'
+
 if output=$(cd "$target_repo" &&
   sh "$asset" --client codex --client codex 2>&1)
 then
@@ -97,6 +118,22 @@ fi
 assert_contains "$output" 'Result: REMOTE_MISMATCH'
 git -C "$target_repo" remote set-url origin \
   https://github.com/beroka-vn/target.git
+
+git -C "$target_repo" remote rename origin upstream
+: >"$calls"
+output=$(cd "$target_repo" &&
+  sh "$asset" --client codex --non-interactive)
+assert_contains "$output" 'LAUNCHER_NON_INTERACTIVE=PASS'
+git -C "$target_repo" remote add mirror \
+  https://github.com/beroka-vn/target-mirror.git
+if output=$(cd "$target_repo" &&
+  sh "$asset" --client codex --non-interactive 2>&1)
+then
+  fail 'launcher accepted ambiguous GitHub remotes without origin'
+fi
+assert_contains "$output" 'Result: REMOTE_MISMATCH'
+git -C "$target_repo" remote remove mirror
+git -C "$target_repo" remote rename upstream origin
 
 bad_asset=$TEST_ROOT/bootstrap-bad.sh
 sed \

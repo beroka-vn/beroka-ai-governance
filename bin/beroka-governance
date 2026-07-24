@@ -28,6 +28,7 @@ CAPABILITY_INVENTORY= CAPABILITY_INVENTORY_COMPLETE=0
 CAPABILITY_INVENTORY_FORMAT= CAPABILITY_TOOLSET=UNAVAILABLE
 CAPABILITY_STATE= PREFLIGHT_CAPABILITY=
 LOCK_CLIENTS=
+SUPPRESS_PASS_RESULT=0
 
 die() {
   code=$1
@@ -36,6 +37,11 @@ die() {
   printf '%s\n' "Result: $code" >&2
   if [ "$#" -gt 0 ]; then printf '%s\n' "$*" >&2; fi
   exit 1
+}
+
+pass_result() {
+  [ "$SUPPRESS_PASS_RESULT" -eq 1 ] ||
+    printf '%s\n' 'Result: PASS'
 }
 
 usage() {
@@ -757,7 +763,8 @@ cmd_install() {
   activate_release
   activate_cli
   tx_commit
-  printf '%s\n' "Installed: $ci_version" 'Result: PASS'
+  printf '%s\n' "Installed: $ci_version"
+  pass_result
 }
 
 managed_repo_snapshot() {
@@ -857,6 +864,7 @@ cmd_bootstrap() {
   fi
 
   bs_before=$(managed_repo_snapshot "$bs_repo")
+  SUPPRESS_PASS_RESULT=1
   cmd_install "$bs_version"
   [ "$RELEASE_COMMIT" = "$bs_expected_commit" ] ||
     die VERSION_MISMATCH \
@@ -1190,7 +1198,8 @@ cmd_register() {
   if [ "$dry_run" = --dry-run ]; then
     tx_print_actions
     tx_commit
-    printf '%s\n' "Version: $version" 'Result: PASS'
+    printf '%s\n' "Version: $version"
+    pass_result
     return
   fi
 
@@ -1198,7 +1207,8 @@ cmd_register() {
   tx_apply
   apply_registry
   tx_commit
-  printf '%s\n' "Repository: $repository" "Version: $version" 'Result: PASS'
+  printf '%s\n' "Repository: $repository" "Version: $version"
+  pass_result
 }
 
 cmd_repin() {
@@ -1522,13 +1532,58 @@ codex_probe_complete() {
   then
     return 0
   fi
+  cpc_response=$(codex_probe_response "$cpc_file") || return 1
+  cpc_record=$(printf '%s\n' "$cpc_response" |
+    codex_atlassian_record) || return 1
+  cpc_auth=$(printf '%s\n' "$cpc_record" |
+    json_top_level_string authStatus) || return 1
+  case "$cpc_auth" in
+    notLoggedIn) return 0 ;;
+    oAuth)
+      printf '%s\n' "$cpc_record" |
+        json_top_level_tools >/dev/null
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+codex_probe_response() {
   awk '
-    index($0, "\"id\":1") &&
-    (index($0, "\"result\"") || index($0, "\"error\"")) {
-      complete=1
+    /"id"[[:space:]]*:[[:space:]]*1/ &&
+    (/"result"[[:space:]]*:/ || /"error"[[:space:]]*:/) {
+      response=$0
     }
-    END { exit !complete }
-  ' "$cpc_file"
+    END {
+      if (response == "") exit 1
+      print response
+    }
+  ' "$1"
+}
+
+codex_probe_response_count() {
+  awk '
+    /"id"[[:space:]]*:[[:space:]]*1/ &&
+    (/"result"[[:space:]]*:/ || /"error"[[:space:]]*:/) {
+      responses++
+    }
+    END { print responses + 0 }
+  ' "$1"
+}
+
+codex_probe_stop() {
+  cps_pid=$1
+  kill -TERM "$cps_pid" 2>/dev/null || :
+  cps_polls=0
+  while kill -0 "$cps_pid" 2>/dev/null &&
+        [ "$cps_polls" -lt 2 ]
+  do
+    sleep 1
+    cps_polls=$((cps_polls + 1))
+  done
+  if kill -0 "$cps_pid" 2>/dev/null; then
+    kill -KILL "$cps_pid" 2>/dev/null || :
+  fi
+  wait "$cps_pid" 2>/dev/null || :
 }
 
 codex_connector_probe() {
@@ -1543,40 +1598,54 @@ codex_connector_probe() {
 
   codex app-server --stdio <"$ccp_input" >"$ccp_output" 2>&1 &
   ccp_pid=$!
-  exec 3>"$ccp_input" || {
-    kill "$ccp_pid" 2>/dev/null || :
-    wait "$ccp_pid" 2>/dev/null || :
+  exec 3<>"$ccp_input" || {
+    codex_probe_stop "$ccp_pid"
     rm -rf "$ccp_dir"
     return 1
   }
   if ! printf '%s\n' \
     '{"method":"initialize","id":0,"params":{"clientInfo":{"name":"beroka-governance","title":"Beroka Governance","version":"1"}}}' \
     '{"method":"initialized","params":{}}' \
-    '{"method":"mcpServerStatus/list","id":1,"params":{"detail":"toolsAndAuthOnly","limit":100}}' \
     >&3
   then
     exec 3>&-
-    kill "$ccp_pid" 2>/dev/null || :
-    wait "$ccp_pid" 2>/dev/null || :
+    codex_probe_stop "$ccp_pid"
     rm -rf "$ccp_dir"
     return 1
   fi
 
   ccp_elapsed=0
   ccp_complete=0
-  while [ "$ccp_elapsed" -lt 15 ]; do
+  ccp_seen_responses=0
+  printf '%s\n' \
+    '{"method":"mcpServerStatus/list","id":1,"params":{"detail":"toolsAndAuthOnly","limit":100}}' \
+    >&3 || ccp_elapsed=13
+  while [ "$ccp_elapsed" -lt 13 ]; do
+    sleep 1
+    ccp_elapsed=$((ccp_elapsed + 1))
     if codex_probe_complete "$ccp_output"; then
       ccp_complete=1
       break
     fi
-    sleep 1
-    ccp_elapsed=$((ccp_elapsed + 1))
+    ccp_responses=$(codex_probe_response_count "$ccp_output")
+    if [ "$ccp_responses" -gt "$ccp_seen_responses" ]; then
+      ccp_seen_responses=$ccp_responses
+      printf '%s\n' \
+        '{"method":"mcpServerStatus/list","id":1,"params":{"detail":"toolsAndAuthOnly","limit":100}}' \
+        >&3 || break
+    fi
   done
 
   exec 3>&-
-  kill "$ccp_pid" 2>/dev/null || :
-  wait "$ccp_pid" 2>/dev/null || :
-  CONNECTOR_PROBE_OUTPUT=$(cat "$ccp_output" 2>/dev/null || :)
+  codex_probe_stop "$ccp_pid"
+  if [ "$ccp_complete" -eq 1 ] &&
+     ! codex_reauthentication_required <"$ccp_output" &&
+     ! codex_http_auth_required <"$ccp_output"
+  then
+    CONNECTOR_PROBE_OUTPUT=$(codex_probe_response "$ccp_output" || :)
+  else
+    CONNECTOR_PROBE_OUTPUT=$(cat "$ccp_output" 2>/dev/null || :)
+  fi
   rm -rf "$ccp_dir"
   [ "$ccp_complete" -eq 1 ]
 }
@@ -2623,7 +2692,11 @@ cmd_setup_connectors() {
   connector_health "$setup_client" || setup_health=$?
   case "$setup_health" in
     0)
-      printf '%s\n' "Client: $setup_client" 'Connector: PASS' 'Authentication: PASS' 'Result: PASS'
+      printf '%s\n' \
+        "Client: $setup_client" \
+        'Connector: PASS' \
+        'Authentication: PASS'
+      pass_result
       return
       ;;
     1) ;;
@@ -2646,7 +2719,11 @@ cmd_setup_connectors() {
           1) auth_pending "$setup_client" ;;
           *) connector_health_unavailable "$setup_client" ;;
         esac
-        printf '%s\n' "Client: $setup_client" 'Connector: PASS' 'Authentication: PASS' 'Result: PASS'
+        printf '%s\n' \
+          "Client: $setup_client" \
+          'Connector: PASS' \
+          'Authentication: PASS'
+        pass_result
         return
         ;;
     esac
@@ -2688,7 +2765,11 @@ cmd_doctor() {
     esac
     printf '%s\n' "Client: $doctor_client" 'Connector: PASS' 'Authentication: PASS'
   fi
-  printf '%s\n' "Repository: $LOCK_REPOSITORY" "Version: $LOCK_VERSION" "Commit: $LOCK_COMMIT" 'Result: PASS'
+  printf '%s\n' \
+    "Repository: $LOCK_REPOSITORY" \
+    "Version: $LOCK_VERSION" \
+    "Commit: $LOCK_COMMIT"
+  pass_result
 }
 
 cmd_context() {

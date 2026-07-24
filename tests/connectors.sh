@@ -153,9 +153,8 @@ case "$*" in
   'app-server --stdio')
     IFS= read -r request_1 || exit 1
     IFS= read -r request_2 || exit 1
-    IFS= read -r request_3 || exit 1
-    input=$(printf '%s\n%s\n%s\n' "$request_1" "$request_2" "$request_3")
-    case "$input" in
+    while IFS= read -r request; do
+      case "$request" in
       *'config/value/write'*)
         : >"$XDG_CONFIG_HOME/fake-codex-configured"
         printf '{"id":1,"result":{}}\n'
@@ -174,6 +173,24 @@ case "$*" in
           exit 0
         health=$(sed -n '1p' "$XDG_CONFIG_HOME/fake-codex-health" 2>/dev/null || :)
         case "$health" in
+          unknown-then-healthy)
+            probes=$(sed -n '1p' \
+              "$XDG_CONFIG_HOME/fake-codex-probes" 2>/dev/null || :)
+            probes=${probes:-0}
+            probes=$((probes + 1))
+            printf '%s\n' "$probes" \
+              >"$XDG_CONFIG_HOME/fake-codex-probes"
+            if [ "$probes" -eq 1 ]; then
+              printf '%s\n' '{"id":1,"result":{"unexpected":true}}'
+            else
+              printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","serverInfo":null,"tools":{"atlassianUserInfo":{}},"resources":[],"resourceTemplates":[],"authStatus":"oAuth"}]}}'
+            fi
+            ;;
+          ignore-term)
+            printf '%s\n' "$$" >"$XDG_CONFIG_HOME/fake-codex-pid"
+            trap '' TERM
+            while :; do :; done
+            ;;
           healthy)
             printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","serverInfo":null,"tools":{"atlassianUserInfo":{}},"resources":[],"resourceTemplates":[],"authStatus":"oAuth"}]}}'
             ;;
@@ -194,7 +211,8 @@ case "$*" in
         esac
         ;;
       *) exit 1 ;;
-    esac
+      esac
+    done
     ;;
   *) exit 1 ;;
 esac
@@ -233,6 +251,31 @@ fi
 assert_contains "$output" 'Result: CONNECTOR_HEALTH_UNAVAILABLE'
 unset FAKE_CODEX_READY_AFTER
 
+rm -f "$XDG_CONFIG_HOME/fake-codex-probes"
+printf '%s\n' unknown-then-healthy \
+  >"$XDG_CONFIG_HOME/fake-codex-health"
+output=$($CLI setup-connectors --client codex --non-interactive)
+assert_contains "$output" 'Result: PASS'
+[ "$(sed -n '1p' "$XDG_CONFIG_HOME/fake-codex-probes")" -ge 2 ] ||
+  fail 'Codex did not re-probe after an unclassifiable response'
+
+printf '%s\n' ignore-term >"$XDG_CONFIG_HOME/fake-codex-health"
+rm -f "$XDG_CONFIG_HOME/fake-codex-pid"
+started=$(/bin/date +%s)
+if output=$($CLI setup-connectors --client codex --non-interactive 2>&1)
+then
+  fail 'Codex probe with an unresponsive app server passed'
+fi
+elapsed=$(( $(/bin/date +%s) - started ))
+[ "$elapsed" -lt 5 ] ||
+  fail "Codex probe teardown exceeded its bounded allowance: ${elapsed}s"
+assert_contains "$output" 'Result: CONNECTOR_HEALTH_UNAVAILABLE'
+stubborn_pid=$(sed -n '1p' "$XDG_CONFIG_HOME/fake-codex-pid")
+if kill -0 "$stubborn_pid" 2>/dev/null; then
+  fail "Codex probe left app-server process $stubborn_pid running"
+fi
+
+printf '%s\n' auth-required >"$XDG_CONFIG_HOME/fake-codex-health"
 rm -f "$XDG_CONFIG_HOME/fake-codex-configured"
 : >"$CALLS"
 if output=$(printf 'y\nn\n' | script -qec "$CLI setup-connectors" /dev/null 2>&1); then

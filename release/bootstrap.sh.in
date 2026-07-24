@@ -19,6 +19,25 @@ usage() {
     "Usage: $PROGRAM --client codex|claude|cursor [--non-interactive]"
 }
 
+github_slug() {
+  gs_url=$1
+  case "$gs_url" in
+    https://github.com/*) gs_slug=${gs_url#https://github.com/} ;;
+    git@github.com:*) gs_slug=${gs_url#git@github.com:} ;;
+    ssh://git@github.com/*)
+      gs_slug=${gs_url#ssh://git@github.com/}
+      ;;
+    *) return 1 ;;
+  esac
+  while [ "${gs_slug%/}" != "$gs_slug" ]; do
+    gs_slug=${gs_slug%/}
+  done
+  gs_slug=${gs_slug%.git}
+  printf '%s\n' "$gs_slug" |
+    grep -Eq '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' || return 1
+  printf '%s\n' "$gs_slug"
+}
+
 client=
 non_interactive=0
 while [ "$#" -gt 0 ]; do
@@ -62,23 +81,24 @@ repo=$(git rev-parse --show-toplevel 2>/dev/null) ||
 repo=$(CDPATH= cd -- "$repo" && pwd -P) ||
   die REPOSITORY_REQUIRED 'Cannot resolve the current Git root'
 
-origin_url=$(git -C "$repo" config --get remote.origin.url 2>/dev/null) ||
-  die REMOTE_MISMATCH 'Cannot resolve the canonical GitHub origin'
-case "$origin_url" in
-  https://github.com/*) origin_slug=${origin_url#https://github.com/} ;;
-  git@github.com:*) origin_slug=${origin_url#git@github.com:} ;;
-  ssh://git@github.com/*)
-    origin_slug=${origin_url#ssh://git@github.com/}
-    ;;
-  *) die REMOTE_MISMATCH 'Canonical origin is not a GitHub repository' ;;
-esac
-while [ "${origin_slug%/}" != "$origin_slug" ]; do
-  origin_slug=${origin_slug%/}
-done
-origin_slug=${origin_slug%.git}
-printf '%s\n' "$origin_slug" |
-  grep -Eq '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' ||
-  die REMOTE_MISMATCH 'Canonical origin is not a GitHub repository'
+remote_count=0
+origin_url=$(git -C "$repo" config --get remote.origin.url 2>/dev/null || :)
+if [ -n "$origin_url" ] &&
+   github_slug "$origin_url" >/dev/null 2>&1
+then
+  remote_count=1
+fi
+if [ "$remote_count" -eq 0 ]; then
+  for remote_name in $(git -C "$repo" remote); do
+    remote_url=$(git -C "$repo" config --get \
+      "remote.$remote_name.url" 2>/dev/null || :)
+    github_slug "$remote_url" >/dev/null 2>&1 || continue
+    remote_count=$((remote_count + 1))
+  done
+fi
+[ "$remote_count" -eq 1 ] ||
+  die REMOTE_MISMATCH \
+    'Cannot resolve exactly one canonical GitHub remote'
 
 bootstrap_root=$(mktemp -d \
   "${TMPDIR:-/tmp}/beroka-governance-bootstrap.XXXXXX") ||
