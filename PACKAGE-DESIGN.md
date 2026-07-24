@@ -186,8 +186,10 @@ owned by the client or OS keyring.
 beroka-governance install v1.0.0
 ```
 
-The initial bootstrap uses a shallow Git clone of one reviewed tag and runs the
-CLI from that checkout. It never pipes network output directly to a shell.
+The release launcher asset is piped into a shell; it clones the embedded
+annotated tag and invokes the package CLI only after tag type, peeled commit,
+and checked-out HEAD each equal the embedded commit. Direct `install` afterward
+uses the verified shallow checkout.
 
 Install authenticates through the developer's existing Git/GitHub setup,
 resolves the tag, verifies the tag commit, stages the release in a temporary

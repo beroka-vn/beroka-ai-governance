@@ -78,6 +78,11 @@ require_text README.md 'one client on each execution environment'
 require_text handbook.md 'AUTH_PENDING'
 require_text handbook.md 'CONNECTOR_HEALTH_UNAVAILABLE'
 require_text PACKAGE-DESIGN.md '15-second total deadline'
+require_text PACKAGE-DESIGN.md \
+  'The release launcher asset is piped into a shell; it clones the embedded'
+require_text PACKAGE-DESIGN.md \
+  'annotated tag and invokes the package CLI only after tag type, peeled commit,'
+require_text PACKAGE-DESIGN.md 'checked-out HEAD each equal the embedded commit'
 [ -f "$ROOT/release/bootstrap.sh.in" ] ||
   fail 'missing release launcher template'
 
@@ -95,6 +100,7 @@ require_code_block README.md "$noninteractive_launcher"
 reject_text handbook.md 'canonical remote chưa có `v1.0.0`'
 reject_text handbook.md 'tạo annotated `v1.0.0`'
 reject_text handbook.md 'Install published `v1.0.0`'
+reject_text PACKAGE-DESIGN.md 'It never pipes network output directly to a shell.'
 reject_active_v100_release_gate
 
 for file in README.md handbook.md PACKAGE-DESIGN.md; do
