@@ -177,8 +177,8 @@ vì vậy vẫn dùng được khi routing đang thiếu hoặc pending.
 repo=/srv/beroka/backend
 release=v1.0.0
 
-beroka-governance register "$repo" --version "$release"
-git -C "$repo" diff -- .beroka-governance.lock AGENTS.md CLAUDE.md .cursor/rules/beroka-governance.mdc
+beroka-governance register "$repo" --version "$release" --client codex
+git -C "$repo" diff -- .beroka-governance.lock AGENTS.md
 beroka-governance doctor "$repo"
 beroka-governance doctor "$repo" --client codex
 
@@ -186,6 +186,14 @@ beroka-governance update "$repo" --to "$release"
 beroka-governance rollback "$repo" --to "$release"
 beroka-governance unregister "$repo"
 beroka-governance uninstall
+```
+
+Thêm Claude Code là explicit và additive; command này chỉ thêm `CLAUDE.md`,
+không rewrite Codex entrypoint đang có:
+
+```bash
+beroka-governance bootstrap "$repo" --client claude
+git -C "$repo" diff -- .beroka-governance.lock CLAUDE.md
 ```
 
 `register`, `update`, `rollback` và `unregister` hỗ trợ `--dry-run`. Review và
@@ -277,19 +285,22 @@ giống.
 
 ### Lock và thin entrypoints
 
-Register tạo đúng các artifact package-owned sau, không copy toàn bộ runtime hay
-templates vào application repository:
+Register tạo `.beroka-governance.lock` và chỉ entrypoint của client được chọn;
+không copy toàn bộ runtime hay templates vào application repository. `CLIENTS`
+trong lock là source of truth cho entrypoints managed:
 
-- `.beroka-governance.lock`: source, `REPOSITORY`, pinned `VERSION` và commit SHA;
-- managed block trong root `AGENTS.md`;
-- managed block hoặc `@AGENTS.md` import trong root `CLAUDE.md`; và
-- `.cursor/rules/beroka-governance.mdc`.
+| Client | Managed entrypoint |
+| --- | --- |
+| Codex | managed block trong root `AGENTS.md` |
+| Claude Code | managed block trong root `CLAUDE.md` |
+| Cursor | `.cursor/rules/beroka-governance.mdc` |
 
 Entrypoints mỏng (thin) chỉ route agent tới release đã pin. Khi mở session mới,
 Codex, Claude Code hoặc Cursor đọc entrypoint theo client, xác minh lock và
 canonical remote đã discover, rồi chạy `beroka-governance context` để load
-runtime English từ đúng release. Repository chưa register không được package
-áp dụng.
+runtime English từ cùng exact release. Client không có trong `CLIENTS` không có
+Beroka-managed entrypoint; managed content chưa được list là `ENTRYPOINT_DRIFT`.
+Repository chưa register không được package áp dụng.
 
 ## Quyền tối thiểu
 

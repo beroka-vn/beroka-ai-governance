@@ -91,14 +91,14 @@ it contains no credentials.
 
 ## Registered-repository contract
 
-A registered repository contains only these package-owned artifacts:
+A registered repository contains `.beroka-governance.lock` plus only the
+entrypoints listed by its enabled clients:
 
-1. `.beroka-governance.lock` with the exact source, SemVer tag, and full commit
-   SHA;
-2. a marker-delimited managed block in root `AGENTS.md`;
-3. a marker-delimited `@AGENTS.md` import in root `CLAUDE.md` when it is not
-   already present; and
-4. `.cursor/rules/beroka-governance.mdc`.
+| Client | Managed entrypoint |
+| --- | --- |
+| Codex | marker-delimited managed block in root `AGENTS.md` |
+| Claude Code | marker-delimited managed block in root `CLAUDE.md` |
+| Cursor | `.cursor/rules/beroka-governance.mdc` |
 
 Example lock file:
 
@@ -107,13 +107,18 @@ SOURCE=beroka-vn/beroka-ai-governance
 REPOSITORY=beroka-vn/example-backend
 VERSION=v1.0.0
 COMMIT=0123456789abcdef0123456789abcdef01234567
+CLIENTS=codex,claude
 ```
 
-The CLI parses only the four allowlisted keys. It must never `source`, `eval`,
-or execute the lock file.
+`CLIENTS` contains at least one of `codex`, `claude`, and `cursor`, has no
+duplicates, and uses canonical `codex,claude,cursor` order. The CLI parses only
+the five allowlisted keys. It must never `source`, `eval`, or execute the lock
+file. A candidate lock without `CLIENTS` is invalid before the first public
+release and must be recreated with bootstrap.
 
-The entrypoints contain routing only. They do not duplicate governance rules or
-templates. At session start they require the agent to:
+Each listed entrypoint contains routing only and independently loads the same
+central release. They do not duplicate governance rules or templates. At
+session start they require the agent to:
 
 1. resolve the canonical GitHub remote and match it to `REPOSITORY`;
 2. read and validate `.beroka-governance.lock`;
@@ -124,13 +129,10 @@ templates. At session start they require the agent to:
 5. continue only when the package reports `PASS`.
 
 An unregistered repository has no lock and no managed entrypoints, so the
-package does not apply. Repository-specific instructions may narrow central
+package does not apply. A managed block or Cursor rule for an unlisted client
+is `ENTRYPOINT_DRIFT`. Repository-specific instructions may narrow central
 governance but may not use it to broaden agent authority or bypass a stop
-condition.
-
-`CLAUDE.md` imports only the repository-local `AGENTS.md`. Cursor uses an
-always-applied project rule that directs the agent through the same lock and
-CLI. The clients do not need to import or directly read files outside the
+condition. The clients do not need to import or directly read files outside the
 workspace; validated package content is emitted through command output.
 
 ## CLI lifecycle
@@ -394,18 +396,28 @@ The release gate is:
 sh -n bin/beroka-governance
 sh tests/smoke.sh
 sh tests/connectors.sh
+sh tests/bootstrap.sh
+```
+
+Routing runs from a clean clone:
+
+```bash
+routing_clone=$(mktemp -d "${TMPDIR:-/tmp}/beroka-routing-final.XXXXXX")
+git clone -q --no-local . "$routing_clone/repo"
+git -C "$routing_clone/repo" checkout -q HEAD
+sh "$routing_clone/repo/tests/routing.sh"
 ```
 
 Before publishing a release, a maintainer also starts fresh sessions and
 records:
 
-- Codex loaded the repository `AGENTS.md` and exact pinned release;
-- Claude Code `/memory` shows the project import and exact pinned release; and
-- Cursor shows and applies the dedicated project rule.
+- Codex loaded its managed `AGENTS.md` and exact pinned release;
+- Claude Code loaded its managed `CLAUDE.md` and exact pinned release; and
+- Cursor shows and applies its dedicated project rule and exact pinned release.
 
 The same POSIX script is validated on Linux, macOS, and WSL. No tag is published
-until automated smoke checks and the three client checks pass on the tagged
-commit.
+until every automated suite and the three independent client checks pass on the
+tagged commit.
 
 ## Acceptance criteria
 

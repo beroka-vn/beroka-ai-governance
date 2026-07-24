@@ -614,6 +614,13 @@ grep -F 'gh auth login --hostname github.com --web' "$ROOT/handbook.md" \
   fail 'handbook does not document GitHub OAuth remediation'
 grep -F 'provider OAuth output directly' "$ROOT/README.md" >/dev/null ||
   fail 'README does not document OAuth URL pass-through'
+grep -F 'CLIENTS=codex,claude' "$ROOT/PACKAGE-DESIGN.md" >/dev/null ||
+  fail 'package design does not document additive clients'
+grep -F 'register "$repo" --version "$release" --client codex' \
+  "$ROOT/handbook.md" >/dev/null ||
+  fail 'handbook register command does not select a client'
+grep -F 'bootstrap "$repo" --client claude' "$ROOT/README.md" >/dev/null ||
+  fail 'README does not document adding another client'
 grep -F 'connector inspection requires `jq` for every selected client' \
   "$ROOT/PACKAGE-DESIGN.md" >/dev/null ||
   fix_wave_fail 'package design does not declare jq for connector inspection'
