@@ -37,4 +37,24 @@ require_text runtime/profiles/frontend.md 'Capability Index'
 require_text runtime/integrations/beroka-be-fe.md 'Registry rows'
 require_text runtime/integrations/beroka-be-fe.md 'Integration Hub'
 
+require_text templates/jira-confluence.md \
+  'Backend Capability Registry Template'
+require_text templates/jira-confluence.md \
+  'Shared — Market — Market Indices — API'
+require_text templates/jira-confluence.md 'Document revision:'
+require_text templates/jira-confluence.md 'Client → Server Commands'
+require_text templates/jira-confluence.md 'Server → Client Events'
+require_text templates/github-issue.md 'Capability Registry reference:'
+require_text templates/github-issue.md \
+  'Change class: docs-only | contract-compatible | contract-breaking'
+require_text templates/pull-request.md 'Canonical document content ID/path:'
+require_text templates/pull-request.md 'Document revision:'
+require_text templates/ai-agent-assignment.md \
+  'Backend Capability Registry row'
+require_text templates/ai-agent-assignment.md \
+  '<Module> — Capability Index'
+require_text README.md 'Backend Capability Registry'
+require_text handbook.md 'globally unique Folder'
+reject_text templates/jira-confluence.md 'The Hub row is canonical'
+
 printf '%s\n' 'Documentation architecture tests: PASS'

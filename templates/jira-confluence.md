@@ -64,7 +64,7 @@ Cross-project counterpart confirmation
 - Proposed aligned base name: <name | keep requested name | N/A>
 - Proposed Epic link: Relates | None
 - Proposed child link: Blocks | Relates | None
-- Capability ID / Integration Hub row: <exact values | Pending | N/A>
+- Capability ID / Registry row / Integration Hub: <exact values | Pending | N/A>
 - Developer decision: pair existing | Frontend-only | Pending with owner | cancel
 - Result: PASS | NO_BACKEND_DEPENDENCY | MAPPING_INCOMPLETE | MAPPING_CONFLICT | FAILED_READBACK
 ```
@@ -96,23 +96,27 @@ child failure, return `EPIC_CREATED_CHILD_FAILED` and reuse the Epic.
 - BB and BF use separate Epics linked with `Relates`; never cross-parent items.
 - Discovery is symmetric and every candidate requires developer confirmation.
 - Pure FE returns `NO_BACKEND_DEPENDENCY` without a BB link/Hub row.
-- A Backend Feature may `Blocks` BF items. All records share one immutable
-  uppercase-kebab-case Capability ID.
+- A Backend Feature may `Blocks` BF items. Each semantic capability and
+  transport has one immutable uppercase-kebab-case Capability ID and one
+  Backend Capability Registry row.
 - Non-blocking same-capability children use `Relates`; dependencies use `Blocks`
   provider → consumer.
-- The Hub row is canonical. Read back the ID and links before `PASS`.
+- The Registry row is canonical. Epic Hubs reference it and own only
+  Epic-specific Jira relationships, consumers, handoff states, and
+  acknowledgements.
 - Pending counterparts return `MAPPING_INCOMPLETE`; missing/duplicate IDs or
   conflicting links return `MAPPING_CONFLICT`. Never map by title similarity.
 
 ```text
 CROSS-TEAM MAPPING
 - Capability ID: exact uppercase kebab-case value
+- Backend Capability Registry row: exact URL/content ID and readback
 - Backend Epic and Feature: Jira keys and URLs
 - Frontend Epic: Jira key and URL
 - Frontend work items: one or more Jira keys/URLs or Pending with owner
 - Epic link: Relates readback result
 - Child links: Blocks | Relates | None, with readback result
-- Integration Hub row: URL and exact row readback result
+- Integration Hub Registry reference: URL and exact readback result
 - Result: PASS | NO_BACKEND_DEPENDENCY | MAPPING_INCOMPLETE | MAPPING_CONFLICT | FAILED_READBACK
 ```
 
@@ -122,20 +126,36 @@ CROSS-TEAM MAPPING
   [Beroka-frontend](https://beroka.atlassian.net/wiki/spaces/Berokafron).
 - Backend use cases/services:
   [Beroka-backend](https://beroka.atlassian.net/wiki/spaces/Berokaback/overview).
-- Each Epic uses one native Folder named `<Epic key> — <Epic summary>`; all Epic
-  pages belong under it.
+- Durable Backend capability pages live under `Backend Contracts`, not an Epic
+  Folder. Native Folder names are globally unique:
+  `<Scope> — <Domain> — <Transport>` or
+  `<Scope> — <Domain> — <Capability group> — <Transport>`.
+- Valid examples are `Shared — Market — API`,
+  `Derivatives — User — WebSocket`,
+  `Shared — Market — Market Indices — API`, and
+  `Shared — Market — Market Indices — WebSocket`. Never create generic
+  repeated `Market`, `User`, `API`, or `WebSocket` Folders.
+- Each Epic still uses one native Folder named
+  `<Epic key> — <Epic summary>` for Epic-specific planning, decisions,
+  completion pages, and its Integration Hub.
 - If unavailable, return `FOLDER_CREATION_REQUIRED`; never use a page/root fallback.
 - After write/move, read back `parentId` and `parentType = Folder`; otherwise
   return `DOC_HIERARCHY_FAILED`.
 - Ask the developer about ambiguous shared work, space, Folder, or interpretation.
-- One shared Hub lives in the owning space. The FE Folder contains a
-  `Frontend Index` linking the Hub and FE docs; never duplicate the contract.
+- One shared Hub lives in the owning Epic Folder and references Registry rows.
+  Durable FE pages use `<Module> — Capability Index` and link exact Backend
+  content IDs; never duplicate the contract.
 - BF items and the Index must open the Hub; otherwise return
   `CROSS_SPACE_ACCESS_REQUIRED` rather than copying content.
 - Do not create empty BF Epics, FE Folders, or subpages.
+- Missing Registry, scope, domain, transport, exact parent, Capability ID, or
+  content ID returns `ROUTING_REQUIRED`; never guess by title.
 
 ```text
 Documentation location confirmation
+- Backend Capability Registry content ID/URL:
+- Capability ID and Registry row:
+- Documentation class: canonical capability | FE Capability Index | Epic-specific
 - Jira Epic and required native Folder title:
 - Use case/service:
 - Proposed Confluence space and URL:
@@ -158,6 +178,82 @@ FOLDER_CREATION_REQUIRED
 - Required parent location: exact space parent
 - Required action: developer creates the native Folder and returns URL/ID
 - Work that may continue safely: explicit independent scope or None
+```
+
+## Canonical Backend capability documentation
+
+Exactly one semantic capability, one transport, one Registry row, and one
+canonical Confluence page own each Capability ID. Navigation Folders such as
+Market Indices have no Capability ID.
+
+Canonical page metadata:
+
+```text
+Capability ID:
+Base Capability ID: <ID | N/A>
+Capability Registry reference:
+Scope: Shared | Derivatives | Underlying
+Domain: Market | User
+Transport: API | WebSocket
+Canonical contract: <repository/path, version, commit>
+Document revision:
+Owner:
+Frontend consumers:
+Confluence content ID:
+```
+
+Every WebSocket capability page contains:
+
+```text
+Connection and authorization
+Client → Server Commands
+Server → Client Events
+Payload references, sanitized examples, and documented delta
+Ordering, replay, and idempotency
+Error and reconnect behavior
+Contract version and changelog
+```
+
+Confluence never copies an authoritative OpenAPI, JSON Schema, or event schema.
+It links the exact Backend repository artifact/version/commit.
+
+## Backend Capability Registry Template
+
+```markdown
+# Backend Capability Registry
+
+| Capability ID | Scope | Domain | Transport | Canonical artifact/version/commit | Confluence content ID | Base Capability ID | Owner |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| <UPPERCASE-KEBAB-ID> | <Shared/Derivatives/Underlying> | <Market/User> | <API/WebSocket> | <repo/path, version, commit> | <content ID/URL> | <ID/N/A> | <owner> |
+```
+
+One Registry row maps one Capability ID to one page. Several pages may
+reference the same repository artifact version. A separately published
+WebSocket/event artifact may use another version.
+
+## Frontend Capability Index Template
+
+```markdown
+# <Module> — Capability Index
+
+| FE feature/use | Capability ID | Product scope | Transport | Canonical content ID | Artifact/version | FE owner |
+| --- | --- | --- | --- | --- | --- | --- |
+```
+
+The Index may reference capabilities used by several FE modules and never
+copies request, response, command, event, or schema payloads.
+
+## Documentation Change Block
+
+```text
+Canonical document content ID/path:
+Capability ID:
+Capability Registry reference:
+Sections changed:
+Change class: docs-only | contract-compatible | contract-breaking
+Contract artifact/version/commit: <before → after | N/A>
+Document revision: <before → after | N/A for repository files>
+Additional related Jira items:
 ```
 
 ## Jira Epic Template
@@ -196,7 +292,7 @@ FOLDER_CREATION_REQUIRED
 - Confluence context/spec:
 - Cross-project relevance: dependency | same capability | Frontend-only | unclear
 - Paired Epic: <BB/BF key and URL | Pending with owner | N/A>
-- Capability ID / Epic Integration Hub: <exact values | Pending | N/A>
+- Capability ID / Registry row / Epic Integration Hub: <exact values | Pending | N/A>
 - Required initial child:
   - Type: Feature | Story | Task | Bug
   - Summary:
@@ -242,7 +338,7 @@ FOLDER_CREATION_REQUIRED
 - Paired Backend Epic: <key/URL | Pending with owner | N/A>
 - Backend counterpart item: <key/type/URL | Pending with owner | N/A>
 - Relationship: Blocks | Relates | None
-- Capability ID / Epic Integration Hub: <exact values | Pending | N/A>
+- Capability ID / Registry row / Epic Integration Hub: <exact values | Pending | N/A>
 - Contract version / handoff state: <exact values | Pending | N/A>
 - GitHub Issues: Pending
 - Merged PRs: Pending
@@ -285,7 +381,7 @@ FOLDER_CREATION_REQUIRED
 - Paired Backend Epic: <key/URL | Pending with owner | N/A>
 - Backend counterpart item: <key/type/URL | Pending with owner | N/A>
 - Relationship: Blocks | Relates | None
-- Capability ID / Epic Integration Hub: <exact values | Pending | N/A>
+- Capability ID / Registry row / Epic Integration Hub: <exact values | Pending | N/A>
 - Contract version / handoff state: <exact values | Pending | N/A>
 - Related Jira items:
 
@@ -340,6 +436,7 @@ current-state index, not a completion document or contract copy.
 ## Ownership and links
 
 - Owning Confluence space/native Epic Folder:
+- Backend Capability Registry:
 - Coordinator:
 - Backend Epic/Folder:
 - Frontend Epic/Folder:
@@ -352,11 +449,11 @@ current-state index, not a completion document or contract copy.
 | --- | --- | --- | --- |
 | Paired Epics | <BB Epic> | <BF Epic or Pending with owner> | Relates: <result> |
 
-## Capability mapping
+## Capability Registry references
 
-| Capability ID | BE Jira item | BF Jira item(s) | Contract artifact/version | Handoff state | Owners | Breaking |
-| --- | --- | --- | --- | --- | --- | --- |
-| <UPPERCASE-KEBAB-ID> | <BB Feature and link> | <one or more BF links or Pending with owner> | <repo URL/path, version, commit/hash> | DRAFT | <BE owner / BF owner> | No |
+| Registry row | BE Jira item | BF Jira item(s) | Handoff state | Owners | Breaking |
+| --- | --- | --- | --- | --- | --- |
+| <Capability ID and Registry row URL> | <BB Feature and link> | <one or more BF links or Pending with owner> | DRAFT | <BE owner / BF owner> | No |
 
 ## Shared decisions
 
@@ -381,6 +478,7 @@ Copy this block into the BE Jira/GitHub Issue or PR when `Frontend impact != Non
 ## BE → FE handoff
 
 - Capability ID:
+- Capability Registry reference:
 - Epic Integration Hub:
 - Paired Backend Epic:
 - Paired Frontend Epic:
@@ -388,7 +486,8 @@ Copy this block into the BE Jira/GitHub Issue or PR when `Frontend impact != Non
 - Frontend Jira/GitHub issue(s):
 - Epic `Relates` readback:
 - BE-to-BF `Blocks` readback for every BF item:
-- Integration Hub mapping-row readback:
+- Capability Registry row readback:
+- Integration Hub Registry-reference readback:
 - Canonical contract artifact/version/commit:
 - Behavior delivered:
 - Authentication/permissions:

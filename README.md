@@ -122,7 +122,8 @@ create a duplicate just to make a check pass.
 | Backend repository contract artifact | Current OpenAPI/JSON Schema/event schema or contract version consumed by Frontend |
 | Git branch/commit | Change history for one GitHub Issue |
 | GitHub Pull Request | Review, validation evidence, approval authorization, and merge history |
-| Confluence | Epic Integration Hub, completed documentation, decisions, operating guides, and durable knowledge |
+| Backend Capability Registry | Cross-Epic Capability ID, exact content ID, artifact/version/commit, scope/domain/transport, and owner |
+| Confluence | Canonical capability guides, Epic Integration Hubs, FE Capability Indexes, completion documents, and decisions |
 
 Do not copy complete content between systems. Each record links to the next
 source of truth with a stable URL.
@@ -133,7 +134,9 @@ source of truth with a stable URL.
 Shared business outcome
 ├── BB Epic/Task ── BE GitHub Issue ── BE PR ── contract artifact
 ├── BF Epic/Task ── FE GitHub Issue ── FE PR
-├── Epic Integration Hub ── current contract links + handoff states
+├── Backend Capability Registry ── canonical capability + document/artifact
+├── Epic Integration Hub ── Registry references + Epic handoff states
+├── Frontend Capability Index ── Registry references used by one FE module
 └── Confluence completion document ── result after both sides finish
 ```
 
@@ -146,6 +149,8 @@ Default relationships:
 - Backend and Frontend Jira items are in two projects, link directly to each
   other, and point to one Epic Integration Hub; do not duplicate the hub across
   two Confluence spaces.
+- One Registry capability may be referenced by several Epics and FE module
+  indexes without copying its contract.
 - Frontend consumes the contract artifact/version published by Backend; it does
   not reconstruct the current contract from multiple issue descriptions or chat.
 - Jira moves to `Done` only after required issues are complete and Confluence is
@@ -161,8 +166,8 @@ Default relationships:
 - AI does not approve or merge without human confirmation for that specific PR.
 - If validation is incomplete, keep the PR Draft and state what is unverified.
 - A Backend change with Frontend impact is handoff-ready only after its contract
-  is published, the Integration Hub is updated, and the linked Frontend issue
-  is notified.
+  is published, the Registry row and Integration Hub are updated, and the
+  linked Frontend issue is notified.
 - The initial phase uses manual review and validation; CI or bots are not yet required.
 
 ## Documents in this package

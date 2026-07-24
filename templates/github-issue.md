@@ -49,6 +49,25 @@ canonical contract in the BE repository; record only the delta and version.
 `READY_FOR_FE` requires a merged BE PR, published artifact, and working test
 path. FE acknowledges the exact version. If impact is `None`, record the reason.
 
+## Documentation Change Block
+
+Add this block whenever the issue creates or updates canonical documentation:
+
+```text
+Canonical document content ID/path:
+Capability ID:
+Capability Registry reference:
+Sections changed:
+Change class: docs-only | contract-compatible | contract-breaking
+Contract artifact/version/commit: <before → after | N/A>
+Document revision: <before → after | N/A for repository files>
+Additional related Jira items:
+```
+
+Several Jira items may reference the same canonical page, but this GitHub Issue
+still has exactly one primary Jira item. Update existing content by exact
+content ID; never create a replacement because its title or FE consumer changed.
+
 ## Feature Issue
 
 ```markdown
