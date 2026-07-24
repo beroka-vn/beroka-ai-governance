@@ -68,11 +68,12 @@ case "$*" in
     printf '%s\n' '{"name":"atlassian","url":"https://mcp.atlassian.com/v1/mcp/authv2"}'
     ;;
   'mcp login atlassian')
-    printf '%s\n' healthy-all >"$XDG_CONFIG_HOME/fake-codex-health"
+    printf '%s\n' "${FAKE_CODEX_OAUTH_HEALTH:-healthy-all}" \
+      >"$XDG_CONFIG_HOME/fake-codex-health"
     ;;
   'app-server --stdio')
-    input=$(cat)
-    case "$input" in
+    while IFS= read -r input; do
+      case "$input" in
       *'mcpServerStatus/list'*)
         health=$(sed -n '1p' "$XDG_CONFIG_HOME/fake-codex-health" 2>/dev/null || :)
         case "$health" in
@@ -131,8 +132,9 @@ case "$*" in
           *) exit 1 ;;
         esac
         ;;
-      *) exit 1 ;;
-    esac
+        *) ;;
+      esac
+    done
     ;;
   *) exit 1 ;;
 esac
@@ -612,12 +614,7 @@ for negative_health in not-connected disconnected; do
   then
     fail "Claude $negative_health status passed"
   fi
-  case "$negative_health" in
-    disconnected)
-      assert_contains "$output" 'Result: CONNECTOR_HEALTH_UNAVAILABLE'
-      ;;
-    *) assert_contains "$output" 'Result: GOVERNANCE_NOT_READY' ;;
-  esac
+  assert_contains "$output" 'Result: CONNECTOR_HEALTH_UNAVAILABLE'
 done
 
 if output=$($CLI preflight "$consumer" --client codex \
@@ -669,6 +666,19 @@ assert_contains "$output" 'Result: PASS'
 assert_contains "$(cat "$CALLS")" 'codex mcp login atlassian'
 assert_not_contains "$(cat "$CALLS")" 'claude mcp login atlassian'
 assert_not_contains "$(cat "$CALLS")" 'cursor-agent mcp login atlassian'
+
+printf '%s\n' auth-required >"$XDG_CONFIG_HOME/fake-codex-health"
+export FAKE_CODEX_OAUTH_HEALTH=healthy-nested-metadata
+if output=$(printf 'y\n' | script -qec \
+  "$CLI preflight $consumer --client codex --operation jira-write" \
+  /dev/null 2>&1)
+then
+  fail 'preflight accepted unclassifiable health after OAuth'
+fi
+assert_contains "$output" 'Connector: HEALTH_UNAVAILABLE'
+assert_contains "$output" 'Result: CONNECTOR_HEALTH_UNAVAILABLE'
+unset FAKE_CODEX_OAUTH_HEALTH
+printf '%s\n' healthy-all >"$XDG_CONFIG_HOME/fake-codex-health"
 
 : >"$CALLS"
 output=$($CLI doctor "$consumer" --client codex)

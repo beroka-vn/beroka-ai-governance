@@ -2548,10 +2548,13 @@ cmd_preflight() {
             routing_cleanup
             auth_required "$pf_client"
           }
-          connector_health "$pf_client" || {
-            routing_cleanup
-            auth_required "$pf_client"
-          }
+          pf_health=0
+          connector_health "$pf_client" || pf_health=$?
+          case "$pf_health" in
+            0) ;;
+            1) routing_cleanup; auth_required "$pf_client" ;;
+            *) routing_cleanup; connector_health_unavailable "$pf_client" ;;
+          esac
           ;;
         *) routing_cleanup; auth_required "$pf_client" ;;
       esac
