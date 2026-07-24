@@ -50,6 +50,23 @@ Review and commit the repository changes, merge them through the normal
 application-repository pull request, then start a fresh AI session. Existing
 registrations keep their lock; bootstrap never silently upgrades them.
 
+In the fresh session, load the pinned context and run the operation-specific
+gate immediately before an external write:
+
+```bash
+beroka-governance context "$repo"
+beroka-governance doctor "$repo" --client codex
+beroka-governance preflight "$repo" \
+  --client codex \
+  --operation jira-write
+beroka-governance preflight "$repo" \
+  --client codex \
+  --operation github-write
+```
+
+Routing-dependent preflight may return `ROUTING_REQUIRED` until the repository
+has an active reviewed routing baseline. Source-only work can continue.
+
 Run connector setup only after the selected client and its MCP dependencies are
 installed. The command configures exactly that client and, in interactive mode,
 offers to start its OAuth flow. It never accepts an Atlassian developer API
