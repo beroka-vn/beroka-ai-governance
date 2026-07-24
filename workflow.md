@@ -9,6 +9,7 @@
 | Branch/commit | Changes for exactly one issue | Unrelated work |
 | Pull Request | Diff, review, validation, approval, and merge evidence | The Issue or Confluence |
 | Confluence | Delivered behavior, decisions, guides, and limitations | Daily status tracking |
+| Backend Capability Registry | Cross-Epic Capability ID, canonical content, artifact/version, and owner | Epic-specific handoff state |
 
 ## 2. Standard lifecycle
 
@@ -43,10 +44,12 @@ one question. Do not request information already present in linked records.
   new BB Epic, scan BF the same way. Candidates require developer confirmation;
   fuzzy titles never authorize rename or links.
 - Frontend-only work creates no BB link or record. A confirmed pair may align
-  its base name, link Epics with `Relates`, and resolve one Capability ID/Hub row.
+  its base name, link Epics with `Relates`, and resolve one Capability
+  ID/Registry row plus Hub reference.
 - A BF child with BE dependency must resolve its paired BB Epic, exact BB work
-  item, link type, Capability ID, Hub row, and contract/handoff state. Show
-  candidates and ask when any mapping is unresolved.
+  item, link type, Capability ID, Registry row, Hub reference, and
+  contract/handoff state. Show candidates and ask when any mapping is
+  unresolved.
 - Shared work uses one confirmed primary project/parent; never create the same
   item in both projects automatically.
 - Planning-only returns a draft unless an external write is explicitly requested.
@@ -84,16 +87,17 @@ For an outcome requiring both teams:
 1. scan the other project regardless of which side exists first and obtain
    developer confirmation;
 2. create/reuse separate BB and BF Epics and link them with `Relates`;
-3. resolve one immutable Capability ID in one canonical Hub row;
+3. resolve one immutable Capability ID in one canonical Registry row;
 4. create separate Jira/GitHub items; a BE provider may `Blocks` BF consumers;
-5. link the Hub and update the row with BE/BF items, contract version, state,
-   and owners;
-6. read back parents, links, Capability ID, and Hub row before `PASS`.
+5. link each Epic Hub to the Registry row and record its BE/BF items, state,
+   consumers, and acknowledgements;
+6. read back parents, links, Capability ID, Registry row, and Hub references
+   before `PASS`.
 
 Pure FE skips mapping. A missing approved counterpart is `MAPPING_INCOMPLETE`.
-Duplicate IDs, multiple rows, or conflicting links are `MAPPING_CONFLICT` and
-block the dependent scope. Never use a shared GitHub Issue or duplicate Hub to
-bypass cross-project handoff.
+Duplicate Registry rows, one ID assigned to different capabilities, or
+conflicting links are `MAPPING_CONFLICT` and block the dependent scope. Never
+use a shared GitHub Issue or duplicate Hub to bypass cross-project handoff.
 
 ### Step 3 — Apply labels and Definition of Ready
 
@@ -144,8 +148,9 @@ approve or merge without human confirmation for the exact PR and SHA. See
 ### Step 7 — Merge, publish handoff, and close
 
 Prefer squash merge. For BE changes with FE impact, publish the contract after
-merge, update the Hub row/changelog to `READY_FOR_FE`, and comment on the linked
-FE item with the exact version. FE records `ACKNOWLEDGED` before dependent work.
+merge, update the Registry row, update every referencing Hub changelog to
+`READY_FOR_FE`, and comment on the linked FE item with the exact version. FE
+records `ACKNOWLEDGED` before dependent work.
 
 After merge:
 
@@ -161,15 +166,26 @@ Use [Jira and Confluence Templates](templates/jira-confluence.md). Store
 Frontend docs in Beroka-frontend and Backend docs in Beroka-backend. Shared
 work uses one confirmed owning space and never duplicates documentation.
 
-Every Jira Epic owns one native Folder named `<Epic key> — <Epic summary>`.
-The shared Hub exists only in its owning Folder. The FE Folder contains a
-`Frontend Index` linking the Hub and FE pages. Create pages only when content
-and an owner exist.
+Durable Backend capability pages use the reviewed globally unique hierarchy:
+`<Scope> — <Domain> — <Transport>`, with an optional capability group before
+transport. Never create generic repeated `Market`, `User`, `API`, or
+`WebSocket` Folders. Market Indices uses
+`Shared — Market — Market Indices — API` and
+`Shared — Market — Market Indices — WebSocket`.
+
+Every Jira Epic still owns one native Folder named
+`<Epic key> — <Epic summary>` for Epic-specific pages and its Hub. The Hub
+references exact Registry rows. Durable Frontend pages use
+`<Module> — Capability Index` and link exact Backend content IDs and artifact
+versions without copying payloads. Create pages only when content and an owner
+exist.
 
 If the Folder is missing, return `FOLDER_CREATION_REQUIRED`; never fall back to
 a page or space root. After write/move, verify `parentId` and
 `parentType = Folder`, otherwise return `DOC_HIERARCHY_FAILED`. If FE cannot
-open the BE Hub, return `CROSS_SPACE_ACCESS_REQUIRED`.
+open the BE Hub, return `CROSS_SPACE_ACCESS_REQUIRED`. Missing exact Registry,
+scope, domain, transport, parent, Capability ID, or content ID returns
+`ROUTING_REQUIRED`.
 
 Before Jira Done, link all Issues, merged PRs, and completion docs, or record
 `Documentation: N/A — <reason>`.
@@ -182,7 +198,9 @@ Before Jira Done, link all Issues, merged PRs, and completion docs, or record
 | GitHub Issue | Primary Jira item and relevant inputs |
 | Branch | GitHub Issue number in the branch name |
 | Pull Request | Jira, `Closes #<issue>`, Hub/handoff when needed, related docs |
-| Epic Integration Hub | Capability IDs, paired items, Epic Folders, contract versions, states, PRs |
+| Backend Capability Registry | Capability ID, canonical content ID, artifact/version/commit, scope/domain/transport, owner |
+| Epic Integration Hub | Registry rows, paired items, Epic Folders, states, consumers, PRs |
+| Frontend Capability Index | Registry rows, Backend content IDs, artifact versions, FE usage/owner |
 | Completion page | Jira, Issues, PRs, Hub, owning Folder |
 
 Use `Pending` with an owner only while a link does not exist. No placeholder may
@@ -224,7 +242,7 @@ scan, affected entrypoint/smoke path, and `Not run` reasons.
 - [ ] Pure FE created no BB link; unclear dependency was escalated.
 - [ ] Execution assignee matches requester by accountId.
 - [ ] Objective, scope, criteria, dependencies, owner, labels, and validation are Ready.
-- [ ] Cross-team mapping, contract version, and handoff state are exact.
+- [ ] Registry row, Hub references, contract version, and handoff state are exact.
 - [ ] AI authority and stop conditions are explicit.
 
 ### Before Ready for review
@@ -240,5 +258,5 @@ scan, affected entrypoint/smoke path, and `Not run` reasons.
 - [ ] No unresolved blocking feedback.
 - [ ] Confluence is updated or documentation has an N/A reason.
 - [ ] Completion page is in the confirmed space/Folder.
-- [ ] Hub rows show the current version and no required DRAFT/BLOCKED state.
+- [ ] Registry and Hub references show the current version and no required DRAFT/BLOCKED state.
 - [ ] Jira contains Issue, PR, and documentation links.

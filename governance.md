@@ -52,9 +52,10 @@ scope, acceptance criteria, repository, or validation already recorded.
 - [ ] Branch name.
 - [ ] AI allowed actions, approval-required actions, and stop conditions.
 - [ ] For executable Jira work, the assignee is the requesting developer.
-- [ ] For FE work that depends on BE, the Hub, linked BE item, and handoff state
-      exist; dependent work is Ready only after `READY_FOR_FE` and the FE owner
-      has `ACKNOWLEDGED` the exact contract version.
+- [ ] For FE work that depends on BE, the Backend Capability Registry row, Hub,
+      linked BE item, and handoff state exist; dependent work is Ready only
+      after `READY_FOR_FE` and the FE owner has `ACKNOWLEDGED` the exact
+      contract version.
 
 If a required item is missing, the issue is not Ready. Ask the responsible
 owner instead of inventing an assumption that changes scope or priority.
@@ -70,8 +71,9 @@ owner instead of inventing an assumption that changes scope or priority.
 - [ ] Approval and merge follow the authority for that PR.
 - [ ] PR is merged and the branch is deleted.
 - [ ] Confluence is updated or Jira says `Documentation: N/A — <reason>`.
-- [ ] When `Frontend impact != None`, the contract is published, the Hub is
-      updated, and the linked FE item has received the handoff.
+- [ ] When `Frontend impact != None`, the contract is published, its Registry
+      row and referencing Hubs are updated, and the linked FE item has received
+      the handoff.
 
 ## BE → FE contract and documentation handoff
 
@@ -79,34 +81,40 @@ Use a hybrid model:
 
 - The Backend repository owns the canonical machine-readable OpenAPI, JSON
   Schema, or event schema. Confluence does not copy it.
+- `Backend Capability Registry` is the canonical cross-Epic mapping of one
+  Capability ID to scope, domain, transport, repository
+  artifact/version/commit, Confluence content ID, base Capability ID, and
+  owner.
 - Each cross-team Epic has exactly one `Epic Integration Hub` as the readable
-  current-state index, linked from both `BB` and `BF`.
+  current-state index, linked from both `BB` and `BF`. It references Registry
+  rows and owns only Epic-specific Jira relationships, consumers, handoff
+  states, and acknowledgements.
 - Each BE issue/PR contains only a short delta, contract version, test path,
   limitations, and linked FE item.
-- FE consumes the artifact linked by the Hub and never reconstructs a contract
-  from multiple issue descriptions.
+- FE consumes the artifact linked by the Registry and never reconstructs a
+  contract from multiple issue descriptions.
 
 BB and BF use separate project-local Epics linked with `Relates`; never use a
-shared implementation item or cross-project parent. Each capability has one
-immutable Capability ID. A Backend Feature may `Blocks` one or more BF items.
-The Hub row is the canonical mapping of Capability ID, BE item, BF items,
-contract version, handoff state, and owners. Title similarity is not mapping
-evidence.
+shared implementation item or cross-project parent. Exactly one semantic capability, one transport, one Registry row, and one canonical Confluence
+page own each immutable Capability ID. A Backend Feature may `Blocks` one or
+more BF items. One Registry capability may be referenced by several Epics and
+FE modules. Title similarity is not mapping evidence.
 
 Discovery is symmetric: BF creation scans BB and BB creation scans BF.
 Candidates require developer confirmation and never create links automatically.
 Pure Frontend work writes nothing to BB and may record
 `Backend dependency: None — <reason>` on the BF item.
 
-Return `PASS` only after parents, `Relates`/`Blocks`, Capability ID, and Hub row
-read back correctly. A missing counterpart with a named owner is
-`MAPPING_INCOMPLETE`. Duplicate IDs, multiple matching rows, or conflicting Jira
-links are `MAPPING_CONFLICT` and block only the dependent scope.
+Return `PASS` only after parents, `Relates`/`Blocks`, Capability ID, Registry
+row, and Hub references read back correctly. A missing counterpart with a
+named owner is `MAPPING_INCOMPLETE`. Duplicate Registry rows, one ID assigned
+to different capabilities, or conflicting Jira/content links are
+`MAPPING_CONFLICT` and block only the dependent scope.
 
 Ownership:
 
-- BE Issue Owner publishes the contract, updates the Hub row/changelog, and
-  sends the handoff.
+- BE Issue Owner publishes the contract, updates the Registry row and
+  referencing Hub changelogs, and sends the handoff.
 - FE Issue Owner acknowledges the exact version and owns UI integration/usage
   notes without changing the BE contract definition.
 - Manager/Coordinator owns Hub placement and resolves conflicting mapping or
@@ -127,7 +135,52 @@ marks the previous handoff `SUPERSEDED`, and notifies FE again. Never silently
 rewrite an acknowledged version.
 
 BE work with no FE impact records `Frontend impact: None — <reason>` and needs
-no handoff. Multiple FE items reuse one Hub row/version.
+no handoff. Multiple FE items or Epics reuse the Registry row and exact
+artifact version.
+
+## Canonical capability documentation
+
+Backend capability documentation follows one reviewed hierarchy under
+`Backend Contracts`:
+
+```text
+Backend Capability Registry
+Shared — Conventions
+Shared — Market — API
+Shared — Market — WebSocket
+Shared — User — API
+Shared — User — WebSocket
+Derivatives — Market — API
+Derivatives — Market — WebSocket
+Derivatives — User — API
+Derivatives — User — WebSocket
+Underlying — Market — API
+Underlying — Market — WebSocket
+Underlying — User — API
+Underlying — User — WebSocket
+```
+
+Native Folder titles are globally unique. A capability-group Folder uses
+`<Scope> — <Domain> — <Capability group> — <Transport>`, including
+`Shared — Market — Market Indices — API` and
+`Shared — Market — Market Indices — WebSocket`. Never create generic repeated
+Folders such as `Market`, `User`, `API`, or `WebSocket`.
+
+One capability page owns one Capability ID. Market Indices is only a navigation
+group; its pages use distinct IDs such as `MARKET-INDEX-SNAPSHOT`,
+`MARKET-INDEX-HISTORY`, and `MARKET-INDEX-STREAM`. WebSocket pages distinguish
+`Client → Server Commands` from `Server → Client Events`.
+
+Confluence uses `Payload references, sanitized examples, and documented delta`.
+It never copies an authoritative OpenAPI, JSON Schema, or event schema. Contract
+version belongs to the exact repository artifact; document revision belongs to
+the Confluence page.
+
+Durable FE pages use `<Module> — Capability Index`, such as
+`HomePage — Capability Index`, `Portfolio — Capability Index`, or
+`Quote — Capability Index`. They link exact Registry rows, Backend content IDs,
+and artifact versions without copying payloads. UI layout, route, component, or
+page-title changes update the FE index only.
 
 ## Review, approval, and merge authority
 
@@ -198,7 +251,7 @@ Same-project parent validation always happens before counterpart discovery.
    component/label, contract/API/data dependency, or an existing Hub record.
 3. Show candidates and wait for `pair existing`, `Frontend-only`, or `cancel`.
 4. If paired, ask whether to align the base name, link Epics with `Relates`,
-   and resolve one Capability ID/Hub row.
+   and resolve the exact Capability ID/Registry row plus Hub reference.
 5. Require an initial child whether paired or Frontend-only.
 
 Similar names create candidates only. They never authorize rename, `Relates`,
@@ -211,7 +264,7 @@ When the child has a BE dependency or its BF Epic is paired, require:
 - BF parent and paired BB Epic;
 - exact BB Feature/Story/Task/Bug counterpart when it exists;
 - dependency direction and `Blocks` or `Relates` link type;
-- immutable Capability ID and Hub row;
+- immutable Capability ID, Registry row, and Hub reference;
 - contract version and handoff state when FE consumes a BE contract.
 
 If a required BB record cannot be resolved, show candidates and wait for one of
@@ -268,9 +321,12 @@ Jira reassignment does not transfer a branch owned by another writer.
 
 - Frontend documentation: [Beroka-frontend](https://beroka.atlassian.net/wiki/spaces/Berokafron).
 - Backend documentation: [Beroka-backend](https://beroka.atlassian.net/wiki/spaces/Berokaback/overview).
-- Each Jira Epic has one native Folder named `<Epic key> — <Epic summary>`.
-- The shared Hub exists only in the owning Folder. The FE Folder contains a
-  `Frontend Index` linking the Hub and FE subpages; never copy the BE contract.
+- Durable canonical capability pages live under the globally unique Backend
+  hierarchy and Registry, not inside an Epic Folder.
+- Each Jira Epic has one native Folder named `<Epic key> — <Epic summary>` for
+  Epic-specific planning, decisions, completion pages, and its Integration Hub.
+- The Hub references Registry rows. Durable FE module Capability Indexes link
+  exact Registry rows and Backend content IDs; never copy the BE contract.
 - Create no empty subpages.
 - If the Folder is missing or cannot be created, return
   `FOLDER_CREATION_REQUIRED`; never fall back to a page or space root.
@@ -278,6 +334,8 @@ Jira reassignment does not transfer a branch owned by another writer.
   `parentType = Folder`; otherwise return `DOC_HIERARCHY_FAILED`.
 - If FE cannot open the owning BE Folder/Hub, return
   `CROSS_SPACE_ACCESS_REQUIRED`; never duplicate the Hub to bypass permissions.
+- Missing or ambiguous Registry, scope, domain, transport, parent, Capability
+  ID, or content ID returns `ROUTING_REQUIRED`; never guess by title.
 - Ask the developer whenever service, scope, ownership, labels, dependency, or
   location is ambiguous.
 
@@ -300,10 +358,10 @@ Stop the dependent scope for conflicting objective/ownership/contracts/criteria,
 overlapping writers, missing permissions, unconfirmed destructive/production
 targets, unavailable dependencies/environments, missing FE handoff evidence,
 `MAPPING_CONFLICT`, unconfirmed counterpart candidates, missing Folder/Hub
-access, ambiguous labels/project/type/parent/repository/location, failed Jira
-readback/backlog membership, an empty Epic, assignee mismatch without
-confirmation, failed reassignment, or repeated tests whose root cause is
-unknown. Independent in-scope work may continue.
+access, missing Registry identity, ambiguous labels/project/type/parent/
+repository/location, failed Jira readback/backlog membership, an empty Epic,
+assignee mismatch without confirmation, failed reassignment, or repeated tests
+whose root cause is unknown. Independent in-scope work may continue.
 
 ## Standard reports
 

@@ -1,7 +1,11 @@
 # Backend–Frontend Integration
 
 - BB and BF use separate project-local Jira items and exact verified links.
-- A shared capability uses one verified mapping and one owning Integration Hub.
+- A shared capability uses one verified Backend Capability Registry row.
+- Integration Hubs reference exact Registry rows; they do not own or redefine
+  canonical capabilities.
+- One Registry capability may be referenced by several Epics and Frontend
+  module indexes.
 - Backend publishes the canonical contract artifact; Frontend consumes its
   exact version and does not reconstruct it from issue descriptions.
 - Similar names produce candidates only and never authorize links or writes.
