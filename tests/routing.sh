@@ -219,8 +219,35 @@ case "$*" in
   *) exit 1 ;;
 esac
 EOF
+
+cat >"$FAKE_BIN/gh" <<'EOF'
+#!/bin/sh
+set -eu
+printf 'gh %s\n' "$*" >>"$CALLS"
+case "$*" in
+  'auth status --help'|'auth login --help') exit 0 ;;
+  'auth status --hostname github.com')
+    case "$(sed -n '1p' "$XDG_CONFIG_HOME/fake-github-health" 2>/dev/null || :)" in
+      healthy) exit 0 ;;
+      unknown)
+        printf '%s\n' 'network unavailable' >&2
+        exit 1
+        ;;
+      *)
+        printf '%s\n' 'You are not logged into any GitHub hosts.' >&2
+        exit 1
+        ;;
+    esac
+    ;;
+  'auth login --hostname github.com --web')
+    printf '%s\n' 'OAuth URL: https://github.com/login/device'
+    printf '%s\n' healthy >"$XDG_CONFIG_HOME/fake-github-health"
+    ;;
+  *) exit 1 ;;
+esac
+EOF
 chmod 755 "$FAKE_BIN/sleep" "$FAKE_BIN/codex" "$FAKE_BIN/claude" \
-  "$FAKE_BIN/cursor-agent"
+  "$FAKE_BIN/cursor-agent" "$FAKE_BIN/gh"
 : >"$CALLS"
 
 new_repo() {
@@ -308,6 +335,51 @@ after=$(snapshot_repo "$consumer")
   fail 'context changed application repository state'
 assert_contains "$output" 'Routing: ROUTING_REQUIRED'
 
+rm -f "$XDG_CONFIG_HOME/fake-github-health"
+: >"$CALLS"
+if output=$($CLI preflight "$consumer" --client codex \
+  --operation github-write --non-interactive 2>&1)
+then
+  fail 'non-interactive GitHub preflight accepted missing auth'
+fi
+assert_contains "$output" 'Provider: github'
+assert_contains "$output" 'Result: GITHUB_AUTH_REQUIRED'
+assert_contains "$output" \
+  'Remediation: gh auth login --hostname github.com --web'
+assert_not_contains "$(cat "$CALLS")" \
+  'gh auth login --hostname github.com --web'
+
+printf '%s\n' unknown >"$XDG_CONFIG_HOME/fake-github-health"
+if output=$($CLI preflight "$consumer" --client codex \
+  --operation github-write --non-interactive 2>&1)
+then
+  fail 'GitHub preflight accepted unknown auth health'
+fi
+assert_contains "$output" 'Result: GOVERNANCE_NOT_READY'
+
+rm -f "$XDG_CONFIG_HOME/fake-github-health"
+: >"$CALLS"
+output=$(printf 'y\n' | script -qec \
+  "$CLI preflight $consumer --client codex --operation github-write" \
+  /dev/null 2>&1)
+assert_contains "$output" 'OAuth URL: https://github.com/login/device'
+assert_contains "$output" 'Result: PASS'
+[ "$(grep -Fxc 'gh auth login --hostname github.com --web' "$CALLS")" -eq 1 ] ||
+  fail 'interactive GitHub preflight did not invoke login exactly once'
+if rg -l -F 'github.com/login/device' \
+  "$HOME" "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" >/dev/null 2>&1
+then
+  fail 'Governance persisted the GitHub OAuth URL'
+fi
+
+: >"$CALLS"
+output=$($CLI preflight "$consumer" --client codex \
+  --operation github-write --non-interactive)
+assert_contains "$output" 'Authentication: PASS'
+assert_contains "$output" 'Result: PASS'
+assert_not_contains "$(cat "$CALLS")" \
+  'gh auth login --hostname github.com --web'
+
 publish_routing() {
   pr_content=$1
   printf '%s\n' "$pr_content" >"$remote_work/.beroka-governance.conf"
@@ -350,6 +422,13 @@ printf '%s\n' \
 output=$($CLI context "$consumer")
 assert_contains "$output" 'Routing: ROUTING_CHANGE_PENDING'
 
+: >"$CALLS"
+output=$($CLI preflight "$consumer" --client codex \
+  --operation github-write --non-interactive)
+assert_contains "$output" 'Result: PASS'
+assert_not_contains "$output" 'ROUTING_CHANGE_PENDING'
+assert_not_contains "$(cat "$CALLS")" 'mcp '
+
 git -C "$consumer" add .beroka-governance.conf
 git -C "$consumer" commit -qm 'test: commit local routing'
 cp "$consumer/.beroka-governance.conf" "$remote_work/.beroka-governance.conf"
@@ -377,6 +456,7 @@ else
   fix_wave_contains "$output" 'Capability state: UNKNOWN'
   fix_wave_contains "$output" 'Result: CONNECTOR_CAPABILITY_REQUIRED'
 fi
+assert_not_contains "$(cat "$CALLS")" 'gh '
 
 mkdir -p "$HOME/.cursor"
 printf '%s\n' \

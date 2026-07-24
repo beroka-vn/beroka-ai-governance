@@ -115,6 +115,31 @@ cursor-agent mcp login atlassian
 OAuth state/credential do client hoặc OS keyring sở hữu. Package không yêu cầu,
 nhận, in, log hay lưu Atlassian developer API token.
 
+Khi user xác nhận interactive OAuth, governance chạy trực tiếp flow của client
+và để client in exact one-time URL hoặc device URL/code ra terminal. Governance
+không parse, log hoặc lưu output OAuth đó. Non-interactive không tạo OAuth
+session nên dynamic URL chưa tồn tại; output chỉ có exact remediation command.
+
+GitHub push hoặc tạo PR dùng operation riêng:
+
+```bash
+beroka-governance preflight /path/to/repo \
+  --client codex \
+  --operation github-write
+```
+
+Operation này chỉ chạy `gh auth status --hostname github.com`. Nếu auth còn
+khỏe thì trả `PASS` và không login lại. Nếu GitHub yêu cầu auth, interactive
+mode hỏi xác nhận rồi chạy flow hiển thị URL:
+
+```bash
+gh auth login --hostname github.com --web
+```
+
+Non-interactive mode không mở browser và trả `GITHUB_AUTH_REQUIRED` cùng command
+trên. `github-write` không đọc Jira/Confluence routing hoặc Atlassian connector,
+vì vậy vẫn dùng được khi routing đang thiếu hoặc pending.
+
 ### Register, Doctor, update, rollback và removal
 
 ```bash
@@ -514,6 +539,7 @@ CLI fail closed với các stable result codes sau:
 | `DEPENDENCY_MISSING` | Client hoặc command dependency chưa có; cài đúng client/dependency rồi chạy lại explicit setup. |
 | `CONNECTOR_MISSING` | Atlassian connector thiếu hoặc URL hiện tại xung đột; chạy `setup-connectors --client <client>` và review config. |
 | `ATLASSIAN_AUTH_REQUIRED` | OAuth thiếu, hết hạn hoặc invalid; chạy exact remediation command được in ra. |
+| `GITHUB_AUTH_REQUIRED` | GitHub OAuth thiếu, hết hạn hoặc invalid cho `github-write`; chạy exact remediation command được in ra. |
 | `PASS` | Governance và, khi có `--client`, connector/authentication health đều đạt. |
 
 Routing và selected-client preflight trả các result sau:
