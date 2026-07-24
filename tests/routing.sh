@@ -1000,24 +1000,15 @@ grep -F 'Read access chỉ cần cho selected profile, requested operation và s
 grep -F 'BE–FE targets chỉ áp dụng khi reviewed beroka-be-fe integration profile được chọn và operation yêu cầu' "$ROOT/handbook.md" >/dev/null ||
   fail 'handbook does not scope required reads'
 
-[ "$(sed -n '1p' "$ROOT/VERSION")" = v1.1.0 ] ||
-  fix_wave_fail 'root VERSION does not select v1.1.0'
-grep -F 'release=v1.1.0' "$ROOT/README.md" >/dev/null ||
-  fix_wave_fail 'README does not select v1.1.0'
-grep -F 'release=v1.1.0' "$ROOT/handbook.md" >/dev/null ||
-  fix_wave_fail 'handbook does not select v1.1.0'
-[ "$(git -C "$ROOT" rev-parse refs/tags/v1.0.0 2>/dev/null)" = \
-  1f2db6bd75cf9d9a68d501c351fb2455448e04e1 ] ||
-  fix_wave_fail 'real v1.0.0 tag object changed'
-if git -C "$ROOT" show-ref --verify --quiet refs/tags/v1.1.0; then
-  fix_wave_fail 'real v1.1.0 candidate tag exists'
-fi
-grep -F '`v1.0.0` is an immutable legacy test sample' \
+[ "$(sed -n '1p' "$ROOT/VERSION")" = v1.0.0 ] ||
+  fix_wave_fail 'root VERSION does not select v1.0.0'
+grep -F -- '--branch v1.0.0' "$ROOT/README.md" >/dev/null ||
+  fix_wave_fail 'README does not select v1.0.0'
+grep -F -- '--branch v1.0.0' "$ROOT/handbook.md" >/dev/null ||
+  fix_wave_fail 'handbook does not select v1.0.0'
+grep -F '`v1.0.0` is the first public stable release' \
   "$ROOT/PACKAGE-DESIGN.md" >/dev/null ||
-  fix_wave_fail 'package design does not mark v1.0.0 as legacy'
-grep -F '`v1.1.0` is the current unpublished candidate' \
-  "$ROOT/PACKAGE-DESIGN.md" >/dev/null ||
-  fix_wave_fail 'package design does not select the v1.1.0 candidate'
+  fix_wave_fail 'package design does not define the first stable release'
 
 [ "$FIX_WAVE_FAILURES" -eq 0 ] ||
   fail "$FIX_WAVE_FAILURES fix-wave regressions remain"

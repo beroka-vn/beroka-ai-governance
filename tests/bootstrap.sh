@@ -301,8 +301,4 @@ grep -F 'latest stable annotated' "$ROOT/PACKAGE-DESIGN.md" >/dev/null ||
 grep -F 'fresh AI session' "$ROOT/handbook.md" >/dev/null ||
   fail 'handbook does not document the bootstrap handoff'
 
-[ "$(git -C "$ROOT" rev-parse v1.0.0^{tag} 2>/dev/null)" = \
-  1f2db6bd75cf9d9a68d501c351fb2455448e04e1 ] ||
-  fail 'real v1.0.0 tag object changed'
-
 printf '%s\n' 'Bootstrap onboarding tests: PASS'

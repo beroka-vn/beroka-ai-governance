@@ -6,40 +6,66 @@ to Confluence.
 
 ## Quick start
 
-This is a post-authorization, post-publication procedure. `v1.1.0` is the
-current release candidate, so these commands will not work until its annotated
-tag is authorized and published. The existing `v1.0.0` tag is an immutable
-legacy test sample; do not push, move, or reuse it for this feature. The
-bootstrap checkout is temporary; `install` places the pinned release and user
-CLI in the developer's local package directories. Review the resulting
-application-repository diff in its normal pull request before merging, then
-start a fresh agent session so the client loads the registered entrypoint.
+`v1.0.0` is the first public stable release. The bootstrap checkout is
+temporary; bootstrap installs the pinned release and user CLI, registers one
+explicit Backend or Frontend repository, configures one selected client, and
+runs Doctor. Review the resulting application-repository diff in its normal
+pull request before merging, then start a fresh agent session so the client
+loads the registered entrypoint.
 
 ```bash
-release=v1.1.0
-client=codex # codex | claude | cursor
+repo=$(git rev-parse --show-toplevel)
 bootstrap_dir=$(mktemp -d "${TMPDIR:-/tmp}/beroka-governance-bootstrap.XXXXXX")
-git clone --depth 1 --single-branch --branch "$release" \
+
+git clone --depth 1 --single-branch --branch v1.0.0 \
   https://github.com/beroka-vn/beroka-ai-governance.git \
   "$bootstrap_dir/repo"
-sh "$bootstrap_dir/repo/bin/beroka-governance" bootstrap \
-  /srv/beroka/backend --client "$client"
-beroka-governance context /srv/beroka/backend
-beroka-governance preflight /srv/beroka/backend \
-  --client "$client" \
-  --operation jira-write
-beroka-governance preflight /srv/beroka/backend \
-  --client "$client" \
-  --operation github-write
+
+sh "$bootstrap_dir/repo/bin/beroka-governance" bootstrap "$repo"
 ```
 
 `beroka-governance bootstrap` installs and pins the latest stable release,
 registers the repository, configures exactly one selected client, and runs both
-Doctor checks. It shows the exact version and commit before an interactive
-first registration. Review and commit the repository changes, then start a
-fresh AI session. Existing registrations keep their lock; bootstrap never
-silently upgrades them. Automation must specify both `--client` and an exact
-`--version`.
+Doctor checks. Interactive mode confirms one detected client or offers a
+numbered choice when several are installed. It shows the exact version and
+commit before a first registration. To bypass client detection, select one
+explicitly:
+
+```bash
+sh "$bootstrap_dir/repo/bin/beroka-governance" bootstrap \
+  "$repo" --client codex
+```
+
+Automation must specify every decision and never opens a browser:
+
+```bash
+sh "$bootstrap_dir/repo/bin/beroka-governance" bootstrap \
+  "$repo" \
+  --client codex \
+  --version v1.0.0 \
+  --non-interactive
+```
+
+Review and commit the repository changes, merge them through the normal
+application-repository pull request, then start a fresh AI session. Existing
+registrations keep their lock; bootstrap never silently upgrades them.
+
+In the fresh session, load the pinned context and run the operation-specific
+gate immediately before an external write:
+
+```bash
+beroka-governance context "$repo"
+beroka-governance doctor "$repo" --client codex
+beroka-governance preflight "$repo" \
+  --client codex \
+  --operation jira-write
+beroka-governance preflight "$repo" \
+  --client codex \
+  --operation github-write
+```
+
+Routing-dependent preflight may return `ROUTING_REQUIRED` until the repository
+has an active reviewed routing baseline. Source-only work can continue.
 
 Run connector setup only after the selected client and its MCP dependencies are
 installed. The command configures exactly that client and, in interactive mode,
@@ -74,10 +100,12 @@ missing or pending.
 client. The central release does not yet contain a reviewed exact counterpart
 and workflow mapping, and the CLI accepts no exact target for that operation.
 
-The package applies only to repositories explicitly registered through this
-workflow. The V1 pilot is Backend-only; do not register a Frontend repository.
-GitHub authentication remains separate in each client; verify the selected
-Atlassian connector with client-aware Doctor before connector preflight.
+Backend and Frontend repositories are both officially supported. Each bootstrap
+invocation registers exactly one explicit repository; run it again in the other
+repository when needed. Governance never scans for or automatically registers
+every repository on a developer machine. GitHub authentication remains
+separate in each client; verify the selected Atlassian connector with
+client-aware Doctor before connector preflight.
 
 - Manager/coordinator: read the [operating workflow](workflow.md), then use
   the [Jira and Confluence template](templates/jira-confluence.md) and
