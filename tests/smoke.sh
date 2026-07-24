@@ -29,6 +29,15 @@ assert_contains() {
   esac
 }
 
+assert_not_contains() {
+  haystack=$1
+  needle=$2
+  case "$haystack" in
+    *"$needle"*) fail "did not expect [$needle] in [$haystack]" ;;
+    *) ;;
+  esac
+}
+
 new_repo() {
   path=$1
   mkdir -p "$path"
@@ -266,11 +275,48 @@ after_repeat=$(git -C "$codex_repo" hash-object \
 [ "$before_repeat" = "$after_repeat" ] ||
   fail 'repeated client registration changed repository state'
 
+stale_entrypoint_repo=$TMP_ROOT/stale-entrypoint-consumer
+new_repo "$stale_entrypoint_repo"
+git -C "$stale_entrypoint_repo" remote add origin \
+  https://github.com/beroka-vn/stale-entrypoint-consumer.git
+cp "$source_repo/templates/agent-entrypoints/CLAUDE.md" \
+  "$stale_entrypoint_repo/CLAUDE.md"
+git -C "$stale_entrypoint_repo" add CLAUDE.md
+git -C "$stale_entrypoint_repo" commit -qm 'test: commit stale Claude entrypoint'
+stale_claude_hash=$(git -C "$stale_entrypoint_repo" hash-object CLAUDE.md)
+if stale_output=$($CLI register "$stale_entrypoint_repo" \
+  --version v1.0.0 --client codex 2>&1)
+then
+  fail 'register accepted an undeclared managed entrypoint'
+fi
+assert_contains "$stale_output" 'Result: ENTRYPOINT_DRIFT'
+[ ! -e "$stale_entrypoint_repo/.beroka-governance.lock" ] ||
+  fail 'stale-entrypoint refusal wrote a lock'
+[ ! -e "$stale_entrypoint_repo/AGENTS.md" ] ||
+  fail 'stale-entrypoint refusal wrote AGENTS.md'
+[ "$stale_claude_hash" = "$(git -C "$stale_entrypoint_repo" hash-object CLAUDE.md)" ] ||
+  fail 'stale-entrypoint refusal changed CLAUDE.md'
+
 cp "$codex_repo/.beroka-governance.lock" "$TMP_ROOT/codex.lock"
-printf '%s\n' 'CLIENTS=cursor,codex' \
-  >>"$codex_repo/.beroka-governance.lock"
+sed 's/^CLIENTS=.*/CLIENTS=cursor,codex/' "$TMP_ROOT/codex.lock" \
+  >"$codex_repo/.beroka-governance.lock"
 if output=$($CLI doctor "$codex_repo" 2>&1); then
-  fail 'Doctor accepted duplicate or non-canonical CLIENTS'
+  fail 'Doctor accepted non-canonical CLIENTS'
+fi
+assert_contains "$output" 'Result: GOVERNANCE_NOT_READY'
+cp "$TMP_ROOT/codex.lock" "$codex_repo/.beroka-governance.lock"
+
+sed 's/^CLIENTS=.*/CLIENTS=codex,codex/' "$TMP_ROOT/codex.lock" \
+  >"$codex_repo/.beroka-governance.lock"
+if output=$($CLI doctor "$codex_repo" 2>&1); then
+  fail 'Doctor accepted duplicate CLIENTS'
+fi
+assert_contains "$output" 'Result: GOVERNANCE_NOT_READY'
+cp "$TMP_ROOT/codex.lock" "$codex_repo/.beroka-governance.lock"
+
+printf 'UNKNOWN=final-record' >>"$codex_repo/.beroka-governance.lock"
+if output=$($CLI doctor "$codex_repo" 2>&1); then
+  fail 'Doctor accepted an unterminated unknown lock record'
 fi
 assert_contains "$output" 'Result: GOVERNANCE_NOT_READY'
 cp "$TMP_ROOT/codex.lock" "$codex_repo/.beroka-governance.lock"
@@ -541,6 +587,37 @@ release_v11=$XDG_DATA_HOME/beroka-ai-governance/releases/v1.1.0
 git -C "$release_v11" checkout -qb fixture-branch
 if $CLI install v1.1.0 >/dev/null 2>&1; then fail 'install accepted a non-detached release'; fi
 git -C "$release_v11" checkout -q --detach v1.1.0
+
+repin_dry_repo=$TMP_ROOT/repin-dry-consumer
+new_repo "$repin_dry_repo"
+git -C "$repin_dry_repo" remote add origin \
+  https://github.com/beroka-vn/repin-dry-consumer.git
+$CLI register "$repin_dry_repo" --version v1.0.0 --client codex
+git -C "$repin_dry_repo" add .
+git -C "$repin_dry_repo" commit -qm 'test: commit Codex-only registration'
+update_dry_output=$($CLI update "$repin_dry_repo" --to v1.1.0 --dry-run)
+assert_contains "$update_dry_output" \
+  "WRITE $repin_dry_repo/.beroka-governance.lock"
+assert_not_contains "$update_dry_output" "$repin_dry_repo/CLAUDE.md"
+assert_not_contains "$update_dry_output" \
+  "$repin_dry_repo/.cursor/rules/beroka-governance.mdc"
+$CLI update "$repin_dry_repo" --to v1.1.0
+[ "$(grep '^CLIENTS=' "$repin_dry_repo/.beroka-governance.lock")" = \
+  'CLIENTS=codex' ] || fail 'update did not preserve canonical CLIENTS'
+git -C "$repin_dry_repo" add .
+git -C "$repin_dry_repo" commit -qm 'test: commit Codex-only update'
+rollback_dry_output=$($CLI rollback "$repin_dry_repo" --to v1.0.0 --dry-run)
+assert_contains "$rollback_dry_output" \
+  "WRITE $repin_dry_repo/.beroka-governance.lock"
+assert_not_contains "$rollback_dry_output" "$repin_dry_repo/CLAUDE.md"
+assert_not_contains "$rollback_dry_output" \
+  "$repin_dry_repo/.cursor/rules/beroka-governance.mdc"
+$CLI rollback "$repin_dry_repo" --to v1.0.0
+[ "$(grep '^CLIENTS=' "$repin_dry_repo/.beroka-governance.lock")" = \
+  'CLIENTS=codex' ] || fail 'rollback did not preserve canonical CLIENTS'
+git -C "$repin_dry_repo" add .
+git -C "$repin_dry_repo" commit -qm 'test: commit Codex-only rollback'
+$CLI unregister "$repin_dry_repo"
 
 agents_inode_before=$(ls -i "$register_repo/AGENTS.md" | awk '{ print $1 }')
 claude_inode_before=$(ls -i "$register_repo/CLAUDE.md" | awk '{ print $1 }')

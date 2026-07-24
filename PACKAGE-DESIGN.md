@@ -227,13 +227,14 @@ mode returns `GITHUB_AUTH_REQUIRED` with that exact remediation command.
 ### Register
 
 ```bash
-beroka-governance register /path/to/repo --version v1.0.0
+beroka-governance register /path/to/repo --version v1.0.0 --client codex
 ```
 
 Register validates the Git repository, uniquely discovered canonical remote,
-installed version, and clean state of every target entrypoint. It then creates
-the lock and merges only marker-delimited managed content. It never replaces
-existing repository rules. Running the same command again is idempotent.
+installed version, the selected entrypoint's clean state, and absence of stale
+managed entrypoints for unselected clients. It then creates the lock and merges
+only marker-delimited managed content. It never replaces existing repository
+rules. Running the same command again is idempotent.
 
 ### Doctor
 

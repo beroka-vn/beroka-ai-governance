@@ -988,7 +988,7 @@ read_lock() {
   LOCK_SOURCE= LOCK_REPOSITORY= LOCK_VERSION= LOCK_COMMIT= LOCK_CLIENTS=
   seen_source= seen_repository= seen_version= seen_commit= seen_clients=
   if ! {
-    while IFS='=' read -r key value; do
+    while IFS='=' read -r key value || [ -n "$key" ]; do
       [ -n "$key" ] || continue
       case "$key" in
         SOURCE) [ -z "$seen_source" ] || die GOVERNANCE_NOT_READY 'Duplicate SOURCE'; LOCK_SOURCE=$value; seen_source=1 ;;
@@ -1014,11 +1014,33 @@ verify_release() {
   [ "$RELEASE_COMMIT" = "$LOCK_COMMIT" ] || die VERSION_MISMATCH 'Installed commit differs from lock'
 }
 
+preflight_undeclared_entrypoints() {
+  preflight_repo=$1 preflight_clients=$2
+  if ! client_list_contains "$preflight_clients" codex &&
+    { grep -Fq "$START_MARKER" "$preflight_repo/AGENTS.md" 2>/dev/null ||
+      grep -Fq "$END_MARKER" "$preflight_repo/AGENTS.md" 2>/dev/null; }
+  then
+    die ENTRYPOINT_DRIFT 'Undeclared AGENTS.md managed block'
+  fi
+  if ! client_list_contains "$preflight_clients" claude &&
+    { grep -Fq "$START_MARKER" "$preflight_repo/CLAUDE.md" 2>/dev/null ||
+      grep -Fq "$END_MARKER" "$preflight_repo/CLAUDE.md" 2>/dev/null; }
+  then
+    die ENTRYPOINT_DRIFT 'Undeclared CLAUDE.md managed block'
+  fi
+  if ! client_list_contains "$preflight_clients" cursor &&
+    [ -e "$preflight_repo/.cursor/rules/beroka-governance.mdc" ]
+  then
+    die ENTRYPOINT_DRIFT 'Undeclared Cursor rule'
+  fi
+}
+
 verify_entrypoints() {
   entrypoints_repo=$1 entrypoints_release=$2
   agents_template=$entrypoints_release/templates/agent-entrypoints/AGENTS.md
   claude_template=$entrypoints_release/templates/agent-entrypoints/CLAUDE.md
   cursor_template=$entrypoints_release/templates/agent-entrypoints/team-dev-ai-workflow.mdc
+  preflight_undeclared_entrypoints "$entrypoints_repo" "$LOCK_CLIENTS"
   entrypoints_dir=$(mktemp -d "${TMPDIR:-/tmp}/beroka-governance-entrypoints.XXXXXX") || die GOVERNANCE_NOT_READY 'Cannot create entrypoint verification directory'
 
   if client_list_contains "$LOCK_CLIENTS" codex; then
@@ -1031,11 +1053,6 @@ verify_entrypoints() {
       rm -rf "$entrypoints_dir" || :
       die ENTRYPOINT_DRIFT 'AGENTS.md managed block differs from the release'
     fi
-  elif grep -Fq "$START_MARKER" "$entrypoints_repo/AGENTS.md" 2>/dev/null ||
-    grep -Fq "$END_MARKER" "$entrypoints_repo/AGENTS.md" 2>/dev/null
-  then
-    rm -rf "$entrypoints_dir" || :
-    die ENTRYPOINT_DRIFT 'Undeclared AGENTS.md managed block'
   fi
 
   if client_list_contains "$LOCK_CLIENTS" claude; then
@@ -1048,11 +1065,6 @@ verify_entrypoints() {
       rm -rf "$entrypoints_dir" || :
       die ENTRYPOINT_DRIFT 'CLAUDE.md managed block differs from the release'
     fi
-  elif grep -Fq "$START_MARKER" "$entrypoints_repo/CLAUDE.md" 2>/dev/null ||
-    grep -Fq "$END_MARKER" "$entrypoints_repo/CLAUDE.md" 2>/dev/null
-  then
-    rm -rf "$entrypoints_dir" || :
-    die ENTRYPOINT_DRIFT 'Undeclared CLAUDE.md managed block'
   fi
 
   if client_list_contains "$LOCK_CLIENTS" cursor; then
@@ -1062,9 +1074,6 @@ verify_entrypoints() {
       rm -rf "$entrypoints_dir" || :
       die ENTRYPOINT_DRIFT 'Cursor rule differs from the release'
     fi
-  elif [ -e "$entrypoints_repo/.cursor/rules/beroka-governance.mdc" ]; then
-    rm -rf "$entrypoints_dir" || :
-    die ENTRYPOINT_DRIFT 'Undeclared Cursor rule'
   fi
   rm -rf "$entrypoints_dir" || die GOVERNANCE_NOT_READY 'Cannot remove entrypoint verification directory'
 }
@@ -1156,6 +1165,7 @@ cmd_register() {
     repository=$(normalize_github_url "$CANONICAL_REMOTE_URL") ||
       die REMOTE_MISMATCH 'Canonical remote is not a supported GitHub repository'
     clients=$client
+    preflight_undeclared_entrypoints "$REPO" "$clients"
   fi
   release_for_version "$version"
 
@@ -1210,8 +1220,9 @@ cmd_repin() {
   prepare_registry_row "$REPO" "$repository" "$version"
 
   if [ "$dry_run" = --dry-run ]; then
+    tx_print_actions
     tx_commit
-    printf '%s\n' "Mode: $mode" "Version: $version" "$REPO/.beroka-governance.lock" "$REPO/AGENTS.md" "$REPO/CLAUDE.md" "$REPO/.cursor/rules/beroka-governance.mdc" 'Result: PASS'
+    printf '%s\n' "Mode: $mode" "Version: $version" 'Result: PASS'
     return
   fi
 

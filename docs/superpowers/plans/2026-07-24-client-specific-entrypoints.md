@@ -109,10 +109,18 @@ Add malformed lock and stale-entrypoint cases:
 
 ```sh
 cp "$codex_repo/.beroka-governance.lock" "$TMP_ROOT/codex.lock"
-printf '%s\n' 'CLIENTS=cursor,codex' \
-  >>"$codex_repo/.beroka-governance.lock"
+sed 's/^CLIENTS=.*/CLIENTS=cursor,codex/' "$TMP_ROOT/codex.lock" \
+  >"$codex_repo/.beroka-governance.lock"
 if output=$($CLI doctor "$codex_repo" 2>&1); then
-  fail 'Doctor accepted duplicate or non-canonical CLIENTS'
+  fail 'Doctor accepted non-canonical CLIENTS'
+fi
+assert_contains "$output" 'Result: GOVERNANCE_NOT_READY'
+cp "$TMP_ROOT/codex.lock" "$codex_repo/.beroka-governance.lock"
+
+sed 's/^CLIENTS=.*/CLIENTS=codex,codex/' "$TMP_ROOT/codex.lock" \
+  >"$codex_repo/.beroka-governance.lock"
+if output=$($CLI doctor "$codex_repo" 2>&1); then
+  fail 'Doctor accepted duplicate CLIENTS'
 fi
 assert_contains "$output" 'Result: GOVERNANCE_NOT_READY'
 cp "$TMP_ROOT/codex.lock" "$codex_repo/.beroka-governance.lock"
@@ -298,8 +306,9 @@ For a new registration:
 resolve_canonical_remote "$REPO"
 repository=$(normalize_github_url "$CANONICAL_REMOTE_URL") ||
   die REMOTE_MISMATCH 'Canonical remote is not a supported GitHub repository'
-release_for_version "$version"
 clients=$client
+preflight_undeclared_entrypoints "$REPO" "$clients"
+release_for_version "$version"
 ```
 
 For an existing registration:
