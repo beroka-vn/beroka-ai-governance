@@ -75,6 +75,20 @@ beroka-governance setup-connectors --client "$client"
 beroka-governance doctor /srv/beroka/backend
 ```
 
+Sau khi release có lệnh onboarding mới, có thể thay ba lệnh cuối bằng:
+
+```bash
+sh "$bootstrap_dir/repo/bin/beroka-governance" bootstrap \
+  /srv/beroka/backend --client "$client"
+```
+
+Lần đăng ký interactive đầu tiên, `bootstrap` resolve latest stable annotated
+SemVer tag từ canonical remote, hiển thị exact version/commit và hỏi xác nhận.
+Repository đã đăng ký luôn giữ lock hiện tại; không silent upgrade. Automation
+phải truyền cả `--client` và exact `--version`. Sau khi command PASS, review và
+commit các managed files qua PR rồi mở **fresh AI session**; command không tự
+commit hoặc push.
+
 `doctor` trước khi register sẽ trả `REPOSITORY_NOT_REGISTERED`; đó là expected.
 Sau khi install thành công, có thể xóa bootstrap checkout bằng
 `rm -rf "$bootstrap_dir"`.
