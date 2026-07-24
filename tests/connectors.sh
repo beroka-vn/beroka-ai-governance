@@ -19,6 +19,19 @@ export PATH
 
 cat >"$FAKE_BIN/sleep" <<'EOF'
 #!/bin/sh
+set -eu
+if [ -n "${FAKE_CODEX_READY_AFTER:-}" ]; then
+  count=$(sed -n '1p' "$XDG_CONFIG_HOME/fake-codex-polls" 2>/dev/null || :)
+  count=${count:-0}
+  count=$((count + 1))
+  printf '%s\n' "$count" >"$XDG_CONFIG_HOME/fake-codex-polls"
+  if [ "$FAKE_CODEX_READY_AFTER" != never ] &&
+     [ "$count" -ge "$FAKE_CODEX_READY_AFTER" ]
+  then
+    : >"$XDG_CONFIG_HOME/fake-codex-ready"
+  fi
+  /bin/sleep 0.01
+fi
 exit 0
 EOF
 chmod 755 "$FAKE_BIN/sleep"
@@ -138,13 +151,27 @@ case "$*" in
     printf '%s\n' healthy >"$XDG_CONFIG_HOME/fake-codex-health"
     ;;
   'app-server --stdio')
-    input=$(cat)
+    IFS= read -r request_1 || exit 1
+    IFS= read -r request_2 || exit 1
+    IFS= read -r request_3 || exit 1
+    input=$(printf '%s\n%s\n%s\n' "$request_1" "$request_2" "$request_3")
     case "$input" in
       *'config/value/write'*)
         : >"$XDG_CONFIG_HOME/fake-codex-configured"
         printf '{"id":1,"result":{}}\n'
         ;;
       *'mcpServerStatus/list'*)
+        loops=0
+        while [ -n "${FAKE_CODEX_READY_AFTER:-}" ] &&
+              [ ! -f "$XDG_CONFIG_HOME/fake-codex-ready" ] &&
+              [ "$loops" -lt 100 ]
+        do
+          /bin/sleep 0.01
+          loops=$((loops + 1))
+        done
+        [ -z "${FAKE_CODEX_READY_AFTER:-}" ] ||
+          [ -f "$XDG_CONFIG_HOME/fake-codex-ready" ] ||
+          exit 0
         health=$(sed -n '1p' "$XDG_CONFIG_HOME/fake-codex-health" 2>/dev/null || :)
         case "$health" in
           healthy)
@@ -181,6 +208,30 @@ fi
 assert_contains "$output" 'Result: ATLASSIAN_AUTH_REQUIRED'
 assert_contains "$(cat "$CALLS")" 'codex app-server --stdio'
 assert_not_contains "$(cat "$CALLS")" 'codex mcp login atlassian'
+
+printf '%s\n' auth-required >"$XDG_CONFIG_HOME/fake-codex-health"
+for ready_after in 1 3 4; do
+  rm -f \
+    "$XDG_CONFIG_HOME/fake-codex-polls" \
+    "$XDG_CONFIG_HOME/fake-codex-ready"
+  export FAKE_CODEX_READY_AFTER=$ready_after
+  if output=$($CLI setup-connectors --client codex --non-interactive 2>&1)
+  then
+    fail "Codex delayed probe $ready_after unexpectedly passed authentication"
+  fi
+  assert_contains "$output" 'Result: ATLASSIAN_AUTH_REQUIRED'
+done
+
+rm -f \
+  "$XDG_CONFIG_HOME/fake-codex-polls" \
+  "$XDG_CONFIG_HOME/fake-codex-ready"
+export FAKE_CODEX_READY_AFTER=never
+if output=$($CLI setup-connectors --client codex --non-interactive 2>&1)
+then
+  fail 'Codex probe without a response passed'
+fi
+assert_contains "$output" 'Result: GOVERNANCE_NOT_READY'
+unset FAKE_CODEX_READY_AFTER
 
 rm -f "$XDG_CONFIG_HOME/fake-codex-configured"
 : >"$CALLS"

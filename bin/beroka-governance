@@ -1502,10 +1502,77 @@ claude_atlassian_endpoint() {
   '
 }
 
+codex_probe_complete() {
+  cpc_file=$1
+  [ -s "$cpc_file" ] || return 1
+  if codex_reauthentication_required <"$cpc_file" ||
+     codex_http_auth_required <"$cpc_file"
+  then
+    return 0
+  fi
+  awk '
+    index($0, "\"id\":1") &&
+    (index($0, "\"result\"") || index($0, "\"error\"")) {
+      complete=1
+    }
+    END { exit !complete }
+  ' "$cpc_file"
+}
+
+codex_connector_probe() {
+  ccp_dir=$(mktemp -d \
+    "${TMPDIR:-/tmp}/beroka-codex-probe.XXXXXX") || return 1
+  ccp_input=$ccp_dir/input
+  ccp_output=$ccp_dir/output
+  mkfifo "$ccp_input" || {
+    rm -rf "$ccp_dir"
+    return 1
+  }
+
+  codex app-server --stdio <"$ccp_input" >"$ccp_output" 2>&1 &
+  ccp_pid=$!
+  exec 3>"$ccp_input" || {
+    kill "$ccp_pid" 2>/dev/null || :
+    wait "$ccp_pid" 2>/dev/null || :
+    rm -rf "$ccp_dir"
+    return 1
+  }
+  if ! printf '%s\n' \
+    '{"method":"initialize","id":0,"params":{"clientInfo":{"name":"beroka-governance","title":"Beroka Governance","version":"1"}}}' \
+    '{"method":"initialized","params":{}}' \
+    '{"method":"mcpServerStatus/list","id":1,"params":{"detail":"toolsAndAuthOnly","limit":100}}' \
+    >&3
+  then
+    exec 3>&-
+    kill "$ccp_pid" 2>/dev/null || :
+    wait "$ccp_pid" 2>/dev/null || :
+    rm -rf "$ccp_dir"
+    return 1
+  fi
+
+  ccp_elapsed=0
+  ccp_complete=0
+  while [ "$ccp_elapsed" -lt 15 ]; do
+    if codex_probe_complete "$ccp_output"; then
+      ccp_complete=1
+      break
+    fi
+    sleep 1
+    ccp_elapsed=$((ccp_elapsed + 1))
+  done
+
+  exec 3>&-
+  kill "$ccp_pid" 2>/dev/null || :
+  wait "$ccp_pid" 2>/dev/null || :
+  CONNECTOR_PROBE_OUTPUT=$(cat "$ccp_output" 2>/dev/null || :)
+  rm -rf "$ccp_dir"
+  [ "$ccp_complete" -eq 1 ]
+}
+
 connector_probe() {
   cp_client=$1
   [ "${CONNECTOR_PROBE_CLIENT:-}" = "$cp_client" ] && return 0
-  CONNECTOR_PROBE_CLIENT=$cp_client
+  CONNECTOR_PROBE_CLIENT=
   CONNECTOR_PROBE_OUTPUT=
   CONNECTOR_PROBE_STATUS=
   CONNECTOR_PROBE_STATE=
@@ -1513,15 +1580,7 @@ connector_probe() {
   CONNECTOR_PROBE_TOOLS_OK=0
   case "$cp_client" in
     codex)
-      CONNECTOR_PROBE_OUTPUT=$(
-        {
-          printf '%s\n' \
-            '{"method":"initialize","id":0,"params":{"clientInfo":{"name":"beroka-governance","title":"Beroka Governance","version":"1"}}}' \
-            '{"method":"initialized","params":{}}' \
-            '{"method":"mcpServerStatus/list","id":1,"params":{"detail":"toolsAndAuthOnly","limit":100}}'
-          sleep 3
-        } | codex app-server --stdio 2>&1
-      ) || return 1
+      codex_connector_probe || return 1
       ;;
     claude)
       CONNECTOR_PROBE_OUTPUT=$(claude mcp list 2>&1) || :
@@ -1567,6 +1626,7 @@ connector_probe() {
       esac
       ;;
   esac
+  CONNECTOR_PROBE_CLIENT=$cp_client
 }
 
 codex_atlassian_record() {
