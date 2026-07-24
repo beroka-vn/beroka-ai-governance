@@ -422,8 +422,8 @@ tagged commit.
 
 ## Acceptance criteria
 
-- A registered repository loads one exact central governance release in Codex,
-  Claude Code, and Cursor.
+- Every client listed in `CLIENTS` loads the same exact central governance
+  release.
 - An unregistered repository does not load the package.
 - The full governance document tree is absent from application repositories.
 - Existing repository instructions survive register, update, rollback, and
