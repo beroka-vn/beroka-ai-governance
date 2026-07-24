@@ -50,6 +50,18 @@ Review and commit the repository changes, merge them through the normal
 application-repository pull request, then start a fresh AI session. Existing
 registrations keep their lock; bootstrap never silently upgrades them.
 
+Client setup is additive: each bootstrap adds only its selected client's
+entrypoint and never rewrites entrypoints already enabled for another client.
+For example, add Claude Code later with:
+
+```bash
+beroka-governance bootstrap "$repo" --client claude
+```
+
+The reviewed repository state enables the client, but connector configuration
+and OAuth remain local to each developer machine. A developer using another
+machine may still need to complete that client's local OAuth flow.
+
 In the fresh session, load the pinned context and run the operation-specific
 gate immediately before an external write:
 

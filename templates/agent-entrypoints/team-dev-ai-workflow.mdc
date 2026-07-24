@@ -4,6 +4,6 @@ globs:
 alwaysApply: true
 ---
 
-Follow @AGENTS.md. Run `beroka-governance context "$PWD"` before governed work.
-Continue only when it returns `Result: PASS`; then use `beroka-governance show`
-to load only the relevant document or template.
+Run `beroka-governance context "$PWD"` before governed work. Continue only when
+it returns `Result: PASS`; then use `beroka-governance show` to load only the
+relevant document or template.

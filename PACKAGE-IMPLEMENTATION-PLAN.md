@@ -4,7 +4,7 @@
 
 **Goal:** Ship a version-pinned POSIX governance package that applies only to explicitly registered repositories and can be installed, validated, updated, rolled back, and removed without copying the governance bundle into application repositories.
 
-**Architecture:** One POSIX shell CLI installs immutable shallow Git checkouts under the developer's user data directory. A four-key lock file and thin Codex, Claude Code, and Cursor entrypoints route each registered repository through the exact pinned release. Read-only `doctor`, `context`, and `show` commands share one validation path; mutating commands stage all target content before applying marker-delimited changes.
+**Architecture:** One POSIX shell CLI installs immutable shallow Git checkouts under the developer's user data directory. A five-key lock file and only the client entrypoints listed in `CLIENTS` route each registered repository through the exact pinned release. Read-only `doctor`, `context`, and `show` commands share one validation path; mutating commands stage all target content before applying marker-delimited changes.
 
 **Tech Stack:** POSIX `sh`, Git, standard POSIX utilities, Markdown, and one framework-free shell smoke test.
 
@@ -368,7 +368,7 @@ git commit -m "feat(package): validate pinned governance context"
 
 **Interfaces:**
 - Consumes: installed release version, clean target entrypoint paths, and normalized application `origin`.
-- Produces: `register REPO --version VERSION [--dry-run]`, `.beroka-governance.lock`, marker-delimited `AGENTS.md` and `CLAUDE.md` content, dedicated Cursor rule, and one local registry row formatted as `absolute-path<TAB>repository<TAB>version`.
+- Produces: `register REPO --version VERSION --client codex|claude|cursor [--dry-run]`, `.beroka-governance.lock`, the selected marker-delimited entrypoint, and one local registry row formatted as `absolute-path<TAB>repository<TAB>version`.
 
 - [ ] **Step 1: Add failing registration cases to the smoke test**
 
@@ -381,9 +381,9 @@ printf '# Existing Claude rules\n\nKeep this Claude line.\n' >"$register_repo/CL
 git -C "$register_repo" add AGENTS.md CLAUDE.md
 git -C "$register_repo" commit -qm 'test: add existing agent rules'
 
-$CLI register "$register_repo" --version v1.0.0
+$CLI register "$register_repo" --version v1.0.0 --client codex
 first_hash=$(git -C "$register_repo" hash-object AGENTS.md CLAUDE.md .beroka-governance.lock .cursor/rules/beroka-governance.mdc)
-$CLI register "$register_repo" --version v1.0.0
+$CLI register "$register_repo" --version v1.0.0 --client codex
 second_hash=$(git -C "$register_repo" hash-object AGENTS.md CLAUDE.md .beroka-governance.lock .cursor/rules/beroka-governance.mdc)
 [ "$first_hash" = "$second_hash" ] || fail 'repeated register changed managed files'
 assert_contains "$(cat "$register_repo/AGENTS.md")" 'Keep this line.'
@@ -393,14 +393,14 @@ assert_contains "$(cat "$register_repo/.beroka-governance.lock")" 'REPOSITORY=be
 dry_repo=$TMP_ROOT/dry-consumer
 new_repo "$dry_repo"
 git -C "$dry_repo" remote add origin https://github.com/beroka-vn/dry-backend.git
-$CLI register "$dry_repo" --version v1.0.0 --dry-run >/dev/null
+$CLI register "$dry_repo" --version v1.0.0 --client codex --dry-run >/dev/null
 [ ! -e "$dry_repo/.beroka-governance.lock" ] || fail 'dry-run created a lock'
 
 dirty_repo=$TMP_ROOT/dirty-consumer
 new_repo "$dirty_repo"
 git -C "$dirty_repo" remote add origin https://github.com/beroka-vn/dirty-backend.git
 printf 'uncommitted rules\n' >"$dirty_repo/AGENTS.md"
-if $CLI register "$dirty_repo" --version v1.0.0 >/dev/null 2>&1; then fail 'register accepted a dirty target entrypoint'; fi
+if $CLI register "$dirty_repo" --version v1.0.0 --client codex >/dev/null 2>&1; then fail 'register accepted a dirty target entrypoint'; fi
 [ "$(cat "$dirty_repo/AGENTS.md")" = 'uncommitted rules' ] || fail 'failed preflight modified AGENTS.md'
 
 printf 'PASS: repository registration\n'
@@ -793,7 +793,7 @@ $CLI install v1.1.0
 force_repo=$TMP_ROOT/force-consumer
 new_repo "$force_repo"
 git -C "$force_repo" remote add origin https://github.com/beroka-vn/force-backend.git
-$CLI register "$force_repo" --version v1.1.0
+$CLI register "$force_repo" --version v1.1.0 --client codex
 $CLI uninstall --force
 [ -e "$force_repo/.beroka-governance.lock" ] || fail 'force uninstall edited application repository'
 if $CLI doctor "$force_repo" >/dev/null 2>&1; then fail 'force-uninstalled repository did not fail closed'; fi
@@ -884,7 +884,7 @@ git clone --depth 1 --single-branch --branch "$release" \
   https://github.com/beroka-vn/beroka-ai-governance.git \
   "$bootstrap_dir/repo"
 sh "$bootstrap_dir/repo/bin/beroka-governance" install "$release"
-beroka-governance register /srv/beroka/backend --version "$release"
+beroka-governance register /srv/beroka/backend --version "$release" --client codex
 beroka-governance doctor /srv/beroka/backend
 ```
 
