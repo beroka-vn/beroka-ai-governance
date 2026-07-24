@@ -457,6 +457,17 @@ tx_begin() {
 
 tx_stage_write() {
   relative=$1 source_file=$2
+  if ! git -C "$TX_REPO" ls-files --error-unmatch -- "$relative" \
+    >/dev/null 2>&1
+  then
+    if git -C "$TX_REPO" check-ignore -q --no-index -- "$relative"; then
+      die WORKTREE_CONFLICT "Ignored target entrypoint: $relative"
+    else
+      ignore_status=$?
+      [ "$ignore_status" -eq 1 ] ||
+        die GOVERNANCE_NOT_READY "Cannot inspect ignore rules: $relative"
+    fi
+  fi
   same_target "$TX_REPO/$relative" "$source_file" && return 0
   target_dirty "$TX_REPO" "$relative" || die WORKTREE_CONFLICT "Dirty target entrypoint: $relative"
   mkdir -p "$TX_DIR/staged/$(dirname -- "$relative")" || die GOVERNANCE_NOT_READY "Cannot stage directory: $relative"
