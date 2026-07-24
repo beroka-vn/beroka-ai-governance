@@ -314,16 +314,12 @@ git -C "$consumer" remote add upstream \
   https://github.com/beroka-vn/routing-consumer.git
 git -C "$consumer" fetch -q upstream trunk
 git -C "$consumer" switch -qc trunk FETCH_HEAD
-$CLI register "$consumer" --version v1.1.0
+$CLI register "$consumer" --version v1.1.0 --client codex
 git -C "$consumer" add .
 git -C "$consumer" commit -qm 'test: register governance'
 cp "$consumer/.beroka-governance.lock" "$remote_work/.beroka-governance.lock"
-cp "$consumer/AGENTS.md" "$consumer/CLAUDE.md" "$remote_work/"
-mkdir -p "$remote_work/.cursor/rules"
-cp "$consumer/.cursor/rules/beroka-governance.mdc" \
-  "$remote_work/.cursor/rules/beroka-governance.mdc"
-git -C "$remote_work" add .beroka-governance.lock AGENTS.md CLAUDE.md \
-  .cursor/rules/beroka-governance.mdc
+cp "$consumer/AGENTS.md" "$remote_work/AGENTS.md"
+git -C "$remote_work" add .beroka-governance.lock AGENTS.md
 git -C "$remote_work" commit -qm 'test: register application'
 git -C "$remote_work" push -q origin trunk
 

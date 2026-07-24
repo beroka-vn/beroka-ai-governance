@@ -514,7 +514,7 @@ mkdir -p \
   "$RELEASE_SOURCE/runtime" \
   "$RELEASE_SOURCE/templates/agent-entrypoints" \
   "$RELEASE_DIR" \
-  "$CONSUMER/.cursor/rules"
+  "$CONSUMER"
 cp "$CLI" "$RELEASE_SOURCE/bin/beroka-governance"
 printf '%s\n' "$RELEASE_VERSION" >"$RELEASE_SOURCE/VERSION"
 for release_file in governance.md handbook.md workflow.md; do
@@ -554,14 +554,12 @@ git -C "$CONSUMER" commit -qm 'test consumer'
 git -C "$CONSUMER" remote add origin \
   https://github.com/beroka-vn/consumer.git
 cp "$RELEASE_SOURCE/templates/agent-entrypoints/AGENTS.md" "$CONSUMER/AGENTS.md"
-cp "$RELEASE_SOURCE/templates/agent-entrypoints/CLAUDE.md" "$CONSUMER/CLAUDE.md"
-cp "$RELEASE_SOURCE/templates/agent-entrypoints/team-dev-ai-workflow.mdc" \
-  "$CONSUMER/.cursor/rules/beroka-governance.mdc"
 printf '%s\n' \
   'SOURCE=beroka-vn/beroka-ai-governance' \
   'REPOSITORY=beroka-vn/consumer' \
   "VERSION=$RELEASE_VERSION" \
   "COMMIT=$RELEASE_COMMIT" \
+  'CLIENTS=codex' \
   >"$CONSUMER/.beroka-governance.lock"
 
 printf '%s\n' auth-required >"$XDG_CONFIG_HOME/fake-codex-health"

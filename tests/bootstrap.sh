@@ -216,6 +216,14 @@ grep -F 'VERSION=v1.2.0' "$repo/.beroka-governance.lock" >/dev/null ||
   fail 'bootstrap did not pin the resolved version'
 grep -F "COMMIT=$v1_2_commit" "$repo/.beroka-governance.lock" >/dev/null ||
   fail 'bootstrap did not pin the resolved commit'
+grep -Fx 'CLIENTS=codex' "$repo/.beroka-governance.lock" >/dev/null ||
+  fail 'bootstrap did not record the selected client'
+[ -f "$repo/AGENTS.md" ] ||
+  fail 'Codex bootstrap omitted AGENTS.md'
+[ ! -e "$repo/CLAUDE.md" ] ||
+  fail 'Codex bootstrap created CLAUDE.md'
+[ ! -e "$repo/.cursor" ] ||
+  fail 'Codex bootstrap created .cursor'
 assert_contains "$(cat "$CALLS")" 'codex app-server --stdio'
 assert_not_contains "$(cat "$CALLS")" 'claude '
 
@@ -229,6 +237,9 @@ assert_contains "$output" 'Version: v1.2.0'
 assert_contains "$output" 'Selected client: codex'
 assert_contains "$output" 'Repository changes: NONE'
 
+git -C "$repo" add .beroka-governance.lock AGENTS.md
+git -C "$repo" commit -qm 'test: commit Codex bootstrap'
+
 if output=$($CLI bootstrap "$repo" --client codex \
   --version v1.1.0 --non-interactive 2>&1)
 then
@@ -241,8 +252,23 @@ chmod 755 "$FAKE_BIN/claude"
 : >"$CALLS"
 output=$($CLI bootstrap "$repo" --client claude --non-interactive)
 assert_contains "$output" 'Selected client: claude'
+assert_contains "$output" 'Repository changes: REVIEW_REQUIRED'
+grep -Fx 'CLIENTS=codex,claude' \
+  "$repo/.beroka-governance.lock" >/dev/null ||
+  fail 'second bootstrap did not add Claude'
+[ -f "$repo/CLAUDE.md" ] ||
+  fail 'second bootstrap omitted CLAUDE.md'
+[ ! -e "$repo/.cursor" ] ||
+  fail 'second bootstrap created Cursor files'
 assert_contains "$(cat "$CALLS")" 'claude mcp'
 assert_not_contains "$(cat "$CALLS")" 'codex '
+
+before=$(snapshot_repo "$repo")
+output=$($CLI bootstrap "$repo" --client claude --non-interactive)
+after=$(snapshot_repo "$repo")
+[ "$before" = "$after" ] ||
+  fail 'repeat Claude bootstrap changed an already registered repository'
+assert_contains "$output" 'Repository changes: NONE'
 
 multi_repo=$TEST_ROOT/multiple-clients
 new_repo "$multi_repo" bootstrap-multiple
