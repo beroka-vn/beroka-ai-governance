@@ -51,6 +51,21 @@ conflict with Jira.
 - Documentation: None | <details>
 - Frontend impact: None — <reason> | Handoff required
 
+### Documentation change (when documentation is affected)
+
+- Canonical document content ID/path:
+- Capability ID:
+- Capability Registry reference:
+- Sections changed:
+- Change class: docs-only | contract-compatible | contract-breaking
+- Contract artifact/version/commit: <before → after | N/A>
+- Document revision: <before → after | N/A for repository files>
+- Additional related Jira items:
+
+Several Jira items may reference the same canonical page; this PR still closes
+one primary GitHub Issue and Jira item. Update existing Confluence content by
+exact content ID rather than title similarity.
+
 ## Frontend evidence (when UI is affected)
 
 - Before:
@@ -68,6 +83,7 @@ conflict with Jira.
 
 ## BE → FE handoff (when Frontend impact != None)
 
+- Capability ID and Registry reference:
 - Epic Integration Hub:
 - Linked Frontend Jira/GitHub issue(s):
 - Canonical contract artifact/version/commit:

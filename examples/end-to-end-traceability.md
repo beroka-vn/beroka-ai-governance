@@ -60,6 +60,17 @@ implementation bắt đầu.
 Manager cập nhật coordination item `APP-120`, cross-links `BB-120` và `BF-87`,
 và link cả hai tới cùng một Integration Hub.
 
+### Backend Capability Registry
+
+```markdown
+| Capability ID | Scope / domain / transport | Repository artifact | Canonical Confluence content | Owner / version |
+| --- | --- | --- | --- | --- |
+| `PORTFOLIO-SUMMARY` | Derivatives / User / API | `contracts/openapi.yaml` | `BE-DOC-PORTFOLIO-SUMMARY` | Backend / Pending |
+```
+
+Registry row là canonical mapping. Page `BE-DOC-PORTFOLIO-SUMMARY` thuộc Folder
+`Derivatives — User — API`; Hub và FE Index chỉ tham chiếu row này.
+
 ### Epic Integration Hub `APP-INTEGRATION-12`
 
 ```markdown
@@ -69,13 +80,13 @@ và link cả hai tới cùng một Integration Hub.
 - Frontend Epic/Task: BF-87
 - Coordinator: An
 
-| Capability | BE issue/PR | Contract artifact/version | Handoff state | FE issue/PR | Breaking |
+| Registry reference | BE issue/PR | Handoff state | FE issue/PR | Breaking |
 | --- | --- | --- | --- | --- | --- |
-| Portfolio summary API | #121 / Pending | `contracts/openapi.yaml`, Pending | DRAFT | #122 / Pending | None |
+| `PORTFOLIO-SUMMARY` — `BE-CAP-REGISTRY#PORTFOLIO-SUMMARY` | #121 / Pending | DRAFT | #122 / Pending | None |
 ```
 
-Hub là current-state index. OpenAPI body vẫn thuộc Backend repository; Hub chỉ
-link exact path/version và không copy schema.
+Hub là Epic current-state index. OpenAPI body vẫn thuộc Backend repository; Hub
+chỉ tham chiếu Registry row và không copy schema.
 
 ## 3. Backend Issue `#121`
 
@@ -87,6 +98,8 @@ link exact path/version và không copy schema.
 - Jira task: BB-120; coordination item APP-120
 - Product docs: Confluence/APP-PORTFOLIO-OVERVIEW
 - Epic Integration Hub: APP-INTEGRATION-12
+- Capability ID: PORTFOLIO-SUMMARY
+- Capability Registry reference: BE-CAP-REGISTRY#PORTFOLIO-SUMMARY
 - Related issues: BF-87 / #122 consumes this API
 
 ## Classification
@@ -140,6 +153,8 @@ accounts; verify `200`, `200` and `401` respectively.
 
 - Epic Integration Hub: APP-INTEGRATION-12
 - Frontend Jira/GitHub issue: BF-87 / #122
+- Capability ID / Registry reference:
+  `PORTFOLIO-SUMMARY` / `BE-CAP-REGISTRY#PORTFOLIO-SUMMARY`
 - Canonical contract artifact/version: `contracts/openapi.yaml`, pending merge
 - State: DRAFT
 ```
@@ -198,6 +213,9 @@ Sau merge, Nam cập nhật Hub và linked FE issue:
 
 - Backend Jira/GitHub issue and merged PR: BB-120 / #121 / #131
 - Frontend Jira/GitHub issue: BF-87 / #122
+- Capability ID / Registry reference:
+  `PORTFOLIO-SUMMARY` / `BE-CAP-REGISTRY#PORTFOLIO-SUMMARY`
+- Canonical document content ID: `BE-DOC-PORTFOLIO-SUMMARY`
 - Canonical contract artifact/version/commit:
   `contracts/openapi.yaml`, `portfolio-summary-v1`, merge commit `aaaa1111`
 - Authentication: existing authenticated portfolio scope
@@ -223,6 +241,9 @@ tự tổng hợp contract từ nội dung `#121` và PR comments.
 - Jira task: BF-87; coordination item APP-120
 - Design: Figma/portfolio-dashboard-v2
 - Epic Integration Hub: APP-INTEGRATION-12
+- Capability ID: PORTFOLIO-SUMMARY
+- Capability Registry reference: BE-CAP-REGISTRY#PORTFOLIO-SUMMARY
+- Frontend Capability Index: `Portfolio — Capability Index`
 - Dependency: `portfolio-summary-v1` handoff from BB-120 / #121 — ACKNOWLEDGED
 
 ## Classification
@@ -333,6 +354,8 @@ AI review current SHA, approve và squash merge theo authorization. GitHub đón
 | GitHub Issues | #121, #122 |
 | Merged PRs | #131, #132 |
 | Epic Integration Hub | APP-INTEGRATION-12 |
+| Capability Registry reference | BE-CAP-REGISTRY#PORTFOLIO-SUMMARY |
+| Frontend Capability Index | Portfolio — Capability Index |
 
 ## Summary
 
@@ -383,6 +406,8 @@ An cập nhật `APP-120`:
 
 - Confluence: APP-DOC-45
 - Epic Integration Hub: APP-INTEGRATION-12 — current contract `portfolio-summary-v1`
+- Capability Registry: `PORTFOLIO-SUMMARY` — `BE-CAP-REGISTRY#PORTFOLIO-SUMMARY`
+- Frontend Capability Index: `Portfolio — Capability Index`
 - Documentation status: Updated
 
 ### Final status
@@ -398,8 +423,10 @@ Jira chỉ chuyển `Done` sau khi các links trên đã được kiểm tra.
 | From | To | Evidence |
 | --- | --- | --- |
 | `APP-120` | `BB-120`, `BF-87`, `APP-INTEGRATION-12` | Coordination links |
-| `BB-120` / `#121` | `portfolio-summary-v1`, `BF-87` / `#122` | READY_FOR_FE handoff |
-| `BF-87` / `#122` | `portfolio-summary-v1` | FE ACKNOWLEDGED record |
+| `PORTFOLIO-SUMMARY` Registry row | `contracts/openapi.yaml`, `BE-DOC-PORTFOLIO-SUMMARY` | Canonical artifact and content links |
+| `APP-INTEGRATION-12` | `PORTFOLIO-SUMMARY` Registry row, `BB-120`, `BF-87` | Epic mapping and Registry reference |
+| `BB-120` / `#121` | `PORTFOLIO-SUMMARY`, `portfolio-summary-v1`, `BF-87` / `#122` | READY_FOR_FE handoff |
+| `BF-87` / `#122` | `PORTFOLIO-SUMMARY`, `portfolio-summary-v1`, `Portfolio — Capability Index` | FE ACKNOWLEDGED record |
 | `#121` | `feature/121-portfolio-summary-api`, `#131` | Branch name và `Closes #121` |
 | `#122` | `feature/122-portfolio-summary-card`, `#132` | Branch name và `Closes #122` |
 | `#131`, `#132` | `APP-INTEGRATION-12`, `APP-DOC-45` | Hub and completion metadata |

@@ -230,6 +230,34 @@ Lifecycle onboarding:
 6. Khi offline, `context` chỉ block routing-dependent external writes;
    source-only work vẫn tiếp tục.
 
+### Confluence capability hierarchy
+
+Backend canonical documentation uses one `Backend Capability Registry` and
+globally unique Folder names:
+
+```text
+<Scope> — <Domain> — <Transport>
+<Scope> — <Domain> — <Capability group> — <Transport>
+```
+
+Scope is `Shared`, `Derivatives`, or `Underlying`; domain is `Market` or `User`;
+transport is `API` or `WebSocket`. Examples include
+`Shared — Market — API`, `Derivatives — User — WebSocket`,
+`Shared — Market — Market Indices — API`, and
+`Shared — Market — Market Indices — WebSocket`. Do not create repeated generic
+Folders named only `Market`, `User`, `API`, or `WebSocket`.
+
+Each Capability ID maps one semantic capability, one transport, one Registry
+row, and one canonical page. Epic Integration Hubs reference Registry rows.
+Frontend module pages use `<Module> — Capability Index` and link exact Backend
+content IDs and artifact versions; they never copy contract payloads.
+
+Nếu thiếu exact Registry content ID, scope/domain/transport, parent hoặc
+Capability ID, trả `ROUTING_REQUIRED`. Nếu Folder thiếu, trả
+`FOLDER_CREATION_REQUIRED`; nếu readback sai parent, trả
+`DOC_HIERARCHY_FAILED`. Không fallback sang space root hoặc tìm bằng title gần
+giống.
+
 ### Lock và thin entrypoints
 
 Register tạo đúng các artifact package-owned sau, không copy toàn bộ runtime hay

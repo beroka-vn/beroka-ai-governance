@@ -34,8 +34,9 @@ agent. Repository-specific instructions and the linked issue take precedence.
   unclear, ask the developer. If a dependency is confirmed but the counterpart
   is absent, use `MAPPING_INCOMPLETE`; do not invent or silently create BB work.
 - For a BF child with BE dependency, resolve its BF parent, paired BB Epic,
-  exact BB work item, link type, Capability ID, Hub row, and contract/handoff
-  state before reporting the dependent scope Ready.
+  exact BB work item, link type, Capability ID, Backend Capability Registry
+  row, Hub reference, and contract/handoff state before reporting the dependent
+  scope Ready.
 - Automatically classify the request as `planning-only` or `execution`. A
   request to plan and then implement uses `execution`; ask one mode question
   only when intent cannot be determined from the request.
@@ -62,21 +63,24 @@ agent. Repository-specific instructions and the linked issue take precedence.
   of duplicating the Issue.
 - Route Frontend documentation to
   https://beroka.atlassian.net/wiki/spaces/Berokafron and Backend documentation
-  to https://beroka.atlassian.net/wiki/spaces/Berokaback/overview, under a
-  native Folder named `<Epic key> — <Epic summary>`.
+  to https://beroka.atlassian.net/wiki/spaces/Berokaback/overview. Durable
+  capability pages use globally unique `<Scope> — <Domain> — <Transport>`
+  Folders. Epic-specific pages use `<Epic key> — <Epic summary>`.
 - If the native Epic Folder is missing or cannot be created through the
   connector, return `FOLDER_CREATION_REQUIRED`. Never fall back to a parent page
   or space root. Verify page `parentId` and `parentType = Folder` after writes;
   otherwise return `DOC_HIERARCHY_FAILED`.
 - For BE work consumed by FE, use one confirmed Epic Integration Hub linked
-  from both Jira projects. Keep the canonical OpenAPI/JSON Schema/event schema
-  in the BE repository; never make FE reconstruct it from issue descriptions.
+  from both Jira projects and exact Backend Capability Registry rows. Keep the
+  canonical OpenAPI/JSON Schema/event schema in the BE repository; never make
+  FE reconstruct it from issue descriptions.
 - Pair project-local BB/BF Epics with `Relates`. Map one Backend Feature to one
   or more BF items using `Blocks` plus one exact immutable Capability ID in the
-  canonical Hub row; title similarity is never mapping evidence.
-- A BF item and its FE `Frontend Index` must link the shared Hub. If FE cannot
-  open the owning BE Folder/Hub, return `CROSS_SPACE_ACCESS_REQUIRED`; do not
-  duplicate the contract in FE Confluence.
+  canonical Registry row; title similarity is never mapping evidence.
+- A BF item and its FE `<Module> — Capability Index` must link the Registry row
+  and shared Hub. If FE cannot open the owning BE Folder/Hub, return
+  `CROSS_SPACE_ACCESS_REQUIRED`; do not duplicate the contract in FE
+  Confluence.
 - Do not report a BE → FE handoff as `READY_FOR_FE` until the BE PR is merged,
   the exact contract artifact/version is published, the Hub is updated, and a
   usable test path exists. Notify the linked FE issue and record acknowledgement.
@@ -158,7 +162,7 @@ Cross-project counterpart confirmation
 - Proposed aligned base name: <name | keep requested name | N/A>
 - Proposed Epic link: Relates | None
 - Proposed child link: Blocks | Relates | None
-- Capability ID / Integration Hub row: <exact values | Pending | N/A>
+- Capability ID / Registry row / Integration Hub: <exact values | Pending | N/A>
 - Developer decision: pair existing | Frontend-only | Pending with owner | cancel
 - Result: PASS | NO_BACKEND_DEPENDENCY | MAPPING_INCOMPLETE | MAPPING_CONFLICT | FAILED_READBACK
 ```
@@ -351,15 +355,16 @@ BE → FE handoff
 - Ready/acknowledged by and at:
 ```
 
-The BE owner updates the Hub and linked FE issue after merge. The FE owner
-acknowledges the exact contract version before dependent implementation. A
-contract change after acknowledgement creates a new version, marks the old
-handoff `SUPERSEDED`, and triggers a new notification; never silently rewrite
-an acknowledged contract.
+The BE owner updates the Registry row, referencing Hubs, and linked FE issue
+after merge. The FE owner acknowledges the exact contract version before
+dependent implementation. A contract change after acknowledgement creates a
+new version, marks the old handoff `SUPERSEDED`, and triggers a new
+notification; never silently rewrite an acknowledged contract.
 
 ## Cross-Team Capability Mapping Template
 
-Use one exact immutable Capability ID and one canonical Integration Hub row.
+Use one exact immutable Capability ID and one canonical Backend Capability
+Registry row. Each Epic Integration Hub references that row.
 Stop with `MAPPING_INCOMPLETE` when required records are still pending with a
 named owner. Stop with `MAPPING_CONFLICT` when the ID is missing, duplicated, or
 disagrees with Jira links; title similarity is not mapping evidence.
@@ -373,12 +378,13 @@ from provider to consumer, while non-blocking same-capability children use
 ```text
 CROSS-TEAM MAPPING
 - Capability ID: exact uppercase kebab-case value
+- Backend Capability Registry row: exact URL/content ID and readback
 - Backend Epic and Feature: Jira keys and URLs
 - Frontend Epic: Jira key and URL
 - Frontend work items: one or more Jira keys/URLs or Pending with owner
 - Epic link: Relates readback result
 - Child links: Blocks | Relates | None, with readback result
-- Integration Hub row: URL and exact row readback result
+- Integration Hub Registry reference: URL and exact readback result
 - Result: PASS | NO_BACKEND_DEPENDENCY | MAPPING_INCOMPLETE | MAPPING_CONFLICT | FAILED_READBACK
 ```
 
@@ -407,7 +413,7 @@ EPIC FOLDER HIERARCHY VERIFICATION
 - Page URL/ID: <URL/ID>
 - Page parent readback: <parentId and parentType = Folder | DOC_HIERARCHY_FAILED>
 - Shared Integration Hub: <URL and access PASS | CROSS_SPACE_ACCESS_REQUIRED>
-- Frontend Index: <URL and Hub link readback | Pending with owner | N/A>
+- Frontend Capability Index: <URL and Registry/Hub link readback | Pending with owner | N/A>
 - Result: <PASS | FOLDER_CREATION_REQUIRED | CROSS_SPACE_ACCESS_REQUIRED |
   DOC_HIERARCHY_FAILED | FAILED_READBACK>
 ```
