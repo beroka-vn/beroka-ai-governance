@@ -114,6 +114,45 @@ after=$(git -C "$target_repo" status --porcelain=v1)
   fail 'launcher changed the target before release verification'
 assert_contains "$output" 'Result: RELEASE_VERIFICATION_FAILED'
 
+printf '%s\n' competing >"$source_repo/VERSION"
+git -C "$source_repo" add VERSION
+git -C "$source_repo" commit -qm 'test: competing release branch'
+git -C "$source_repo" branch v9.9.9
+fake_bin=$TEST_ROOT/fake-bin
+real_git=$(command -v git)
+mkdir -p "$fake_bin"
+cat >"$fake_bin/git" <<EOF
+#!/bin/sh
+set -eu
+if [ "\$#" -gt 0 ] && [ "\$1" = clone ]; then
+  "$real_git" "\$@"
+  destination=
+  for argument do
+    destination=\$argument
+  done
+  "$real_git" -C "\$destination" fetch --quiet --depth 1 \\
+    "file://$source_repo" refs/tags/v9.9.9:refs/tags/v9.9.9
+  "$real_git" -C "\$destination" fetch --quiet --depth 2 \\
+    "file://$source_repo" refs/heads/v9.9.9
+  "$real_git" -C "\$destination" checkout --quiet FETCH_HEAD
+else
+  exec "$real_git" "\$@"
+fi
+EOF
+chmod 755 "$fake_bin/git"
+before=$(git -C "$target_repo" status --porcelain=v1)
+if output=$(cd "$target_repo" &&
+  PATH="$fake_bin:$PATH" sh "$asset" --client codex --non-interactive 2>&1)
+then
+  fail 'launcher accepted a competing release branch'
+fi
+after=$(git -C "$target_repo" status --porcelain=v1)
+[ "$before" = "$after" ] ||
+  fail 'launcher changed the target before HEAD verification'
+assert_contains "$output" 'Result: RELEASE_VERIFICATION_FAILED'
+assert_contains "$output" 'The cloned release does not match the embedded commit'
+git -C "$source_repo" branch -D v9.9.9 >/dev/null
+
 : >"$calls"
 output=$(cd "$target_repo" &&
   sh "$asset" --client codex --non-interactive)

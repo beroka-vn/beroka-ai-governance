@@ -93,10 +93,15 @@ git clone --quiet --depth 1 --single-branch \
 tag_type=$(git -C "$bootstrap_root/repo" \
   cat-file -t "refs/tags/$RELEASE_VERSION" 2>/dev/null || :)
 actual_commit=$(git -C "$bootstrap_root/repo" \
-  rev-parse "$RELEASE_VERSION^{commit}" 2>/dev/null || :)
+  rev-parse "refs/tags/$RELEASE_VERSION^{commit}" 2>/dev/null || :)
 [ "$tag_type" = tag ] && [ "$actual_commit" = "$RELEASE_COMMIT" ] ||
   die RELEASE_VERIFICATION_FAILED \
     'The release tag does not match the embedded commit'
+checked_out_commit=$(git -C "$bootstrap_root/repo" \
+  rev-parse HEAD 2>/dev/null || :)
+[ "$checked_out_commit" = "$RELEASE_COMMIT" ] ||
+  die RELEASE_VERIFICATION_FAILED \
+    'The cloned release does not match the embedded commit'
 
 cli=$bootstrap_root/repo/bin/beroka-governance
 if [ "$non_interactive" -eq 1 ]; then
