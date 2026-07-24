@@ -40,6 +40,7 @@ die() {
 usage() {
   printf '%s\n' \
     'Usage:' \
+    '  beroka-governance bootstrap REPO [--client codex|claude|cursor] [--version vX.Y.Z] [--non-interactive]' \
     '  beroka-governance install VERSION' \
     '  beroka-governance register REPO --version VERSION [--dry-run]' \
     '  beroka-governance update REPO --to VERSION [--dry-run]' \
@@ -665,6 +666,52 @@ prepare_release() {
   fi
 }
 
+remote_release_commit() {
+  rrc_version=$1
+  rrc_output=$(git ls-remote --tags "$REMOTE_URL" \
+    "refs/tags/$rrc_version" "refs/tags/$rrc_version^{}" 2>/dev/null) ||
+    die RELEASE_RESOLUTION_REQUIRED "Cannot verify release: $rrc_version"
+  REMOTE_RELEASE_COMMIT=$(printf '%s\n' "$rrc_output" |
+    awk -v ref="refs/tags/$rrc_version^{}" '
+      $2 == ref && $1 ~ /^[0-9a-f]{40}$/ { commit=$1; matches++ }
+      END { if (matches == 1) print commit; else exit 1 }
+    ') || die RELEASE_RESOLUTION_REQUIRED \
+    "Release is not an exact stable annotated tag: $rrc_version"
+}
+
+resolve_latest_release() {
+  rlr_output=$(git ls-remote --tags "$REMOTE_URL" 2>/dev/null) ||
+    die RELEASE_RESOLUTION_REQUIRED 'Cannot resolve the latest governance release'
+  rlr_selected=$(printf '%s\n' "$rlr_output" |
+    awk '
+      $1 ~ /^[0-9a-f]{40}$/ &&
+      $2 ~ /^refs\/tags\/v[0-9]+\.[0-9]+\.[0-9]+\^\{\}$/ {
+        version=$2
+        sub(/^refs\/tags\/v/, "", version)
+        sub(/\^\{\}$/, "", version)
+        split(version, part, ".")
+        if (!found ||
+            part[1] + 0 > major ||
+            (part[1] + 0 == major && part[2] + 0 > minor) ||
+            (part[1] + 0 == major && part[2] + 0 == minor &&
+             part[3] + 0 > patch)) {
+          found=1
+          major=part[1] + 0
+          minor=part[2] + 0
+          patch=part[3] + 0
+          commit=$1
+        }
+      }
+      END {
+        if (!found) exit 1
+        print "v" major "." minor "." patch "\t" commit
+      }
+    ') || die RELEASE_RESOLUTION_REQUIRED \
+    'No stable annotated governance release is available'
+  RESOLVED_VERSION=${rlr_selected%%	*}
+  REMOTE_RELEASE_COMMIT=${rlr_selected#*	}
+}
+
 prepare_cli() {
   cp "$RELEASE_DIR/bin/beroka-governance" "$TX_DIR/work/cli" || die GOVERNANCE_NOT_READY 'Cannot stage the user CLI'
   chmod 755 "$TX_DIR/work/cli" || die GOVERNANCE_NOT_READY 'Cannot prepare the user CLI'
@@ -699,6 +746,128 @@ cmd_install() {
   activate_cli
   tx_commit
   printf '%s\n' "Installed: $ci_version" 'Result: PASS'
+}
+
+managed_repo_snapshot() {
+  mrs_repo=$1
+  mrs_paths='AGENTS.md CLAUDE.md .beroka-governance.lock .cursor/rules/beroka-governance.mdc'
+  git -C "$mrs_repo" status --porcelain=v1 -- $mrs_paths
+  git -C "$mrs_repo" ls-files -s -- $mrs_paths
+  for mrs_path in $mrs_paths; do
+    [ ! -f "$mrs_repo/$mrs_path" ] ||
+      printf '%s\t%s\n' "$mrs_path" \
+        "$(git hash-object --no-filters "$mrs_repo/$mrs_path")"
+  done
+}
+
+cmd_bootstrap() {
+  [ "$#" -ge 1 ] || { usage >&2; exit 2; }
+  bs_requested=$1
+  shift
+  bs_client= bs_version= bs_non_interactive=0
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --client)
+        [ -z "$bs_client" ] && [ "$#" -ge 2 ] ||
+          { usage >&2; exit 2; }
+        case "$2" in
+          codex|claude|cursor) bs_client=$2 ;;
+          *) usage >&2; exit 2 ;;
+        esac
+        shift 2
+        ;;
+      --version)
+        [ -z "$bs_version" ] && [ "$#" -ge 2 ] ||
+          { usage >&2; exit 2; }
+        printf '%s\n' "$2" |
+          grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$' ||
+          { usage >&2; exit 2; }
+        bs_version=$2
+        shift 2
+        ;;
+      --non-interactive)
+        [ "$bs_non_interactive" -eq 0 ] ||
+          { usage >&2; exit 2; }
+        bs_non_interactive=1
+        shift
+        ;;
+      *) usage >&2; exit 2 ;;
+    esac
+  done
+
+  bs_interactive=0
+  if [ "$bs_non_interactive" -eq 0 ] && [ -t 0 ] && [ -t 1 ]; then
+    bs_interactive=1
+  fi
+  if [ -z "$bs_client" ]; then
+    [ "$bs_interactive" -eq 1 ] || { usage >&2; exit 2; }
+    bs_client=$(detect_client)
+  fi
+  require_client "$bs_client"
+
+  bs_repo=$(canonical_repo "$bs_requested")
+  assert_safe_managed_paths "$bs_repo"
+  if [ -f "$bs_repo/.beroka-governance.lock" ]; then
+    read_lock "$bs_repo"
+    resolve_canonical_remote "$bs_repo" "$LOCK_REPOSITORY"
+    if [ -n "$bs_version" ] && [ "$bs_version" != "$LOCK_VERSION" ]; then
+      die VERSION_MISMATCH \
+        "Repository is pinned to $LOCK_VERSION; use update to change it"
+    fi
+    bs_version=$LOCK_VERSION
+    bs_expected_commit=$LOCK_COMMIT
+  else
+    resolve_canonical_remote "$bs_repo"
+    normalize_github_url "$CANONICAL_REMOTE_URL" >/dev/null ||
+      die REMOTE_MISMATCH \
+        'Canonical remote is not a supported GitHub repository'
+    if [ -z "$bs_version" ]; then
+      [ "$bs_interactive" -eq 1 ] ||
+        die RELEASE_RESOLUTION_REQUIRED \
+          'Non-interactive first registration requires --version vX.Y.Z'
+      resolve_latest_release
+      bs_version=$RESOLVED_VERSION
+    else
+      remote_release_commit "$bs_version"
+    fi
+    bs_expected_commit=$REMOTE_RELEASE_COMMIT
+    if [ "$bs_interactive" -eq 1 ]; then
+      printf '%s\n' \
+        "Resolved release: $bs_version" \
+        "Release commit: $bs_expected_commit"
+      printf 'Install and pin this release? [y/N] '
+      IFS= read -r bs_answer || bs_answer=
+      case "$bs_answer" in
+        y|Y|yes|YES) ;;
+        *) die GOVERNANCE_NOT_READY 'Bootstrap cancelled' ;;
+      esac
+    fi
+  fi
+
+  bs_before=$(managed_repo_snapshot "$bs_repo")
+  cmd_install "$bs_version"
+  [ "$RELEASE_COMMIT" = "$bs_expected_commit" ] ||
+    die VERSION_MISMATCH \
+      'Installed release commit differs from the selected release'
+  cmd_register "$bs_repo" --version "$bs_version"
+  bs_after=$(managed_repo_snapshot "$bs_repo")
+
+  if [ "$bs_interactive" -eq 1 ]; then
+    cmd_setup_connectors --client "$bs_client"
+  else
+    cmd_setup_connectors --client "$bs_client" --non-interactive
+  fi
+  cmd_doctor "$bs_repo"
+  cmd_doctor "$bs_repo" --client "$bs_client"
+
+  bs_changes=REVIEW_REQUIRED
+  [ "$bs_before" != "$bs_after" ] || bs_changes=NONE
+  printf '%s\n' \
+    "Version: $bs_version" \
+    "Selected client: $bs_client" \
+    "Repository changes: $bs_changes" \
+    'Next: review and commit repository changes, then start a fresh AI session' \
+    'Result: PASS'
 }
 
 write_lock_file() {
@@ -2353,6 +2522,7 @@ cmd_show() {
 main() {
   command=${1:-}
   case "$command" in
+    bootstrap) shift; cmd_bootstrap "$@" ;;
     install) [ "$#" -eq 2 ] || { usage >&2; exit 2; }; cmd_install "$2" ;;
     register) [ "$#" -ge 4 ] && [ "$#" -le 5 ] || { usage >&2; exit 2; }; cmd_register "${2:-}" "${3:-}" "${4:-}" "${5:-}" ;;
     update) [ "$#" -ge 4 ] && [ "$#" -le 5 ] || { usage >&2; exit 2; }; cmd_repin update "${2:-}" "${3:-}" "${4:-}" "${5:-}" ;;

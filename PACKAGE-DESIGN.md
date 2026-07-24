@@ -135,6 +135,26 @@ workspace; validated package content is emitted through command output.
 
 ## CLI lifecycle
 
+### Bootstrap
+
+```bash
+beroka-governance bootstrap /path/to/repo --client codex
+```
+
+Bootstrap composes the existing install, register, connector setup, and Doctor
+operations. For a first interactive registration without `--version`, it uses
+a fresh canonical remote query to select the highest latest stable annotated
+SemVer tag, prints its exact tag and peeled commit, and requires confirmation.
+Pre-releases, lightweight tags, branches, cached refs, and unverified local
+checkouts are not candidates.
+
+An existing registration always keeps its exact lock; bootstrap never upgrades
+it silently. A conflicting `--version` returns `VERSION_MISMATCH`.
+Non-interactive first registration requires explicit `--client` and
+`--version`. Every invocation configures exactly one client, never every
+detected client. Bootstrap may change only the normal registered-repository
+artifacts; it never commits or pushes them.
+
 ### Install
 
 ```bash

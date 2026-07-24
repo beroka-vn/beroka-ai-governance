@@ -22,11 +22,8 @@ bootstrap_dir=$(mktemp -d "${TMPDIR:-/tmp}/beroka-governance-bootstrap.XXXXXX")
 git clone --depth 1 --single-branch --branch "$release" \
   https://github.com/beroka-vn/beroka-ai-governance.git \
   "$bootstrap_dir/repo"
-sh "$bootstrap_dir/repo/bin/beroka-governance" install "$release"
-beroka-governance setup-connectors --client "$client"
-beroka-governance register /srv/beroka/backend --version "$release"
-beroka-governance doctor /srv/beroka/backend
-beroka-governance doctor /srv/beroka/backend --client "$client"
+sh "$bootstrap_dir/repo/bin/beroka-governance" bootstrap \
+  /srv/beroka/backend --client "$client"
 beroka-governance context /srv/beroka/backend
 beroka-governance preflight /srv/beroka/backend \
   --client "$client" \
@@ -36,6 +33,14 @@ beroka-governance preflight /srv/beroka/backend \
   --operation github-write
 ```
 
+`beroka-governance bootstrap` installs and pins the latest stable release,
+registers the repository, configures exactly one selected client, and runs both
+Doctor checks. It shows the exact version and commit before an interactive
+first registration. Review and commit the repository changes, then start a
+fresh AI session. Existing registrations keep their lock; bootstrap never
+silently upgrades them. Automation must specify both `--client` and an exact
+`--version`.
+
 Run connector setup only after the selected client and its MCP dependencies are
 installed. The command configures exactly that client and, in interactive mode,
 offers to start its OAuth flow. It never accepts an Atlassian developer API
@@ -43,6 +48,9 @@ token. Use `--non-interactive` in automation; missing authentication then
 returns `ATLASSIAN_AUTH_REQUIRED` with client-specific remediation and does not
 open a browser. For Claude Code that remediation is `claude`, followed in the
 client by `/mcp -> atlassian -> Authenticate`.
+
+To configure another client explicitly, run
+`beroka-governance setup-connectors --client claude` (or `codex`/`cursor`).
 
 Interactive login streams provider OAuth output directly, including the exact
 one-time URL or device URL/code. Governance does not parse, log, or store that
