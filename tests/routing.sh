@@ -1011,12 +1011,12 @@ grep -F 'Read access chỉ cần cho selected profile, requested operation và s
 grep -F 'BE–FE targets chỉ áp dụng khi reviewed beroka-be-fe integration profile được chọn và operation yêu cầu' "$ROOT/handbook.md" >/dev/null ||
   fail 'handbook does not scope required reads'
 
-[ "$(sed -n '1p' "$ROOT/VERSION")" = v1.0.0 ] ||
-  fix_wave_fail 'root VERSION does not select v1.0.0'
-grep -F -- '--branch v1.0.0' "$ROOT/README.md" >/dev/null ||
-  fix_wave_fail 'README does not select v1.0.0'
-grep -F -- '--branch v1.0.0' "$ROOT/handbook.md" >/dev/null ||
-  fix_wave_fail 'handbook does not select v1.0.0'
+[ "$(sed -n '1p' "$ROOT/VERSION")" = v1.0.1 ] ||
+  fix_wave_fail 'root VERSION does not select v1.0.1'
+grep -F -- 'releases/latest/download/bootstrap.sh' "$ROOT/README.md" >/dev/null ||
+  fix_wave_fail 'README does not select the latest-release launcher'
+grep -F -- 'release=v1.0.1' "$ROOT/handbook.md" >/dev/null ||
+  fix_wave_fail 'handbook does not select v1.0.1'
 grep -F '`v1.0.0` is the first public stable release' \
   "$ROOT/PACKAGE-DESIGN.md" >/dev/null ||
   fix_wave_fail 'package design does not define the first stable release'
