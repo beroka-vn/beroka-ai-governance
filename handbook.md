@@ -446,18 +446,23 @@ tại. Sau khi developer sửa kết nối, agent phải chạy lại preflight.
 
 ## Release gate trước khi publish tag
 
-`v1.0.0` là first public stable release. Trước mọi push, coordinator phải nhận:
+`v1.0.0` là first public stable release đã publish và immutable: never
+recreate, move, replace hoặc delete tag/release đó. Với release candidate mới
+(ví dụ `v1.0.1`, chưa được xem là published), coordinator đặt exact candidate
+version và merge commit trước khi publish. Trước mọi push tag candidate,
+coordinator phải nhận:
 
-- exact local branch và release commit;
+- exact local branch, candidate version và release commit;
 - full automated validation output;
-- xác nhận canonical remote chưa có `v1.0.0`;
+- xác nhận canonical remote chưa có candidate tag;
 - full interactive/non-interactive developer bootstrap workflow; và
 - các manual checks còn `UNVERIFIED`.
 
 Không tạo hoặc push tag trước khi coordinator duyệt report này. Sau khi release
-PR merge, fetch canonical `main`, xác minh exact merge commit, xóa local test
-candidate, rồi tạo annotated `v1.0.0` tại commit đó. Nếu remote đã xuất hiện
-tag cùng tên thì dừng; không force hoặc overwrite.
+PR merge, fetch canonical `main`, xác minh exact merge commit, rồi tạo
+annotated candidate tag tại commit đó. Nếu remote đã có candidate tag thì dừng;
+không force hoặc overwrite. Không dùng candidate flow này để tạo lại, move,
+replace hoặc delete `v1.0.0`.
 
 Automated gate:
 
@@ -490,7 +495,8 @@ commit mới.
 
 ## Deployment checklist sau khi publish
 
-- [ ] Install published `v1.0.0` từ canonical repository.
+- [ ] Cài release đã publish bằng latest release launcher từ canonical
+      repository.
 - [ ] Bootstrap từng Backend/Frontend repository riêng, review và merge
       managed-file diff bằng application-repository PR.
 - [ ] Mở fresh agent session và xác minh pinned version bằng Doctor.

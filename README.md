@@ -45,7 +45,7 @@ entrypoint and never rewrites entrypoints already enabled for another client.
 For example, add Claude Code later in its execution environment with:
 
 ```bash
-beroka-governance bootstrap "$repo" --client claude
+beroka-governance bootstrap "$(git rev-parse --show-toplevel)" --client claude
 ```
 
 The reviewed repository state enables the client, but connector configuration

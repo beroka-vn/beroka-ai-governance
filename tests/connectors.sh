@@ -693,7 +693,8 @@ grep -F 'CLIENTS=codex,claude' "$ROOT/PACKAGE-DESIGN.md" >/dev/null ||
 grep -F 'register "$repo" --version "$release" --client codex' \
   "$ROOT/handbook.md" >/dev/null ||
   fail 'handbook register command does not select a client'
-grep -F 'bootstrap "$repo" --client claude' "$ROOT/README.md" >/dev/null ||
+grep -F 'bootstrap "$(git rev-parse --show-toplevel)" --client claude' \
+  "$ROOT/README.md" >/dev/null ||
   fail 'README does not document adding another client'
 grep -F 'releases/latest/download/bootstrap.sh' "$ROOT/README.md" >/dev/null ||
   fail 'README does not document the release launcher'

@@ -391,8 +391,11 @@ targets do.
   captures its one-time URL, device code, or credentials.
 - Private-repository access uses each developer's existing least-privilege Git
   or GitHub authentication.
-- The CLI never uses `curl | sh`, executes a lock file, or fetches an unpinned
-  branch for runtime use.
+- The release launcher asset itself is invoked through `curl | sh`. Before it
+  runs the package CLI, it clones and verifies its embedded annotated tag,
+  peeled commit, and exact checked-out HEAD; it does not claim checksum or
+  signature verification that is not implemented. The CLI never executes a
+  lock file or fetches an unpinned branch for runtime use.
 - Only reviewed tags are installable by default.
 - Central repository `Read` users may clone releases but cannot publish or move
   tags.
