@@ -79,18 +79,19 @@ case "$*" in
       '{"name":"atlassian","enabled":true,"transport":{"type":"streamable_http","url":"https://mcp.atlassian.com/v1/mcp/authv2"}}'
     ;;
   'app-server --stdio')
-    input=$(cat)
-    case "$input" in
-      *'config/value/write'*)
-        : >"$XDG_CONFIG_HOME/fake-codex-configured"
-        printf '%s\n' '{"id":1,"result":{}}'
-        ;;
-      *'mcpServerStatus/list'*)
-        printf '%s\n' \
-          '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"atlassianUserInfo":{}},"authStatus":"oAuth"}]}}'
-        ;;
-      *) exit 1 ;;
-    esac
+    while IFS= read -r input; do
+      case "$input" in
+        *'config/value/write'*)
+          : >"$XDG_CONFIG_HOME/fake-codex-configured"
+          printf '%s\n' '{"id":1,"result":{}}'
+          ;;
+        *'mcpServerStatus/list'*)
+          printf '%s\n' \
+            '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"atlassianUserInfo":{}},"authStatus":"oAuth"}]}}'
+          ;;
+        *) ;;
+      esac
+    done
     ;;
   'mcp login atlassian')
     fail 'bootstrap unexpectedly started Codex OAuth'
@@ -331,5 +332,11 @@ grep -F 'latest stable annotated' "$ROOT/PACKAGE-DESIGN.md" >/dev/null ||
   fail 'package design does not define latest'
 grep -F 'fresh AI session' "$ROOT/handbook.md" >/dev/null ||
   fail 'handbook does not document the bootstrap handoff'
+grep -F 'releases/latest/download/bootstrap.sh' "$ROOT/README.md" >/dev/null ||
+  fail 'README does not document the release launcher'
+grep -F 'AUTH_PENDING' "$ROOT/handbook.md" >/dev/null ||
+  fail 'handbook does not document pending authentication'
+grep -F 'CONNECTOR_HEALTH_UNAVAILABLE' "$ROOT/handbook.md" >/dev/null ||
+  fail 'handbook does not document unavailable connector health'
 
 printf '%s\n' 'Bootstrap onboarding tests: PASS'

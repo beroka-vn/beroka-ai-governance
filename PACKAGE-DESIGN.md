@@ -157,6 +157,29 @@ Non-interactive first registration requires explicit `--client` and
 detected client. Bootstrap may change only the normal registered-repository
 artifacts; it never commits or pushes them.
 
+### Release launcher
+
+Each stable release publishes `bootstrap.sh` as a GitHub Release asset. From a
+repository Git root, the supported interactive command is:
+
+```bash
+curl -fsSL \
+  https://github.com/beroka-vn/beroka-ai-governance/releases/latest/download/bootstrap.sh |
+  sh -s -- --client codex
+```
+
+The launcher accepts exactly one explicit client, clones its embedded annotated
+tag into a temporary directory, verifies that the tag and checked-out HEAD both
+match its embedded commit, then invokes that verified release. A mismatch
+returns `RELEASE_VERIFICATION_FAILED` before repository or client changes. The
+latest URL selects the stable release asset; it never executes `main`.
+
+Repository entrypoints and the lock are shared through Git. The governance CLI,
+connector configuration, and OAuth are local to one client in one execution
+environment. Setup is repeated once per client per execution environment;
+changing a model inside the same client needs no setup. OAuth credentials remain
+owned by the client or OS keyring.
+
 ### Install
 
 ```bash
@@ -200,6 +223,12 @@ before starting that client's OAuth flow.
 Interactive OAuth commands remain attached directly to the terminal. The
 selected client prints the exact one-time URL or device URL/code; Governance
 does not parse, log, or store that output.
+
+Connector health uses a response-driven 15-second total deadline. It stops as
+soon as the selected client supplies a complete health record and retries only
+safe read-only probes while evidence is incomplete. If no classifiable record
+arrives by the deadline, it returns `CONNECTOR_HEALTH_UNAVAILABLE`; unknown
+health is never treated as authentication required or as `PASS`.
 
 `--non-interactive` requires explicit client selection and never opens a
 browser. Missing, expired, or invalid authentication returns
@@ -340,6 +369,8 @@ The CLI and agent entrypoints use these stable results:
 | `DEPENDENCY_MISSING` | The selected client or required client command is missing |
 | `CONNECTOR_MISSING` | The selected client lacks the expected Atlassian connector |
 | `ATLASSIAN_AUTH_REQUIRED` | Atlassian OAuth is missing, expired, or invalid |
+| `AUTH_PENDING` | Registration succeeded but interactive OAuth was declined or incomplete |
+| `CONNECTOR_HEALTH_UNAVAILABLE` | No classifiable connector health arrived before the deadline |
 | `GITHUB_AUTH_REQUIRED` | GitHub OAuth is missing, expired, or invalid for `github-write` |
 | `PASS` | All checks requested by the command passed |
 

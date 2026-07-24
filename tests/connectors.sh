@@ -695,6 +695,12 @@ grep -F 'register "$repo" --version "$release" --client codex' \
   fail 'handbook register command does not select a client'
 grep -F 'bootstrap "$repo" --client claude' "$ROOT/README.md" >/dev/null ||
   fail 'README does not document adding another client'
+grep -F 'releases/latest/download/bootstrap.sh' "$ROOT/README.md" >/dev/null ||
+  fail 'README does not document the release launcher'
+grep -F 'AUTH_PENDING' "$ROOT/handbook.md" >/dev/null ||
+  fail 'handbook does not document pending authentication'
+grep -F 'CONNECTOR_HEALTH_UNAVAILABLE' "$ROOT/handbook.md" >/dev/null ||
+  fail 'handbook does not document unavailable connector health'
 grep -F 'connector inspection requires `jq` for every selected client' \
   "$ROOT/PACKAGE-DESIGN.md" >/dev/null ||
   fix_wave_fail 'package design does not declare jq for connector inspection'
