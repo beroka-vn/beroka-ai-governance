@@ -92,6 +92,18 @@ case "$*" in
           healthy-missing-tools)
             printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","authStatus":"oAuth"}]}}'
             ;;
+          healthy-malformed-envelope-missing-comma)
+            printf '%s\n' '{"jsonrpc":"2.0" "id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]}}'
+            ;;
+          healthy-malformed-record-illegal-escape)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","description":"invalid\qescape","tools":{"createJiraIssue":{},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]}}'
+            ;;
+          healthy-malformed-record-missing-comma)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian" "tools":{"createJiraIssue":{},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]}}'
+            ;;
+          healthy-malformed-envelope-trailing-object)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]}} {"trailing":true}'
+            ;;
           healthy-valid-nested-tool-values)
             printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{"metadata":{"description":"brace } and escaped \" quote","values":[1,-2.5e+3,true,false,null,{"nested":[]}]}},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]}}'
             ;;
@@ -667,11 +679,6 @@ unset LF_CODEX_RESPONSE LF_RELEASE_DIR
 
 for invalid_tool_map in \
   healthy-malformed-tool-value \
-  healthy-malformed-nested-tool-object \
-  healthy-malformed-nested-tool-array \
-  healthy-invalid-c0-string \
-  healthy-nested-vertical-tab-whitespace \
-  healthy-nested-form-feed-whitespace \
   healthy-duplicate-required-tool \
   healthy-escaped-duplicate-required-tool
 do
@@ -684,6 +691,28 @@ do
   assert_contains "$output" 'Capability state: UNKNOWN'
   assert_contains "$output" 'Result: CONNECTOR_CAPABILITY_REQUIRED'
   assert_not_contains "$output" 'Capability state: SUPPORTED'
+  assert_not_contains "$output" 'createJiraIssue'
+  assert_not_contains "$output" 'metadata'
+done
+
+for invalid_tool_json in \
+  healthy-malformed-nested-tool-object \
+  healthy-malformed-nested-tool-array \
+  healthy-invalid-c0-string \
+  healthy-nested-vertical-tab-whitespace \
+  healthy-nested-form-feed-whitespace
+do
+  printf '%s\n' "$invalid_tool_json" >"$XDG_CONFIG_HOME/fake-codex-health"
+  if output=$($CLI preflight "$consumer" \
+    --client codex --operation jira-write --non-interactive 2>&1)
+  then
+    fail "$invalid_tool_json supplied the Atlassian inventory"
+  fi
+  assert_contains "$output" 'Result: CONNECTOR_HEALTH_UNAVAILABLE'
+  assert_not_contains "$output" 'Capability state: SUPPORTED'
+  assert_not_contains "$output" 'ATLASSIAN_AUTH_REQUIRED'
+  assert_not_contains "$output" 'codex mcp login atlassian'
+  assert_not_contains "$output" 'OAuth URL:'
   assert_not_contains "$output" 'createJiraIssue'
   assert_not_contains "$output" 'metadata'
 done
@@ -864,6 +893,26 @@ do
   fi
   assert_contains "$output" 'Result: CONNECTOR_HEALTH_UNAVAILABLE'
   assert_not_contains "$output" 'Capability state: SUPPORTED'
+done
+
+for malformed_response in \
+  healthy-malformed-envelope-missing-comma \
+  healthy-malformed-record-illegal-escape \
+  healthy-malformed-record-missing-comma \
+  healthy-malformed-envelope-trailing-object
+do
+  printf '%s\n' "$malformed_response" >"$XDG_CONFIG_HOME/fake-codex-health"
+  if output=$($CLI preflight "$consumer" \
+    --client codex --operation jira-write --non-interactive 2>&1)
+  then
+    fail "$malformed_response supplied the Atlassian inventory"
+  fi
+  assert_contains "$output" 'Result: CONNECTOR_HEALTH_UNAVAILABLE'
+  assert_not_contains "$output" 'Capability state: SUPPORTED'
+  assert_not_contains "$output" 'ATLASSIAN_AUTH_REQUIRED'
+  assert_not_contains "$output" 'codex mcp login atlassian'
+  assert_not_contains "$output" 'OAuth URL:'
+  assert_not_contains "$output" 'createJiraIssue'
 done
 
 : >"$XDG_CONFIG_HOME/fake-claude-configured"

@@ -1558,7 +1558,7 @@ codex_probe_complete() {
 }
 
 codex_probe_response() {
-  awk '
+  cpr_response=$(awk '
     /"id"[[:space:]]*:[[:space:]]*1/ &&
     (/"result"[[:space:]]*:/ || /"error"[[:space:]]*:/) {
       response=$0
@@ -1567,7 +1567,9 @@ codex_probe_response() {
       if (response == "") exit 1
       print response
     }
-  ' "$1"
+  ' "$1") || return 1
+  printf '%s\n' "$cpr_response" | json_validate_object || return 1
+  printf '%s\n' "$cpr_response"
 }
 
 codex_probe_response_count() {
@@ -2209,6 +2211,14 @@ json_top_level_keys() {
       for (i=1; i<=key_count; i++) print keys[i]
     }
   '
+}
+
+json_validate_object() {
+  {
+    printf '%s' '{"object":'
+    cat
+    printf '%s\n' '}'
+  } | json_top_level_keys >/dev/null
 }
 
 json_top_level_tools() {
