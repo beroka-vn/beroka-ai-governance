@@ -2169,7 +2169,8 @@ connector_inventory() {
   [ "$CAPABILITY_INVENTORY_COMPLETE" -eq 1 ] || return 0
   CAPABILITY_TOOLSET=
   for ci_tool in \
-    createConfluencePage createJiraIssue getConfluencePage getJiraIssue
+    createConfluencePage createJiraIssue getConfluencePage getJiraIssue \
+    getJiraIssueTypeMetaWithFields getJiraProjectIssueTypesMetadata
   do
     if inventory_has_tool "$ci_tool"; then
       if [ -n "$CAPABILITY_TOOLSET" ]; then
@@ -2279,7 +2280,7 @@ runtime_capability() {
   esac
 }
 
-compatibility_capability() {
+legacy_compatibility_capability() {
   cc_client=$1 cc_capability=$2
   cc_file=$RELEASE_DIR/runtime/compatibility/atlassian.tsv
   [ "$(sed -n '1p' "$cc_file" 2>/dev/null)" = '# schema=1' ] || return 1
@@ -2328,19 +2329,127 @@ compatibility_capability() {
     ' "$cc_file"
 }
 
-resolve_capability() {
+load_provider_capability() {
+  lpc_capability=$1
+  lpc_file=$RELEASE_DIR/runtime/compatibility/atlassian.tsv
+  CAPABILITY_REQUIRED_TOOLS=
+  CAPABILITY_EVIDENCE=
+  CAPABILITY_PROVIDER_STATE=UNKNOWN
+  lpc_row=$(awk -F '\t' \
+    -v endpoint="$ATLASSIAN_MCP_URL" \
+    -v capability="$lpc_capability" '
+      /^[[:space:]]*$/ || /^#/ { next }
+      {
+        allowed["createConfluencePage"]=1
+        allowed["createJiraIssue"]=1
+        allowed["getConfluencePage"]=1
+        allowed["getJiraIssue"]=1
+        allowed["getJiraIssueTypeMetaWithFields"]=1
+        allowed["getJiraProjectIssueTypesMetadata"]=1
+        tool_count=split($2, tools, ",")
+        for (i=1; i<=tool_count; i++)
+          if (!allowed[tools[i]]) invalid=1
+        if (NF != 6 ||
+            $1 == "" ||
+            $2 !~ /^[A-Za-z][A-Za-z0-9_]*(,[A-Za-z][A-Za-z0-9_]*)*$/ ||
+            $3 !~ /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/ ||
+            $4 !~ /^(jira-issue-write|confluence-page-parent-write|jira-board-verification|confluence-folder-parent-write)$/ ||
+            $5 !~ /^(official-contract|isolated-pilot)$/ ||
+            $6 !~ /^(SUPPORTED|UNSUPPORTED)$/) invalid=1
+        if ($1 == endpoint && $4 == capability) {
+          matches++
+          row=$2 "\t" $5 "\t" $6
+        }
+      }
+      END {
+        if (invalid || matches != 1) exit 1
+        print row
+      }
+    ' "$lpc_file") || return 1
+  lpc_old_ifs=$IFS
+  IFS="$(printf '\t')"
+  set -- $lpc_row
+  IFS=$lpc_old_ifs
+  [ "$#" -eq 3 ] || return 1
+  lpc_canonical=$(printf '%s\n' "$1" | tr ',' '\n' |
+    LC_ALL=C sort -u | paste -sd, -)
+  [ "$lpc_canonical" = "$1" ] || return 1
+  CAPABILITY_REQUIRED_TOOLS=$1
+  CAPABILITY_EVIDENCE=$2
+  CAPABILITY_PROVIDER_STATE=$3
+}
+
+inventory_has_required_tools() {
+  ihrr_old_ifs=$IFS
+  IFS=,
+  set -- $CAPABILITY_REQUIRED_TOOLS
+  IFS=$ihrr_old_ifs
+  for ihrr_tool in "$@"; do
+    inventory_has_tool "$ihrr_tool" || return 1
+  done
+}
+
+resolve_legacy_capability() {
   rcap_client=$1 rcap_capability=$2
-  connector_inventory "$rcap_client" || {
-    CAPABILITY_STATE=UNKNOWN
-    return 0
-  }
+  CAPABILITY_STATE=UNKNOWN
+  CAPABILITY_EVIDENCE_SOURCE=NONE
+  CAPABILITY_INVENTORY_STATE=UNAVAILABLE
+  connector_inventory "$rcap_client" || return 0
+  if [ "$CAPABILITY_INVENTORY_COMPLETE" -eq 1 ]; then
+    CAPABILITY_INVENTORY_STATE=COMPLETE
+  fi
   runtime_capability "$rcap_capability" || return 1
-  [ "$CAPABILITY_STATE" = UNKNOWN ] || return 0
-  rcap_compat=$(compatibility_capability \
+  if [ "$CAPABILITY_STATE" != UNKNOWN ]; then
+    CAPABILITY_EVIDENCE_SOURCE=RUNTIME_INVENTORY
+    return 0
+  fi
+  rcap_compat=$(legacy_compatibility_capability \
     "$rcap_client" "$rcap_capability") || rcap_compat=
   case "$rcap_compat" in
-    SUPPORTED|UNSUPPORTED) CAPABILITY_STATE=$rcap_compat ;;
+    SUPPORTED|UNSUPPORTED)
+      CAPABILITY_STATE=$rcap_compat
+      CAPABILITY_EVIDENCE_SOURCE=LEGACY_COMPATIBILITY
+      ;;
     *) CAPABILITY_STATE=UNKNOWN ;;
+  esac
+}
+
+resolve_provider_capability() {
+  rpc_client=$1 rpc_capability=$2
+  CAPABILITY_STATE=UNKNOWN
+  CAPABILITY_EVIDENCE_SOURCE=NONE
+  CAPABILITY_INVENTORY_STATE=UNAVAILABLE
+  load_provider_capability "$rpc_capability" || return 0
+  [ "$CAPABILITY_PROVIDER_STATE" = SUPPORTED ] || {
+    CAPABILITY_STATE=UNSUPPORTED
+    CAPABILITY_EVIDENCE_SOURCE=PROVIDER_CONTRACT
+    return 0
+  }
+  connector_inventory "$rpc_client" || return 0
+  if [ "$CAPABILITY_INVENTORY_COMPLETE" -eq 1 ]; then
+    CAPABILITY_INVENTORY_STATE=COMPLETE
+    inventory_has_required_tools || {
+      CAPABILITY_STATE=UNSUPPORTED
+      CAPABILITY_EVIDENCE_SOURCE=RUNTIME_INVENTORY
+      return 0
+    }
+  fi
+  CAPABILITY_STATE=SUPPORTED
+  CAPABILITY_EVIDENCE_SOURCE=PROVIDER_CONTRACT
+}
+
+resolve_capability() {
+  rcap_client=$1 rcap_capability=$2
+  rcap_schema=$(atlassian_compatibility_schema \
+    "$RELEASE_DIR/runtime/compatibility/atlassian.tsv") || {
+    CAPABILITY_STATE=UNKNOWN
+    CAPABILITY_EVIDENCE_SOURCE=NONE
+    CAPABILITY_INVENTORY_STATE=UNAVAILABLE
+    return 0
+  }
+  case "$rcap_schema" in
+    1) resolve_legacy_capability "$rcap_client" "$rcap_capability" ;;
+    2) resolve_provider_capability "$rcap_client" "$rcap_capability" ;;
   esac
 }
 
@@ -2544,6 +2653,8 @@ print_preflight_result() {
   printf '%s\n' \
     "Capability: $PREFLIGHT_CAPABILITY" \
     "Capability state: $CAPABILITY_STATE" \
+    "Capability evidence: $CAPABILITY_EVIDENCE_SOURCE" \
+    "Runtime inventory: $CAPABILITY_INVENTORY_STATE" \
     'Result: PASS'
 }
 
@@ -2655,7 +2766,9 @@ cmd_preflight() {
       printf '%s\n' \
         "Operation: $pf_operation" \
         "Capability: $PREFLIGHT_CAPABILITY" \
-        "Capability state: $CAPABILITY_STATE"
+        "Capability state: $CAPABILITY_STATE" \
+        "Capability evidence: $CAPABILITY_EVIDENCE_SOURCE" \
+        "Runtime inventory: $CAPABILITY_INVENTORY_STATE"
       routing_cleanup
       die CONNECTOR_CAPABILITY_REQUIRED
     fi
