@@ -208,6 +208,15 @@ case "$*" in
           healthy-empty-tools)
             printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","serverInfo":null,"tools":{},"resources":[],"resourceTemplates":[],"authStatus":"oAuth"}]}}'
             ;;
+          healthy-array-tools)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","serverInfo":null,"tools":[],"resources":[],"resourceTemplates":[],"authStatus":"oAuth"}]}}'
+            ;;
+          healthy-null-tools)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","serverInfo":null,"tools":null,"resources":[],"resourceTemplates":[],"authStatus":"oAuth"}]}}'
+            ;;
+          healthy-missing-tools)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","serverInfo":null,"resources":[],"resourceTemplates":[],"authStatus":"oAuth"}]}}'
+            ;;
         esac
         ;;
       *) exit 1 ;;
@@ -429,6 +438,20 @@ fix_wave_contains "$output" 'Authentication: PASS'
 fix_wave_contains "$output" 'Result: PASS'
 fix_wave_not_contains "$output" 'ATLASSIAN_AUTH_REQUIRED'
 fix_wave_not_contains "$output" 'codex mcp login atlassian'
+
+for unusable_tool_map in \
+  healthy-array-tools \
+  healthy-null-tools \
+  healthy-missing-tools
+do
+  printf '%s\n' "$unusable_tool_map" >"$XDG_CONFIG_HOME/fake-codex-health"
+  output=$($CLI setup-connectors --client codex --non-interactive)
+  fix_wave_contains "$output" 'Authentication: PASS'
+  fix_wave_contains "$output" 'Result: PASS'
+  fix_wave_not_contains "$output" 'ATLASSIAN_AUTH_REQUIRED'
+  fix_wave_not_contains "$output" 'codex mcp login atlassian'
+  fix_wave_not_contains "$output" 'OAuth URL:'
+done
 
 : >"$XDG_CONFIG_HOME/fake-claude-configured"
 printf '%s\n' healthy >"$XDG_CONFIG_HOME/fake-claude-health"
@@ -711,6 +734,21 @@ assert_contains "$output" 'Authentication: PASS'
 assert_contains "$output" 'Result: PASS'
 assert_not_contains "$output" 'ATLASSIAN_AUTH_REQUIRED'
 assert_not_contains "$output" 'codex mcp login atlassian'
+
+for unusable_tool_map in \
+  healthy-array-tools \
+  healthy-null-tools \
+  healthy-missing-tools
+do
+  printf '%s\n' "$unusable_tool_map" >"$XDG_CONFIG_HOME/fake-codex-health"
+  output=$($CLI doctor "$CONSUMER" --client codex)
+  assert_contains "$output" 'Connector: PASS'
+  assert_contains "$output" 'Authentication: PASS'
+  assert_contains "$output" 'Result: PASS'
+  assert_not_contains "$output" 'ATLASSIAN_AUTH_REQUIRED'
+  assert_not_contains "$output" 'codex mcp login atlassian'
+  assert_not_contains "$output" 'OAuth URL:'
+done
 
 printf '%s\n' healthy >"$XDG_CONFIG_HOME/fake-codex-health"
 : >"$CALLS"

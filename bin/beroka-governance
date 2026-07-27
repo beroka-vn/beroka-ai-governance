@@ -1552,10 +1552,7 @@ codex_probe_complete() {
     json_top_level_string authStatus) || return 1
   case "$cpc_auth" in
     notLoggedIn) return 0 ;;
-    oAuth)
-      printf '%s\n' "$cpc_record" |
-        json_top_level_object tools >/dev/null
-      ;;
+    oAuth) return 0 ;;
     *) return 1 ;;
   esac
 }

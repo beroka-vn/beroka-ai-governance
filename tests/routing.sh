@@ -83,6 +83,15 @@ case "$*" in
           healthy-empty-tools)
             printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{},"authStatus":"oAuth"}]}}'
             ;;
+          healthy-array-tools)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":[],"authStatus":"oAuth"}]}}'
+            ;;
+          healthy-null-tools)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":null,"authStatus":"oAuth"}]}}'
+            ;;
+          healthy-missing-tools)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","authStatus":"oAuth"}]}}'
+            ;;
           healthy-valid-nested-tool-values)
             printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{"metadata":{"description":"brace } and escaped \" quote","values":[1,-2.5e+3,true,false,null,{"nested":[]}]}},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]}}'
             ;;
@@ -586,6 +595,34 @@ assert_not_contains "$output" 'ATLASSIAN_AUTH_REQUIRED'
 assert_not_contains "$output" 'codex mcp login atlassian'
 assert_not_contains "$output" 'OAuth URL:'
 assert_not_contains "$output" 'createJiraIssue'
+
+for unusable_tool_map in \
+  healthy-array-tools \
+  healthy-null-tools \
+  healthy-missing-tools
+do
+  printf '%s\n' "$unusable_tool_map" >"$XDG_CONFIG_HOME/fake-codex-health"
+  output=$($CLI doctor "$consumer" --client codex)
+  assert_contains "$output" 'Connector: PASS'
+  assert_contains "$output" 'Authentication: PASS'
+  assert_contains "$output" 'Result: PASS'
+  assert_not_contains "$output" 'ATLASSIAN_AUTH_REQUIRED'
+  assert_not_contains "$output" 'codex mcp login atlassian'
+  assert_not_contains "$output" 'OAuth URL:'
+
+  if output=$($CLI preflight "$consumer" \
+    --client codex --operation jira-write --non-interactive 2>&1)
+  then
+    fail "$unusable_tool_map passed Jira preflight"
+  fi
+  assert_contains "$output" 'Capability state: UNKNOWN'
+  assert_contains "$output" 'Runtime inventory: UNAVAILABLE'
+  assert_contains "$output" 'Result: CONNECTOR_CAPABILITY_REQUIRED'
+  assert_not_contains "$output" 'ATLASSIAN_AUTH_REQUIRED'
+  assert_not_contains "$output" 'codex mcp login atlassian'
+  assert_not_contains "$output" 'OAuth URL:'
+  assert_not_contains "$output" 'createJiraIssue'
+done
 
 printf '%s\n' healthy-valid-nested-tool-values \
   >"$XDG_CONFIG_HOME/fake-codex-health"
