@@ -876,15 +876,24 @@ cmd_bootstrap() {
     bs_registration=NO_CHANGE
     bs_entrypoint=ALREADY_CONFIGURED
     bs_changes=NONE
+    bs_pull_request=NOT_REQUIRED
+    bs_next='Next: no repository commit or pull request is required'
   else
     bs_registration=PASS
     bs_entrypoint=ADDED
     bs_changes=REVIEW_REQUIRED
+    bs_pull_request=REQUIRED
+    bs_next='Next: review and commit repository changes, then start a fresh AI session'
   fi
   printf '%s\n' \
     'Release: PASS' \
     "Repository registration: $bs_registration" \
-    "Client entrypoint: $bs_entrypoint"
+    "Client entrypoint: $bs_entrypoint" \
+    "Version: $bs_version" \
+    "Selected client: $bs_client" \
+    "Repository changes: $bs_changes" \
+    "Repository pull request: $bs_pull_request" \
+    "$bs_next"
 
   if [ "$bs_interactive" -eq 1 ]; then
     cmd_setup_connectors --client "$bs_client"
@@ -894,12 +903,7 @@ cmd_bootstrap() {
   cmd_doctor "$bs_repo"
   cmd_doctor "$bs_repo" --client "$bs_client"
 
-  printf '%s\n' \
-    "Version: $bs_version" \
-    "Selected client: $bs_client" \
-    "Repository changes: $bs_changes" \
-    'Next: review and commit repository changes, then start a fresh AI session' \
-    'Result: PASS'
+  printf '%s\n' 'Result: PASS'
 }
 
 write_lock_file() {

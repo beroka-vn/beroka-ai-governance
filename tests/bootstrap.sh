@@ -234,6 +234,7 @@ assert_contains "$output" 'Repository registration: PASS'
 assert_contains "$output" 'Client entrypoint: ADDED'
 assert_contains "$output" 'Selected client: codex'
 assert_contains "$output" 'Repository changes: REVIEW_REQUIRED'
+assert_contains "$output" 'Repository pull request: REQUIRED'
 assert_contains "$output" 'Result: PASS'
 assert_one_result "$output"
 assert_not_contains "$output" 'v2.0.0-rc1'
@@ -264,6 +265,7 @@ assert_contains "$output" 'Repository registration: NO_CHANGE'
 assert_contains "$output" 'Client entrypoint: ALREADY_CONFIGURED'
 assert_contains "$output" 'Selected client: codex'
 assert_contains "$output" 'Repository changes: NONE'
+assert_contains "$output" 'Repository pull request: NOT_REQUIRED'
 assert_one_result "$output"
 
 git -C "$repo" add .beroka-governance.lock AGENTS.md
@@ -282,6 +284,7 @@ chmod 755 "$FAKE_BIN/claude"
 output=$($CLI bootstrap "$repo" --client claude --non-interactive)
 assert_contains "$output" 'Selected client: claude'
 assert_contains "$output" 'Repository changes: REVIEW_REQUIRED'
+assert_contains "$output" 'Repository pull request: REQUIRED'
 grep -Fx 'CLIENTS=codex,claude' \
   "$repo/.beroka-governance.lock" >/dev/null ||
   fail 'second bootstrap did not add Claude'
@@ -298,6 +301,7 @@ after=$(snapshot_repo "$repo")
 [ "$before" = "$after" ] ||
   fail 'repeat Claude bootstrap changed an already registered repository'
 assert_contains "$output" 'Repository changes: NONE'
+assert_contains "$output" 'Repository pull request: NOT_REQUIRED'
 
 multi_repo=$TEST_ROOT/multiple-clients
 new_repo "$multi_repo" bootstrap-multiple
@@ -363,6 +367,8 @@ fi
 assert_contains "$output" 'Result: AUTH_PENDING'
 assert_contains "$output" \
   'Resume: beroka-governance setup-connectors --client codex'
+assert_contains "$output" 'Repository changes: REVIEW_REQUIRED'
+assert_contains "$output" 'Repository pull request: REQUIRED'
 assert_one_result "$output"
 [ -f "$pending_repo/.beroka-governance.lock" ] &&
   [ -f "$pending_repo/AGENTS.md" ] ||
@@ -377,6 +383,8 @@ pending_after=$(snapshot_repo "$pending_repo")
 [ "$pending_before" = "$pending_after" ] ||
   fail 'AUTH_PENDING bootstrap rerun changed managed files'
 assert_contains "$output" 'Result: AUTH_PENDING'
+assert_contains "$output" 'Repository changes: NONE'
+assert_contains "$output" 'Repository pull request: NOT_REQUIRED'
 assert_one_result "$output"
 
 health_repo=$TEST_ROOT/health-unavailable
@@ -391,6 +399,8 @@ fi
 assert_contains "$output" 'Result: CONNECTOR_HEALTH_UNAVAILABLE'
 assert_contains "$output" \
   'Resume: beroka-governance setup-connectors --client codex'
+assert_contains "$output" 'Repository changes: REVIEW_REQUIRED'
+assert_contains "$output" 'Repository pull request: REQUIRED'
 assert_one_result "$output"
 [ -f "$health_repo/.beroka-governance.lock" ] &&
   [ -f "$health_repo/AGENTS.md" ] ||
@@ -405,6 +415,8 @@ health_after=$(snapshot_repo "$health_repo")
 [ "$health_before" = "$health_after" ] ||
   fail 'health-unavailable bootstrap rerun changed managed files'
 assert_contains "$output" 'Result: CONNECTOR_HEALTH_UNAVAILABLE'
+assert_contains "$output" 'Repository changes: NONE'
+assert_contains "$output" 'Repository pull request: NOT_REQUIRED'
 assert_one_result "$output"
 unset FAKE_CODEX_HEALTH
 
