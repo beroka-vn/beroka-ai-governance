@@ -2028,7 +2028,7 @@ json_top_level_object() {
 }
 
 json_top_level_keys() {
-  awk '
+  LC_ALL=C awk '
     function skip_space(    c) {
       while (position <= object_length) {
         c=substr(object, position, 1)
@@ -2046,7 +2046,7 @@ json_top_level_keys() {
           position++
           return 1
         }
-        if (c ~ /[[:cntrl:]]/) return 0
+        if (c ~ /[[:cntrl:]]/ && c != sprintf("%c", 127)) return 0
         if (c != "\\") {
           parsed_string=parsed_string c
           position++
@@ -2363,15 +2363,7 @@ connector_health() {
         json_top_level_string authStatus) || return 2
       case "$ch_auth" in
         notLoggedIn) return 1 ;;
-        oAuth)
-          if ch_tools=$(printf '%s\n' "$ch_record" |
-            json_top_level_tools)
-          then
-            [ -n "$ch_tools" ] && return 0
-            return 1
-          fi
-          return 0
-          ;;
+        oAuth) return 0 ;;
         *) return 2 ;;
       esac
       ;;

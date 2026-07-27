@@ -205,7 +205,7 @@ case "$*" in
           missing)
             printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","serverInfo":null,"tools":{},"resources":[],"resourceTemplates":[],"authStatus":"notLoggedIn"}]}}'
             ;;
-          failed)
+          healthy-empty-tools)
             printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","serverInfo":null,"tools":{},"resources":[],"resourceTemplates":[],"authStatus":"oAuth"}]}}'
             ;;
         esac
@@ -423,14 +423,12 @@ output=$($CLI setup-connectors --client codex --non-interactive)
 fix_wave_contains "$output" 'Authentication: PASS'
 rm -f "$XDG_CONFIG_HOME/fake-codex-endpoint"
 
-printf '%s\n' failed >"$XDG_CONFIG_HOME/fake-codex-health"
-if output=$($CLI setup-connectors --client codex --non-interactive 2>&1)
-then
-  fix_wave_fail 'Codex OAuth with an empty tool inventory passed'
-else
-  fix_wave_contains "$output" 'Provider: atlassian'
-  fix_wave_contains "$output" 'Result: ATLASSIAN_AUTH_REQUIRED'
-fi
+printf '%s\n' healthy-empty-tools >"$XDG_CONFIG_HOME/fake-codex-health"
+output=$($CLI setup-connectors --client codex --non-interactive)
+fix_wave_contains "$output" 'Authentication: PASS'
+fix_wave_contains "$output" 'Result: PASS'
+fix_wave_not_contains "$output" 'ATLASSIAN_AUTH_REQUIRED'
+fix_wave_not_contains "$output" 'codex mcp login atlassian'
 
 : >"$XDG_CONFIG_HOME/fake-claude-configured"
 printf '%s\n' healthy >"$XDG_CONFIG_HOME/fake-claude-health"
@@ -705,6 +703,14 @@ if output=$($CLI doctor "$CONSUMER" --client codex 2>&1); then
 fi
 assert_contains "$output" 'Remediation: codex mcp login atlassian'
 assert_contains "$output" 'Result: ATLASSIAN_AUTH_REQUIRED'
+
+printf '%s\n' healthy-empty-tools >"$XDG_CONFIG_HOME/fake-codex-health"
+output=$($CLI doctor "$CONSUMER" --client codex)
+assert_contains "$output" 'Connector: PASS'
+assert_contains "$output" 'Authentication: PASS'
+assert_contains "$output" 'Result: PASS'
+assert_not_contains "$output" 'ATLASSIAN_AUTH_REQUIRED'
+assert_not_contains "$output" 'codex mcp login atlassian'
 
 printf '%s\n' healthy >"$XDG_CONFIG_HOME/fake-codex-health"
 : >"$CALLS"

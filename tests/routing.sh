@@ -80,8 +80,16 @@ case "$*" in
           healthy-all)
             printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]}}'
             ;;
+          healthy-empty-tools)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{},"authStatus":"oAuth"}]}}'
+            ;;
           healthy-valid-nested-tool-values)
             printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{"metadata":{"description":"brace } and escaped \" quote","values":[1,-2.5e+3,true,false,null,{"nested":[]}]}},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]}}'
+            ;;
+          healthy-valid-del-string)
+            printf '%s\177%s\n' \
+              '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{"metadata":{"description":"before' \
+              'after"}},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]}}'
             ;;
           healthy-valid-json-whitespace)
             printf '%s \t\r%s\n' \
@@ -96,6 +104,11 @@ case "$*" in
             ;;
           healthy-malformed-nested-tool-array)
             printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{"metadata":[1,,2]},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]}}'
+            ;;
+          healthy-invalid-c0-string)
+            printf '%s\037%s\n' \
+              '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{"metadata":{"description":"before' \
+              'after"}},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]}}'
             ;;
           healthy-nested-vertical-tab-whitespace)
             printf '%s\013%s\n' \
@@ -552,11 +565,41 @@ output=$($CLI preflight "$consumer" \
 assert_contains "$output" 'Capability state: SUPPORTED'
 assert_not_contains "$(cat "$CALLS")" 'gh '
 
+printf '%s\n' healthy-empty-tools >"$XDG_CONFIG_HOME/fake-codex-health"
+output=$($CLI doctor "$consumer" --client codex)
+assert_contains "$output" 'Connector: PASS'
+assert_contains "$output" 'Authentication: PASS'
+assert_contains "$output" 'Result: PASS'
+assert_not_contains "$output" 'ATLASSIAN_AUTH_REQUIRED'
+assert_not_contains "$output" 'codex mcp login atlassian'
+assert_not_contains "$output" 'OAuth URL:'
+
+if output=$($CLI preflight "$consumer" \
+  --client codex --operation jira-write --non-interactive 2>&1)
+then
+  fail 'authenticated empty Codex inventory passed Jira preflight'
+fi
+assert_contains "$output" 'Capability state: UNSUPPORTED'
+assert_contains "$output" 'Runtime inventory: COMPLETE'
+assert_contains "$output" 'Result: CONNECTOR_CAPABILITY_REQUIRED'
+assert_not_contains "$output" 'ATLASSIAN_AUTH_REQUIRED'
+assert_not_contains "$output" 'codex mcp login atlassian'
+assert_not_contains "$output" 'OAuth URL:'
+assert_not_contains "$output" 'createJiraIssue'
+
 printf '%s\n' healthy-valid-nested-tool-values \
   >"$XDG_CONFIG_HOME/fake-codex-health"
 output=$($CLI preflight "$consumer" \
   --client codex --operation jira-write --non-interactive)
 assert_contains "$output" 'Capability state: SUPPORTED'
+
+printf '%s\n' healthy-valid-del-string \
+  >"$XDG_CONFIG_HOME/fake-codex-health"
+output=$($CLI preflight "$consumer" \
+  --client codex --operation jira-write --non-interactive)
+assert_contains "$output" 'Capability state: SUPPORTED'
+assert_not_contains "$output" 'createJiraIssue'
+assert_not_contains "$output" 'metadata'
 
 printf '%s\n' healthy-valid-json-whitespace \
   >"$XDG_CONFIG_HOME/fake-codex-health"
@@ -589,6 +632,7 @@ for invalid_tool_map in \
   healthy-malformed-tool-value \
   healthy-malformed-nested-tool-object \
   healthy-malformed-nested-tool-array \
+  healthy-invalid-c0-string \
   healthy-nested-vertical-tab-whitespace \
   healthy-nested-form-feed-whitespace \
   healthy-duplicate-required-tool \
