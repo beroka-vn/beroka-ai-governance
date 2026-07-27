@@ -2138,6 +2138,20 @@ inventory_has_tool() {
   esac
 }
 
+cursor_tool_names() {
+  awk '
+    {
+      line=$0
+      sub(/^[[:space:]]*[-*]?[[:space:]]*/, "", line)
+      if (match(line, /^[A-Za-z][A-Za-z0-9_]*/)) {
+        name=substr(line, RSTART, RLENGTH)
+        rest=substr(line, RLENGTH + 1, 1)
+        if (rest == "" || rest ~ /[[:space:](:]/) print name
+      }
+    }
+  '
+}
+
 connector_inventory() {
   ci_client=$1
   CAPABILITY_INVENTORY=
@@ -2161,8 +2175,10 @@ connector_inventory() {
       connector_probe cursor || return 1
       [ "$CONNECTOR_PROBE_TOOLS_OK" -eq 1 ] &&
         [ -n "$CONNECTOR_PROBE_TOOLS" ] || return 1
-      CAPABILITY_INVENTORY=$CONNECTOR_PROBE_TOOLS
-      CAPABILITY_INVENTORY_FORMAT=text
+      CAPABILITY_INVENTORY=$(printf '%s\n' "$CONNECTOR_PROBE_TOOLS" |
+        cursor_tool_names) || return 1
+      [ -n "$CAPABILITY_INVENTORY" ] || return 1
+      CAPABILITY_INVENTORY_FORMAT=json
       CAPABILITY_INVENTORY_COMPLETE=1
       ;;
   esac

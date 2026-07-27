@@ -509,7 +509,13 @@ case "$*" in
     ;;
   'mcp list-tools atlassian')
     case "$(sed -n '1p' "$XDG_CONFIG_HOME/fake-cursor-health" 2>/dev/null || :)" in
-      healthy) printf '%s\n' 'atlassianUserInfo' ;;
+      healthy)
+        printf '%s\n' \
+          'createJiraIssue(projectKey, issueType, summary)' \
+          'getJiraIssue(issueKey)' \
+          'getJiraIssueTypeMetaWithFields(projectKey, issueType)' \
+          'getJiraProjectIssueTypesMetadata(projectKey)'
+        ;;
       ready-tools-failed) printf '%s\n' 'Tool inventory failed'; exit 1 ;;
       *) printf '%s\n' 'Authentication required'; exit 1 ;;
     esac

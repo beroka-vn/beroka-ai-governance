@@ -211,15 +211,28 @@ case "$*" in
     ;;
   'mcp list')
     case "$(sed -n '1p' "$XDG_CONFIG_HOME/fake-cursor-health" 2>/dev/null || :)" in
-      healthy) printf '%s\n' 'atlassian: Ready' ;;
+      healthy|similar|missing) printf '%s\n' 'atlassian: Ready' ;;
       auth-required|'') printf '%s\n' 'atlassian: Authentication required' ;;
       *) printf '%s\n' 'atlassian: Failed' ;;
     esac
     ;;
   'mcp list-tools atlassian')
-    [ "$(sed -n '1p' "$XDG_CONFIG_HOME/fake-cursor-health" 2>/dev/null || :)" = healthy ] ||
-      exit 1
-    printf '%s\n' 'createJiraIssue getJiraIssue'
+    case "$(sed -n '1p' "$XDG_CONFIG_HOME/fake-cursor-health" 2>/dev/null || :)" in
+      healthy)
+        printf '%s\n' \
+          'createJiraIssue(projectKey, issueType, summary)' \
+          'getJiraIssue(issueKey)' \
+          'getJiraIssueTypeMetaWithFields(projectKey, issueType)' \
+          'getJiraProjectIssueTypesMetadata(projectKey)'
+        ;;
+      similar)
+        printf '%s\n' \
+          'createJiraIssuePreview(projectKey)' \
+          'description: call getJiraIssue after creation'
+        ;;
+      missing) printf '%s\n' 'getJiraIssue(issueKey)' ;;
+      *) exit 1 ;;
+    esac
     ;;
   *) exit 1 ;;
 esac
@@ -459,20 +472,26 @@ printf '%s\n' \
   '{"mcpServers":{"atlassian":{"url":"https://mcp.atlassian.com/v1/mcp/authv2"}}}' \
   >"$HOME/.cursor/mcp.json"
 printf '%s\n' healthy >"$XDG_CONFIG_HOME/fake-cursor-health"
-if output=$($CLI preflight "$consumer" \
-  --client cursor --operation jira-write --non-interactive 2>&1)
-then
-  fail 'Cursor inventory missing a required provider tool passed'
-fi
-assert_contains "$output" 'Capability state: UNSUPPORTED'
-assert_contains "$output" 'Result: CONNECTOR_CAPABILITY_REQUIRED'
+output=$($CLI preflight "$consumer" \
+  --client cursor --operation jira-write --non-interactive)
+assert_contains "$output" 'Capability state: SUPPORTED'
+
+for cursor_health in similar missing; do
+  printf '%s\n' "$cursor_health" >"$XDG_CONFIG_HOME/fake-cursor-health"
+  if output=$($CLI preflight "$consumer" \
+    --client cursor --operation jira-write --non-interactive 2>&1)
+  then
+    fail "Cursor $cursor_health inventory passed"
+  fi
+  assert_contains "$output" 'Capability state: UNSUPPORTED'
+done
 
 printf '%s\n' \
   '# schema=1' \
   '# client	version	endpoint	toolset	tested_on	capability	state' \
   'codex	1.0.0	https://mcp.atlassian.com/v1/mcp/authv2	createConfluencePage,createJiraIssue,getConfluencePage,getJiraIssue,getJiraIssueTypeMetaWithFields,getJiraProjectIssueTypesMetadata	2026-07-23	jira-issue-write	SUPPORTED' \
   'codex	1.0.0	https://mcp.atlassian.com/v1/mcp/authv2	createConfluencePage,createJiraIssue,getConfluencePage,getJiraIssue,getJiraIssueTypeMetaWithFields,getJiraProjectIssueTypesMetadata	2026-07-23	confluence-page-parent-write	SUPPORTED' \
-  'cursor	1.0.0	https://mcp.atlassian.com/v1/mcp/authv2	createJiraIssue,getJiraIssue	2026-07-23	jira-issue-write	SUPPORTED' \
+  'cursor	1.0.0	https://mcp.atlassian.com/v1/mcp/authv2	createJiraIssue,getJiraIssue,getJiraIssueTypeMetaWithFields,getJiraProjectIssueTypesMetadata	2026-07-23	jira-issue-write	SUPPORTED' \
   >"$source_repo/runtime/compatibility/atlassian.tsv"
 pin_test_release v1.1.1
 
