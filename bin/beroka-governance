@@ -2146,7 +2146,7 @@ cursor_tool_names() {
       if (match(line, /^[A-Za-z][A-Za-z0-9_]*/)) {
         name=substr(line, RSTART, RLENGTH)
         rest=substr(line, RLENGTH + 1, 1)
-        if (rest == "" || rest ~ /[[:space:](:]/) print name
+        if (rest == "" || rest == "(") print name
       }
     }
   '
@@ -2158,7 +2158,9 @@ connector_inventory() {
   CAPABILITY_INVENTORY=
   CAPABILITY_INVENTORY_COMPLETE=0
   CAPABILITY_INVENTORY_FORMAT=
-  CAPABILITY_TOOLSET=UNAVAILABLE
+  if [ "$ci_mode" = legacy ]; then
+    CAPABILITY_TOOLSET=UNAVAILABLE
+  fi
   case "$ci_client" in
     codex)
       connector_probe codex || return 1
@@ -2189,11 +2191,10 @@ connector_inventory() {
       ;;
   esac
   [ "$CAPABILITY_INVENTORY_COMPLETE" -eq 1 ] || return 0
+  [ "$ci_mode" = legacy ] || return 0
   CAPABILITY_TOOLSET=
-  ci_tools='createConfluencePage createJiraIssue getConfluencePage getJiraIssue'
-  [ "$ci_mode" = legacy ] ||
-    ci_tools="$ci_tools getJiraIssueTypeMetaWithFields getJiraProjectIssueTypesMetadata"
-  for ci_tool in $ci_tools
+  for ci_tool in \
+    createConfluencePage createJiraIssue getConfluencePage getJiraIssue
   do
     if inventory_has_tool "$ci_tool"; then
       if [ -n "$CAPABILITY_TOOLSET" ]; then

@@ -218,7 +218,9 @@ case "$*" in
     ;;
   'mcp list')
     case "$(sed -n '1p' "$XDG_CONFIG_HOME/fake-cursor-health" 2>/dev/null || :)" in
-      healthy|legacy-free-text|similar|missing) printf '%s\n' 'atlassian: Ready' ;;
+      healthy|description-prefixes|legacy-free-text|similar|missing)
+        printf '%s\n' 'atlassian: Ready'
+        ;;
       auth-required|'') printf '%s\n' 'atlassian: Authentication required' ;;
       *) printf '%s\n' 'atlassian: Failed' ;;
     esac
@@ -231,6 +233,14 @@ case "$*" in
           'getJiraIssue(issueKey)' \
           'getJiraIssueTypeMetaWithFields(projectKey, issueType)' \
           'getJiraProjectIssueTypesMetadata(projectKey)'
+        ;;
+      description-prefixes)
+        printf '%s\n' \
+          'createJiraIssue is configured for another server' \
+          'getJiraIssue: configuration example only' \
+          'getJiraIssueTypeMetaWithFields is mentioned in prose' \
+          'getJiraProjectIssueTypesMetadata: description only' \
+          'searchConfluenceUsingCql(query)'
         ;;
       legacy-free-text)
         printf '%s\n' \
@@ -493,7 +503,7 @@ output=$($CLI preflight "$consumer" \
   --client cursor --operation jira-write --non-interactive)
 assert_contains "$output" 'Capability state: SUPPORTED'
 
-for cursor_health in similar missing; do
+for cursor_health in description-prefixes similar missing; do
   printf '%s\n' "$cursor_health" >"$XDG_CONFIG_HOME/fake-cursor-health"
   if output=$($CLI preflight "$consumer" \
     --client cursor --operation jira-write --non-interactive 2>&1)
