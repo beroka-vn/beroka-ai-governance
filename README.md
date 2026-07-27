@@ -18,6 +18,7 @@ private release and set up one explicit client with:
   gh release download \
     --repo beroka-vn/beroka-ai-governance \
     --pattern bootstrap.sh \
+    --clobber \
     --output "$bootstrap_file"
   sh "$bootstrap_file" --client codex --non-interactive
 )

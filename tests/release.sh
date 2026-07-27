@@ -75,6 +75,7 @@ noninteractive_launcher=$(cat <<'EOF'
   gh release download \
     --repo beroka-vn/beroka-ai-governance \
     --pattern bootstrap.sh \
+    --clobber \
     --output "$bootstrap_file"
   sh "$bootstrap_file" --client codex --non-interactive
 )
@@ -135,6 +136,62 @@ fi
 [ ! -e "$behavior_root/inner-sh-called" ] ||
   fail 'README Quick start invokes the bootstrap shell after download failure'
 rm -rf "$behavior_root"
+trap - EXIT HUP INT TERM
+
+overwrite_root=$(mktemp -d \
+  "${TMPDIR:-/tmp}/beroka-release-overwrite-test.XXXXXX")
+trap 'rm -rf "$overwrite_root"' EXIT HUP INT TERM
+mkdir "$overwrite_root/bin"
+cat >"$overwrite_root/bin/gh" <<'EOF'
+#!/bin/sh
+set -eu
+case "$1:$2" in
+  auth:setup-git)
+    ;;
+  release:download)
+    shift 2
+    clobber=0
+    output=
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
+        --clobber)
+          clobber=1
+          shift
+          ;;
+        --output)
+          output=$2
+          shift 2
+          ;;
+        *)
+          shift
+          ;;
+      esac
+    done
+    [ -n "$output" ] && [ -e "$output" ] || exit 65
+    [ "$clobber" -eq 1 ] || exit 17
+    printf '%s\n' '#!/bin/sh' 'exit 0' >"$output"
+    ;;
+  *)
+    exit 64
+    ;;
+esac
+EOF
+cat >"$overwrite_root/bin/sh" <<'EOF'
+#!/bin/sh
+set -eu
+: >"$INNER_SH_CALLED"
+EOF
+chmod +x "$overwrite_root/bin/gh" "$overwrite_root/bin/sh"
+first_code_block_after_heading README.md '## Quick start' \
+  >"$overwrite_root/quick-start.sh"
+if ! PATH="$overwrite_root/bin:$PATH" \
+  INNER_SH_CALLED="$overwrite_root/inner-sh-called" \
+  /bin/sh "$overwrite_root/quick-start.sh"; then
+  fail 'README Quick start cannot replace its secure temporary file'
+fi
+[ -e "$overwrite_root/inner-sh-called" ] ||
+  fail 'README Quick start did not invoke the downloaded bootstrap'
+rm -rf "$overwrite_root"
 trap - EXIT HUP INT TERM
 
 require_text PACKAGE-DESIGN.md \
