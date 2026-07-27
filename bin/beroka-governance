@@ -1565,36 +1565,39 @@ codex_probe_complete() {
 }
 
 codex_probe_response() {
-  cpr_response=$(awk '
-    /"id"[[:space:]]*:[[:space:]]*1[[:space:]]*[,}]/ {
-      response=$0
-    }
-    END {
-      if (response == "") exit 1
-      print response
-    }
-  ' "$1") || return 1
-  printf '%s\n' "$cpr_response" | json_validate_object || return 1
+  cpr_file=$1
+  cpr_response=
+  while IFS= read -r cpr_candidate; do
+    cpr_kind=$(printf '%s\n' "$cpr_candidate" |
+      codex_probe_response_kind) || continue
+    case "$cpr_kind" in
+      result|error|invalid) cpr_response=$cpr_candidate ;;
+    esac
+  done <"$cpr_file"
+  [ -n "$cpr_response" ] || return 1
   printf '%s\n' "$cpr_response"
 }
 
 codex_probe_response_kind() {
   cprk_response=$(cat)
+  cprk_id1=0
   cprk_result=0
   cprk_error=0
-  cprk_keys=$(printf '%s\n' "$cprk_response" |
-    json_top_level_members) || {
-      printf '%s\n' invalid
-      return 0
-    }
-  while IFS= read -r cprk_key; do
-    case "$cprk_key" in
+  cprk_tokens=$(printf '%s\n' "$cprk_response" |
+    json_rpc_tokens) || return 1
+  while IFS= read -r cprk_token; do
+    case "$cprk_token" in
+      id1) cprk_id1=1 ;;
       result) cprk_result=1 ;;
       error) cprk_error=1 ;;
     esac
   done <<EOF
-$cprk_keys
+$cprk_tokens
 EOF
+  if [ "$cprk_id1" -eq 0 ]; then
+    printf '%s\n' unrelated
+    return 0
+  fi
   case "$cprk_result$cprk_error" in
     10) printf '%s\n' result ;;
     01) printf '%s\n' error ;;
@@ -1603,12 +1606,18 @@ EOF
 }
 
 codex_probe_response_count() {
-  awk '
-    /"id"[[:space:]]*:[[:space:]]*1[[:space:]]*[,}]/ {
-      responses++
-    }
-    END { print responses + 0 }
-  ' "$1"
+  cprc_file=$1
+  cprc_responses=0
+  while IFS= read -r cprc_candidate; do
+    cprc_kind=$(printf '%s\n' "$cprc_candidate" |
+      codex_probe_response_kind) || continue
+    case "$cprc_kind" in
+      result|error|invalid)
+        cprc_responses=$((cprc_responses + 1))
+        ;;
+    esac
+  done <"$cprc_file"
+  printf '%s\n' "$cprc_responses"
 }
 
 codex_probe_stop() {
@@ -2060,12 +2069,12 @@ json_top_level_object() {
 }
 
 json_top_level_keys() {
-  jtlk_value_mode=${1:-objects}
-  case "$jtlk_value_mode" in
-    objects|values) ;;
+  jtlk_mode=${1:-objects}
+  case "$jtlk_mode" in
+    objects|rpc) ;;
     *) return 1 ;;
   esac
-  LC_ALL=C awk -v value_mode="$jtlk_value_mode" '
+  LC_ALL=C awk -v parse_mode="$jtlk_mode" '
     function skip_space(    c) {
       while (position <= object_length) {
         c=substr(object, position, 1)
@@ -2221,21 +2230,36 @@ json_top_level_keys() {
         position++
       } else {
         while (position <= object_length) {
-          if (!parse_string(0)) exit 42
+          if (parse_mode == "rpc") {
+            if (!parse_string(1)) exit 42
+          } else if (!parse_string(0)) {
+            exit 42
+          }
           key=parsed_string
-          if (key !~ /^[A-Za-z][A-Za-z0-9_]*$/) exit 42
-          if (seen[key]) exit 42
-          seen[key]=1
-          keys[++key_count]=key
+          if (parse_mode == "rpc") {
+            if (key == "id" || key == "result" || key == "error") {
+              if (rpc_seen[key]) exit 42
+              rpc_seen[key]=1
+            }
+          } else {
+            if (key !~ /^[A-Za-z][A-Za-z0-9_]*$/) exit 42
+            if (seen[key]) exit 42
+            seen[key]=1
+            keys[++key_count]=key
+          }
           skip_space()
           if (substr(object, position, 1) != ":") exit 42
           position++
           skip_space()
-          if (value_mode == "values") {
+          value_start=position
+          if (parse_mode == "rpc") {
             if (!parse_json_value()) exit 42
           } else if (!parse_json_object()) {
             exit 42
           }
+          if (parse_mode == "rpc" && key == "id" &&
+              substr(object, value_start, position - value_start) == "1")
+            rpc_id1=1
           skip_space()
           separator=substr(object, position, 1)
           if (separator == "}") {
@@ -2250,13 +2274,19 @@ json_top_level_keys() {
       }
       skip_space()
       if (position <= object_length) exit 42
-      for (i=1; i<=key_count; i++) print keys[i]
+      if (parse_mode == "rpc") {
+        if (rpc_id1) print "id1"
+        if (rpc_seen["result"]) print "result"
+        if (rpc_seen["error"]) print "error"
+      } else {
+        for (i=1; i<=key_count; i++) print keys[i]
+      }
     }
   '
 }
 
-json_top_level_members() {
-  json_top_level_keys values
+json_rpc_tokens() {
+  json_top_level_keys rpc
 }
 
 json_validate_object() {

@@ -20,6 +20,26 @@ export PATH
 cat >"$FAKE_BIN/sleep" <<'EOF'
 #!/bin/sh
 set -eu
+if [ "${FAKE_CODEX_WAIT_FOR_DECOY:-0}" = 1 ]; then
+  decoy_polls=$(sed -n '1p' \
+    "$XDG_CONFIG_HOME/fake-codex-decoy-polls" 2>/dev/null || :)
+  decoy_polls=${decoy_polls:-0}
+  decoy_polls=$((decoy_polls + 1))
+  printf '%s\n' "$decoy_polls" \
+    >"$XDG_CONFIG_HOME/fake-codex-decoy-polls"
+  if [ "$decoy_polls" -eq 1 ]; then
+    decoy_marker=$XDG_CONFIG_HOME/fake-codex-decoy
+  else
+    decoy_marker=$XDG_CONFIG_HOME/fake-codex-actual
+  fi
+  wait_loops=0
+  while [ ! -f "$decoy_marker" ] && [ "$wait_loops" -lt 100 ]; do
+    /bin/sleep 0.01
+    wait_loops=$((wait_loops + 1))
+  done
+  /bin/sleep 0.01
+  exit 0
+fi
 if [ "${FAKE_CODEX_WAIT_FOR_ERROR:-0}" = 1 ]; then
   wait_loops=0
   while [ ! -f "$XDG_CONFIG_HOME/fake-codex-error-probes" ] &&
@@ -205,6 +225,49 @@ case "$*" in
           healthy)
             printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","serverInfo":null,"tools":{"atlassianUserInfo":{}},"resources":[],"resourceTemplates":[],"authStatus":"oAuth"}]}}'
             ;;
+          healthy-rpc-extensions)
+            printf '%s\n' '{"jsonrpc":"2.0","id":1,"trace-id":"abc","key with space":true,"escaped\u002dextension":null,"result":{"data":[{"name":"atlassian","serverInfo":null,"tools":{"atlassianUserInfo":{}},"resources":[],"resourceTemplates":[],"authStatus":"oAuth"}]}}'
+            ;;
+          nested-id-before-healthy|string-id-before-healthy)
+            decoy_requests=$(sed -n '1p' \
+              "$XDG_CONFIG_HOME/fake-codex-decoy-requests" \
+              2>/dev/null || :)
+            decoy_requests=${decoy_requests:-0}
+            decoy_requests=$((decoy_requests + 1))
+            printf '%s\n' "$decoy_requests" \
+              >"$XDG_CONFIG_HOME/fake-codex-decoy-requests"
+            case "$health" in
+              nested-id-before-healthy)
+                printf '%s\n' \
+                  '{"method":"notice","params":{"id":1,"result":{"ignored":true}}}'
+                ;;
+              string-id-before-healthy)
+                printf '%s\n' \
+                  '{"method":"notice","message":"saw \"id\":1 in text"}'
+                ;;
+            esac
+            : >"$XDG_CONFIG_HOME/fake-codex-decoy"
+            /bin/sleep 0.08
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","serverInfo":null,"tools":{"atlassianUserInfo":{}},"resources":[],"resourceTemplates":[],"authStatus":"oAuth"}]}}'
+            : >"$XDG_CONFIG_HOME/fake-codex-actual"
+            ;;
+          nested-id-only)
+            printf '%s\n' \
+              '{"method":"notice","params":{"id":1,"result":{"ignored":true}}}'
+            ;;
+          string-id-only)
+            printf '%s\n' \
+              '{"method":"notice","message":"saw \"id\":1 in text"}'
+            ;;
+          duplicate-rpc-id)
+            printf '%s\n' '{"id":1,"id":1,"result":{"data":[{"name":"atlassian","serverInfo":null,"tools":{"atlassianUserInfo":{}},"resources":[],"resourceTemplates":[],"authStatus":"oAuth"}]}}'
+            ;;
+          duplicate-rpc-result)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","serverInfo":null,"tools":{"atlassianUserInfo":{}},"resources":[],"resourceTemplates":[],"authStatus":"oAuth"}]},"result":{}}'
+            ;;
+          duplicate-rpc-error)
+            printf '%s\n' '{"id":1,"error":null,"error":{"code":-32603,"message":"failed"}}'
+            ;;
           healthy-custom-tools)
             printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","serverInfo":null,"tools":{"searchJiraIssuesUsingJql":{}},"resources":[],"resourceTemplates":[],"authStatus":"oAuth"}]}}'
             ;;
@@ -361,6 +424,73 @@ output=$($CLI setup-connectors --client codex --non-interactive)
 assert_contains "$output" 'Result: PASS'
 [ "$(sed -n '1p' "$XDG_CONFIG_HOME/fake-codex-probes")" -ge 2 ] ||
   fail 'Codex did not re-probe after an unclassifiable response'
+
+printf '%s\n' healthy-rpc-extensions \
+  >"$XDG_CONFIG_HOME/fake-codex-health"
+if output=$($CLI setup-connectors --client codex --non-interactive 2>&1)
+then
+  fix_wave_contains "$output" 'Result: PASS'
+else
+  fix_wave_fail 'Codex rejected valid JSON-RPC extension keys'
+fi
+
+export FAKE_CODEX_WAIT_FOR_DECOY=1
+for delayed_response in \
+  nested-id-before-healthy \
+  string-id-before-healthy
+do
+  rm -f \
+    "$XDG_CONFIG_HOME/fake-codex-decoy" \
+    "$XDG_CONFIG_HOME/fake-codex-actual" \
+    "$XDG_CONFIG_HOME/fake-codex-decoy-polls" \
+    "$XDG_CONFIG_HOME/fake-codex-decoy-requests"
+  printf '%s\n' "$delayed_response" \
+    >"$XDG_CONFIG_HOME/fake-codex-health"
+  if output=$($CLI setup-connectors --client codex --non-interactive 2>&1)
+  then
+    fix_wave_contains "$output" 'Result: PASS'
+  else
+    fix_wave_fail "$delayed_response masked the actual Codex response"
+  fi
+  decoy_requests=$(sed -n '1p' \
+    "$XDG_CONFIG_HOME/fake-codex-decoy-requests" 2>/dev/null || :)
+  [ "$decoy_requests" = 1 ] ||
+    fix_wave_fail "$delayed_response used ${decoy_requests:-0} probes"
+done
+unset FAKE_CODEX_WAIT_FOR_DECOY
+
+for unrelated_only in nested-id-only string-id-only; do
+  printf '%s\n' "$unrelated_only" \
+    >"$XDG_CONFIG_HOME/fake-codex-health"
+  if output=$($CLI setup-connectors --client codex --non-interactive 2>&1)
+  then
+    fix_wave_fail "$unrelated_only passed Codex setup"
+  else
+    fix_wave_contains "$output" 'Result: CONNECTOR_HEALTH_UNAVAILABLE'
+  fi
+  fix_wave_not_contains "$output" 'Capability state: SUPPORTED'
+  fix_wave_not_contains "$output" 'ATLASSIAN_AUTH_REQUIRED'
+  fix_wave_not_contains "$output" 'codex mcp login atlassian'
+  fix_wave_not_contains "$output" 'OAuth URL:'
+done
+
+for duplicate_rpc_member in \
+  duplicate-rpc-id \
+  duplicate-rpc-result \
+  duplicate-rpc-error
+do
+  printf '%s\n' "$duplicate_rpc_member" \
+    >"$XDG_CONFIG_HOME/fake-codex-health"
+  if output=$($CLI setup-connectors --client codex --non-interactive 2>&1)
+  then
+    fix_wave_fail "$duplicate_rpc_member passed Codex setup"
+  else
+    fix_wave_contains "$output" 'Result: CONNECTOR_HEALTH_UNAVAILABLE'
+  fi
+  fix_wave_not_contains "$output" 'ATLASSIAN_AUTH_REQUIRED'
+  fix_wave_not_contains "$output" 'codex mcp login atlassian'
+  fix_wave_not_contains "$output" 'OAuth URL:'
+done
 
 for malformed_reauth in \
   malformed-reauth-missing-comma \
