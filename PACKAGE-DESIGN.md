@@ -73,14 +73,15 @@ connector inspection requires `jq` for every selected client; Cursor setup also
 uses it to preserve user-level MCP JSON. It must not require Python, a daemon,
 or a new package manager.
 
-This reset establishes `v1.0.0` as the first supported team release. Every
-subsequently published tag is immutable and annotated SemVer.
+`v1.0.1` is the current supported corrective release. `v1.0.0` remains
+immutable but is superseded for onboarding. Every subsequently published tag
+is immutable and annotated SemVer.
 
 ## Developer-machine layout
 
 ```text
 ~/.local/bin/beroka-governance
-~/.local/share/beroka-ai-governance/releases/v1.0.0/
+~/.local/share/beroka-ai-governance/releases/v1.0.1/
 ~/.config/beroka-ai-governance/registered-repos
 ```
 
@@ -105,7 +106,7 @@ Example lock file:
 ```text
 SOURCE=beroka-vn/beroka-ai-governance
 REPOSITORY=beroka-vn/example-backend
-VERSION=v1.0.0
+VERSION=v1.0.1
 COMMIT=0123456789abcdef0123456789abcdef01234567
 CLIENTS=codex,claude
 ```
@@ -201,7 +202,7 @@ owned by the client or OS keyring.
 ### Install
 
 ```bash
-beroka-governance install v1.0.0
+beroka-governance install v1.0.1
 ```
 
 The downloaded release launcher clones the embedded
@@ -276,7 +277,7 @@ mode returns `GITHUB_AUTH_REQUIRED` with that exact remediation command.
 ### Register
 
 ```bash
-beroka-governance register /path/to/repo --version v1.0.0 --client codex
+beroka-governance register /path/to/repo --version v1.0.1 --client codex
 ```
 
 Register validates the Git repository, uniquely discovered canonical remote,

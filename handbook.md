@@ -48,8 +48,9 @@ WSL là target environments; native Windows PowerShell không thuộc V1.
   `gh auth login --hostname github.com --web`.
 - `$HOME/.local/bin` phải có trong `PATH` sau khi `install` để gọi
   `beroka-governance`.
-- Dùng một annotated SemVer tag đã được review và publish. Reset này thiết lập
-  `v1.0.0` là release được hỗ trợ đầu tiên; mọi tag publish sau đó là immutable.
+- Dùng một annotated SemVer tag đã được review và publish. `v1.0.1` là
+  corrective release được hỗ trợ hiện tại. `v1.0.0` vẫn immutable nhưng đã được
+  thay thế cho onboarding; mọi tag publish sau đó là immutable.
 - Repository đích là Git repository có đúng một canonical GitHub remote khớp
   repository identity. Tên local remote không bắt buộc là `origin`. Review
   diff của repository đích bằng PR trước khi merge; không đăng ký trực tiếp
@@ -187,7 +188,7 @@ vì vậy vẫn dùng được khi routing đang thiếu hoặc pending.
 
 ```bash
 repo=/srv/beroka/backend
-release=v1.0.0
+release=v1.0.1
 
 beroka-governance register "$repo" --version "$release" --client codex
 git -C "$repo" diff -- .beroka-governance.lock AGENTS.md
@@ -457,8 +458,9 @@ tại. Sau khi developer sửa kết nối, agent phải chạy lại preflight.
 
 ## Release gate trước khi publish tag
 
-Reset này thiết lập `v1.0.0` là release được hỗ trợ đầu tiên cho team; mọi tag
-publish sau đó là immutable. Trước mọi push tag,
+`v1.0.1` là corrective release được hỗ trợ hiện tại. `v1.0.0` vẫn immutable
+nhưng đã được thay thế cho onboarding; mọi tag publish sau đó là immutable.
+Trước mọi push tag,
 coordinator phải nhận:
 
 - exact local branch, candidate version và release commit;
