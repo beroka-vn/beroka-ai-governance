@@ -151,9 +151,10 @@ are repository `AGENTS.md`. Claude personal instructions are
 are repository `CLAUDE.md`. Cursor personal instructions are User Rules;
 governance owns only `.cursor/rules/beroka-governance.mdc` and never modifies
 other Cursor rules. Enabling a client is a one-time reviewed repository change
-that adds it to `CLIENTS` and creates its managed entrypoint. After merge, each
-execution environment configures only that client's connector/OAuth when health
-requires it.
+that adds it to `CLIENTS` and creates its managed entrypoint. Bootstrap
+configures its selected client locally before review. Repository enablement
+becomes shared after merge; other execution environments configure only that
+client's connector/OAuth later when health requires it.
 
 The CLI hard-enforces technical stop conditions for registration,
 release/lock/entrypoint integrity, routing, connector/authentication, and

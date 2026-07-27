@@ -332,8 +332,10 @@ governance chỉ sở hữu `.cursor/rules/beroka-governance.mdc` và không s�
 rules khác.
 
 Enable client mới là one-time reviewed repository change: thêm client vào
-`CLIENTS` và tạo managed entrypoint của client đó. Sau merge, mỗi execution
-environment chỉ configure connector/OAuth của client đó khi health yêu cầu.
+`CLIENTS` và tạo managed entrypoint của client đó. Bootstrap configures the
+selected client locally trước review. Repository enablement trở thành shared sau merge;
+execution environment khác chỉ configure connector/OAuth của client đó sau này
+khi health yêu cầu.
 CLI hard-enforce technical stop conditions cho registration,
 release/lock/entrypoint integrity, routing, connector/authentication và
 operation preflight. Workflow rules như ownership, issue scope, branch use và

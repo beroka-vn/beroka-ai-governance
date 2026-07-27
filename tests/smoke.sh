@@ -58,7 +58,6 @@ make_release_fixture() {
   rm -f "$source_repo/runtime/routing-schema"
   rm -rf "$source_repo/runtime/rules" "$source_repo/runtime/profiles" \
     "$source_repo/runtime/integrations" "$source_repo/runtime/compatibility"
-  cp "$ROOT/runtime/entrypoint.md" "$source_repo/runtime/entrypoint.md"
   printf 'PINNED ENTRYPOINT v1.0.0\n' >>"$source_repo/runtime/entrypoint.md"
   printf 'GOVERNANCE v1.0.0\n' >"$source_repo/governance.md"
   printf 'HANDBOOK v1.0.0\n' >"$source_repo/handbook.md"
