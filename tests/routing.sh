@@ -1017,9 +1017,8 @@ grep -F -- 'releases/latest/download/bootstrap.sh' "$ROOT/README.md" >/dev/null 
   fix_wave_fail 'README does not select the latest-release launcher'
 grep -F -- 'release=v1.0.1' "$ROOT/handbook.md" >/dev/null ||
   fix_wave_fail 'handbook does not select v1.0.1'
-grep -F '`v1.0.0` is the first public stable release' \
-  "$ROOT/PACKAGE-DESIGN.md" >/dev/null ||
-  fix_wave_fail 'package design does not define the first stable release'
+grep -F 'VERSION=v1.0.1' "$ROOT/PACKAGE-DESIGN.md" >/dev/null ||
+  fix_wave_fail 'package design does not select v1.0.1'
 
 [ "$FIX_WAVE_FAILURES" -eq 0 ] ||
   fail "$FIX_WAVE_FAILURES fix-wave regressions remain"

@@ -67,13 +67,9 @@ reject_text() {
 [ "$(cat "$ROOT/VERSION")" = v1.0.1 ] ||
   fail 'VERSION is not v1.0.1'
 
-require_text README.md '`v1.0.0` is the first public stable release'
 require_text README.md 'Backend and Frontend repositories'
 require_text handbook.md 'Chuyển quyết định cho developer'
-require_text PACKAGE-DESIGN.md \
-  '`v1.0.0` is the first public stable release'
 require_text README.md 'releases/latest/download/bootstrap.sh'
-require_text README.md 'sh -s -- --client codex'
 require_text README.md 'one client on each execution environment'
 require_text handbook.md 'AUTH_PENDING'
 require_text handbook.md 'CONNECTOR_HEALTH_UNAVAILABLE'
@@ -86,16 +82,27 @@ require_text PACKAGE-DESIGN.md 'checked-out HEAD each equal the embedded commit'
 [ -f "$ROOT/release/bootstrap.sh.in" ] ||
   fail 'missing release launcher template'
 
-interactive_launcher='curl -fsSL \
-  https://github.com/beroka-vn/beroka-ai-governance/releases/latest/download/bootstrap.sh |
-  sh -s -- --client codex'
 noninteractive_launcher='curl -fsSL \
   https://github.com/beroka-vn/beroka-ai-governance/releases/latest/download/bootstrap.sh |
   sh -s -- --client codex --non-interactive'
 [ "$(first_code_block_after_heading README.md '## Quick start')" = \
-  "$interactive_launcher" ] ||
-  fail 'README Quick start does not begin with the exact interactive launcher'
+  "$noninteractive_launcher" ] ||
+  fail 'README Quick start does not begin with the exact non-interactive launcher'
 require_code_block README.md "$noninteractive_launcher"
+require_code_block handbook.md "$noninteractive_launcher"
+require_code_block PACKAGE-DESIGN.md "$noninteractive_launcher"
+
+for file in README.md handbook.md PACKAGE-DESIGN.md; do
+  if grep -Eq '^[[:space:]]*sh -s -- --client codex[[:space:]]*$' \
+    "$ROOT/$file"; then
+    fail "interactive launcher remains in active onboarding: $file"
+  fi
+done
+
+reject_text README.md '`v1.0.0` is the first public stable release'
+reject_text handbook.md '`v1.0.0` là first public stable release'
+reject_text PACKAGE-DESIGN.md \
+  '`v1.0.0` is the first public stable release'
 
 reject_text handbook.md 'canonical remote chưa có `v1.0.0`'
 reject_text handbook.md 'tạo annotated `v1.0.0`'

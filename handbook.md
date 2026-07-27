@@ -47,8 +47,8 @@ WSL là target environments; native Windows PowerShell không thuộc V1.
   repository; package không chứa credentials.
 - `$HOME/.local/bin` phải có trong `PATH` sau khi `install` để gọi
   `beroka-governance`.
-- Dùng một annotated SemVer tag đã được review và publish. `v1.0.0` là first
-  public stable release; sau khi publish không được move hoặc replace tag.
+- Dùng một annotated SemVer tag đã được review và publish. Release hiện hành
+  cho team là `v1.0.1`; mọi tag được publish từ cutover này là immutable.
 - Repository đích là Git repository có đúng một canonical GitHub remote khớp
   repository identity. Tên local remote không bắt buộc là `origin`. Review
   diff của repository đích bằng PR trước khi merge; không đăng ký trực tiếp
@@ -66,21 +66,18 @@ embedded commit:
 ```bash
 curl -fsSL \
   https://github.com/beroka-vn/beroka-ai-governance/releases/latest/download/bootstrap.sh |
-  sh -s -- --client codex
+  sh -s -- --client codex --non-interactive
 ```
+
+Command không mở browser. Nếu OAuth thiếu hoặc invalid, installation và
+registration vẫn được giữ nguyên, command trả
+`ATLASSIAN_AUTH_REQUIRED` cùng remediation của selected client. Hoàn tất OAuth
+do client sở hữu rồi chạy lại đúng command trên.
 
 Thay `codex` bằng `claude` hoặc `cursor`; `--client` là bắt buộc và mỗi lần
 chạy chỉ chọn đúng một client. Lặp lại setup một lần cho mỗi client trên mỗi
 execution environment. Các client enabled cùng load một pinned governance
 release; đổi model bên trong cùng một client không cần setup lại.
-
-Automation fail closed và không mở browser:
-
-```bash
-curl -fsSL \
-  https://github.com/beroka-vn/beroka-ai-governance/releases/latest/download/bootstrap.sh |
-  sh -s -- --client codex --non-interactive
-```
 
 Repository đã đăng ký luôn giữ lock hiện tại; không silent upgrade. Sau khi
 command PASS, review và commit các managed files qua PR rồi mở **fresh AI session**;
@@ -446,10 +443,7 @@ tại. Sau khi developer sửa kết nối, agent phải chạy lại preflight.
 
 ## Release gate trước khi publish tag
 
-`v1.0.0` là first public stable release đã publish và immutable: never
-recreate, move, replace hoặc delete tag/release đó. Với release candidate mới
-(ví dụ `v1.0.1`, chưa được xem là published), coordinator đặt exact candidate
-version và merge commit trước khi publish. Trước mọi push tag candidate,
+`v1.0.1` là release chính thức đầu tiên cho team. Trước mọi push tag,
 coordinator phải nhận:
 
 - exact local branch, candidate version và release commit;
@@ -461,8 +455,7 @@ coordinator phải nhận:
 Không tạo hoặc push tag trước khi coordinator duyệt report này. Sau khi release
 PR merge, fetch canonical `main`, xác minh exact merge commit, rồi tạo
 annotated candidate tag tại commit đó. Nếu remote đã có candidate tag thì dừng;
-không force hoặc overwrite. Không dùng candidate flow này để tạo lại, move,
-replace hoặc delete `v1.0.0`.
+không force hoặc overwrite.
 
 Automated gate:
 
