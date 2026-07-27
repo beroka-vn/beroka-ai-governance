@@ -615,6 +615,15 @@ assert_release_file() {
   esac
 }
 
+atlassian_compatibility_schema() {
+  acs_file=$1
+  case "$(sed -n '1p' "$acs_file" 2>/dev/null)" in
+    '# schema=1') printf '%s\n' 1 ;;
+    '# schema=2') printf '%s\n' 2 ;;
+    *) return 1 ;;
+  esac
+}
+
 validate_release_checkout() {
   vrc_checkout=$1 vrc_version=$2
   [ ! -L "$vrc_checkout" ] && [ -d "$vrc_checkout" ] || die GOVERNANCE_NOT_READY "Release is not a regular directory: $vrc_version"
@@ -643,8 +652,8 @@ validate_release_checkout() {
     do
       assert_release_file "$vrc_checkout" "$vrc_routing_file"
     done
-    [ "$(sed -n '1p' \
-      "$vrc_checkout/runtime/compatibility/atlassian.tsv")" = '# schema=1' ] ||
+    atlassian_compatibility_schema \
+      "$vrc_checkout/runtime/compatibility/atlassian.tsv" >/dev/null ||
       die VERSION_MISMATCH 'Unsupported Atlassian compatibility schema'
   fi
   [ "$(sed -n '1p' "$vrc_checkout/VERSION" 2>/dev/null)" = "$vrc_version" ] || die VERSION_MISMATCH 'Installed VERSION does not match requested version'
