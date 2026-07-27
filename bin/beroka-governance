@@ -2214,11 +2214,12 @@ json_top_level_keys() {
 }
 
 json_validate_object() {
-  {
+  jvo_keys=$({
     printf '%s' '{"object":'
     cat
     printf '%s\n' '}'
-  } | json_top_level_keys >/dev/null
+  } | json_top_level_keys) || return 1
+  [ "$jvo_keys" = object ]
 }
 
 json_top_level_tools() {

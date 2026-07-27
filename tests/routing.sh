@@ -104,6 +104,17 @@ case "$*" in
           healthy-malformed-envelope-trailing-object)
             printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]}} {"trailing":true}'
             ;;
+          healthy-malformed-envelope-trailing-member)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]}},"extra":{}'
+            ;;
+          healthy-malformed-envelope-trailing-member-spaced)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]}} , "extra" : {}'
+            ;;
+          healthy-malformed-envelope-trailing-member-whitespace)
+            printf '%s \t,\r\t%s\t:\t%s\n' \
+              '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]}}' \
+              '"extra"' '{}'
+            ;;
           healthy-valid-nested-tool-values)
             printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{"metadata":{"description":"brace } and escaped \" quote","values":[1,-2.5e+3,true,false,null,{"nested":[]}]}},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]}}'
             ;;
@@ -899,7 +910,10 @@ for malformed_response in \
   healthy-malformed-envelope-missing-comma \
   healthy-malformed-record-illegal-escape \
   healthy-malformed-record-missing-comma \
-  healthy-malformed-envelope-trailing-object
+  healthy-malformed-envelope-trailing-object \
+  healthy-malformed-envelope-trailing-member \
+  healthy-malformed-envelope-trailing-member-spaced \
+  healthy-malformed-envelope-trailing-member-whitespace
 do
   printf '%s\n' "$malformed_response" >"$XDG_CONFIG_HOME/fake-codex-health"
   if output=$($CLI preflight "$consumer" \
