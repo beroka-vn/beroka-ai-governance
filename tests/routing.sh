@@ -212,11 +212,35 @@ case "$*" in
               '{"method":"mcpServer/startupStatus/updated","params":{"name":"other","metadata":{"name":"atlassian","failureReason":"reauthenticationRequired"}}}' \
               '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]}}'
             ;;
-          dual-result-error)
-            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]},"error":{"code":-32603,"message":"failed"}}'
+          dual-result-error|dual-result-error-null|\
+          dual-result-error-string|dual-result-error-array|\
+          dual-result-error-number|dual-result-error-bool)
+            case "$health" in
+              *-null) error_value=null ;;
+              *-string) error_value='"failed"' ;;
+              *-array) error_value='["failed"]' ;;
+              *-number) error_value=17 ;;
+              *-bool) error_value=true ;;
+              *) error_value='{"code":-32603,"message":"failed"}' ;;
+            esac
+            printf '%s%s%s\n' \
+              '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]},"error":' \
+              "$error_value" '}'
             ;;
-          pure-error)
-            printf '%s\n' '{"id":1,"error":{"code":-32603,"message":"failed"}}'
+          pure-error|pure-error-null|pure-error-string|pure-error-array|\
+          pure-error-number|pure-error-bool)
+            case "$health" in
+              *-null) error_value=null ;;
+              *-string) error_value='"failed"' ;;
+              *-array) error_value='["failed"]' ;;
+              *-number) error_value=17 ;;
+              *-bool) error_value=true ;;
+              *) error_value='{"code":-32603,"message":"failed"}' ;;
+            esac
+            printf '%s%s%s\n' '{"id":1,"error":' "$error_value" '}'
+            ;;
+          neither-result-nor-error)
+            printf '%s\n' '{"jsonrpc":"2.0","id":1}'
             ;;
           malformed-reauth-missing-comma)
             printf '%s\n' '{"method":"mcpServer/startupStatus/updated" "params":{"name":"atlassian","failureReason":"reauthenticationRequired"}}'
@@ -971,7 +995,21 @@ do
   assert_not_contains "$output" 'reauthenticationRequired'
 done
 
-for terminal_error_response in pure-error dual-result-error; do
+for terminal_error_response in \
+  pure-error \
+  pure-error-null \
+  pure-error-string \
+  pure-error-array \
+  pure-error-number \
+  pure-error-bool \
+  dual-result-error \
+  dual-result-error-null \
+  dual-result-error-string \
+  dual-result-error-array \
+  dual-result-error-number \
+  dual-result-error-bool \
+  neither-result-nor-error
+do
   printf '%s\n' "$terminal_error_response" \
     >"$XDG_CONFIG_HOME/fake-codex-health"
   if output=$($CLI preflight "$consumer" \

@@ -20,6 +20,17 @@ export PATH
 cat >"$FAKE_BIN/sleep" <<'EOF'
 #!/bin/sh
 set -eu
+if [ "${FAKE_CODEX_WAIT_FOR_ERROR:-0}" = 1 ]; then
+  wait_loops=0
+  while [ ! -f "$XDG_CONFIG_HOME/fake-codex-error-probes" ] &&
+        [ "$wait_loops" -lt 100 ]
+  do
+    /bin/sleep 0.01
+    wait_loops=$((wait_loops + 1))
+  done
+  /bin/sleep 0.01
+  exit 0
+fi
 if [ -n "${FAKE_CODEX_READY_AFTER:-}" ]; then
   count=$(sed -n '1p' "$XDG_CONFIG_HOME/fake-codex-polls" 2>/dev/null || :)
   count=${count:-0}
@@ -240,17 +251,53 @@ case "$*" in
               '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]}}' \
               '"extra"' '{}'
             ;;
-          dual-result-error)
-            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]},"error":{"code":-32603,"message":"failed"}}'
-            ;;
-          pure-error)
+          dual-result-error|dual-result-error-null|\
+          dual-result-error-string|dual-result-error-array|\
+          dual-result-error-number|dual-result-error-bool)
             error_probes=$(sed -n '1p' \
               "$XDG_CONFIG_HOME/fake-codex-error-probes" 2>/dev/null || :)
             error_probes=${error_probes:-0}
             error_probes=$((error_probes + 1))
             printf '%s\n' "$error_probes" \
               >"$XDG_CONFIG_HOME/fake-codex-error-probes"
-            printf '%s\n' '{"id":1,"error":{"code":-32603,"message":"failed"}}'
+            case "$health" in
+              *-null) error_value=null ;;
+              *-string) error_value='"failed"' ;;
+              *-array) error_value='["failed"]' ;;
+              *-number) error_value=17 ;;
+              *-bool) error_value=true ;;
+              *) error_value='{"code":-32603,"message":"failed"}' ;;
+            esac
+            printf '%s%s%s\n' \
+              '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]},"error":' \
+              "$error_value" '}'
+            ;;
+          pure-error|pure-error-null|pure-error-string|pure-error-array|\
+          pure-error-number|pure-error-bool)
+            error_probes=$(sed -n '1p' \
+              "$XDG_CONFIG_HOME/fake-codex-error-probes" 2>/dev/null || :)
+            error_probes=${error_probes:-0}
+            error_probes=$((error_probes + 1))
+            printf '%s\n' "$error_probes" \
+              >"$XDG_CONFIG_HOME/fake-codex-error-probes"
+            case "$health" in
+              *-null) error_value=null ;;
+              *-string) error_value='"failed"' ;;
+              *-array) error_value='["failed"]' ;;
+              *-number) error_value=17 ;;
+              *-bool) error_value=true ;;
+              *) error_value='{"code":-32603,"message":"failed"}' ;;
+            esac
+            printf '%s%s%s\n' '{"id":1,"error":' "$error_value" '}'
+            ;;
+          neither-result-nor-error)
+            error_probes=$(sed -n '1p' \
+              "$XDG_CONFIG_HOME/fake-codex-error-probes" 2>/dev/null || :)
+            error_probes=${error_probes:-0}
+            error_probes=$((error_probes + 1))
+            printf '%s\n' "$error_probes" \
+              >"$XDG_CONFIG_HOME/fake-codex-error-probes"
+            printf '%s\n' '{"jsonrpc":"2.0","id":1}'
             ;;
           malformed-reauth-missing-comma)
             printf '%s\n' '{"method":"mcpServer/startupStatus/updated" "params":{"name":"atlassian","failureReason":"reauthenticationRequired"}}'
@@ -334,33 +381,43 @@ do
   fix_wave_not_contains "$output" 'reauthenticationRequired'
 done
 
-printf '%s\n' dual-result-error >"$XDG_CONFIG_HOME/fake-codex-health"
-if output=$($CLI setup-connectors --client codex --non-interactive 2>&1)
-then
-  fix_wave_fail 'dual result/error response passed Codex setup'
-else
-  fix_wave_contains "$output" 'Result: CONNECTOR_HEALTH_UNAVAILABLE'
-fi
-fix_wave_not_contains "$output" 'ATLASSIAN_AUTH_REQUIRED'
-fix_wave_not_contains "$output" 'codex mcp login atlassian'
-fix_wave_not_contains "$output" 'OAuth URL:'
-fix_wave_not_contains "$output" 'createJiraIssue'
-
-rm -f "$XDG_CONFIG_HOME/fake-codex-error-probes"
-printf '%s\n' pure-error >"$XDG_CONFIG_HOME/fake-codex-health"
-if output=$($CLI setup-connectors --client codex --non-interactive 2>&1)
-then
-  fix_wave_fail 'pure error response passed Codex setup'
-else
-  fix_wave_contains "$output" 'Result: CONNECTOR_HEALTH_UNAVAILABLE'
-fi
-error_probes=$(sed -n '1p' \
-  "$XDG_CONFIG_HOME/fake-codex-error-probes" 2>/dev/null || :)
-[ "$error_probes" = 1 ] ||
-  fix_wave_fail "pure error response used ${error_probes:-0} probes"
-fix_wave_not_contains "$output" 'ATLASSIAN_AUTH_REQUIRED'
-fix_wave_not_contains "$output" 'codex mcp login atlassian'
-fix_wave_not_contains "$output" 'OAuth URL:'
+export FAKE_CODEX_WAIT_FOR_ERROR=1
+for terminal_error_response in \
+  pure-error \
+  pure-error-null \
+  pure-error-string \
+  pure-error-array \
+  pure-error-number \
+  pure-error-bool \
+  dual-result-error \
+  dual-result-error-null \
+  dual-result-error-string \
+  dual-result-error-array \
+  dual-result-error-number \
+  dual-result-error-bool \
+  neither-result-nor-error
+do
+  rm -f "$XDG_CONFIG_HOME/fake-codex-error-probes"
+  printf '%s\n' "$terminal_error_response" \
+    >"$XDG_CONFIG_HOME/fake-codex-health"
+  if output=$($CLI setup-connectors --client codex --non-interactive 2>&1)
+  then
+    fix_wave_fail "$terminal_error_response passed Codex setup"
+  else
+    fix_wave_contains "$output" 'Result: CONNECTOR_HEALTH_UNAVAILABLE'
+  fi
+  error_probes=$(sed -n '1p' \
+    "$XDG_CONFIG_HOME/fake-codex-error-probes" 2>/dev/null || :)
+  [ "$error_probes" = 1 ] ||
+    fix_wave_fail \
+      "$terminal_error_response used ${error_probes:-0} probes"
+  fix_wave_not_contains "$output" 'Capability state: SUPPORTED'
+  fix_wave_not_contains "$output" 'ATLASSIAN_AUTH_REQUIRED'
+  fix_wave_not_contains "$output" 'codex mcp login atlassian'
+  fix_wave_not_contains "$output" 'OAuth URL:'
+  fix_wave_not_contains "$output" 'createJiraIssue'
+done
+unset FAKE_CODEX_WAIT_FOR_ERROR
 
 printf '%s\n' ignore-term >"$XDG_CONFIG_HOME/fake-codex-health"
 rm -f "$XDG_CONFIG_HOME/fake-codex-pid"
