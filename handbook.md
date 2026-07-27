@@ -66,12 +66,22 @@ Từ Git root của repository cần đăng ký, chạy release launcher đã au
 xác minh annotated tag và embedded commit:
 
 ```bash
-gh release download \
-  --repo beroka-vn/beroka-ai-governance \
-  --pattern bootstrap.sh \
-  --output - |
-  sh -s -- --client codex --non-interactive
+(
+  set -eu
+  bootstrap_file=$(mktemp "${TMPDIR:-/tmp}/beroka-bootstrap.XXXXXX")
+  trap 'rm -f "$bootstrap_file"' EXIT HUP INT TERM
+  gh auth setup-git --hostname github.com
+  gh release download \
+    --repo beroka-vn/beroka-ai-governance \
+    --pattern bootstrap.sh \
+    --output "$bootstrap_file"
+  sh "$bootstrap_file" --client codex --non-interactive
+)
 ```
+
+`gh auth setup-git --hostname github.com` cấu hình Git để dùng lại
+client-owned GitHub OAuth cho private HTTPS clone của launcher.
+Không yêu cầu, in, sao chép, ghi log hoặc lưu token.
 
 Command không mở browser. Nếu OAuth thiếu hoặc invalid, installation và
 registration vẫn được giữ nguyên, command trả

@@ -10,11 +10,17 @@ From the Git root of the repository to register, install the first supported
 private release and set up one explicit client with:
 
 ```bash
-gh release download \
-  --repo beroka-vn/beroka-ai-governance \
-  --pattern bootstrap.sh \
-  --output - |
-  sh -s -- --client codex --non-interactive
+(
+  set -eu
+  bootstrap_file=$(mktemp "${TMPDIR:-/tmp}/beroka-bootstrap.XXXXXX")
+  trap 'rm -f "$bootstrap_file"' EXIT HUP INT TERM
+  gh auth setup-git --hostname github.com
+  gh release download \
+    --repo beroka-vn/beroka-ai-governance \
+    --pattern bootstrap.sh \
+    --output "$bootstrap_file"
+  sh "$bootstrap_file" --client codex --non-interactive
+)
 ```
 
 `gh` must be installed and authenticated for the private repository. If
@@ -23,6 +29,10 @@ authentication is missing, run:
 ```bash
 gh auth login --hostname github.com --web
 ```
+
+`gh auth setup-git --hostname github.com` configures Git to reuse
+client-owned GitHub OAuth for the launcher's private HTTPS clone.
+No token is requested, printed, copied, logged, or stored.
 
 Replace `codex` with `claude` or `cursor`. The client flag is mandatory.
 Run setup once for one client on each execution environment, then repeat it

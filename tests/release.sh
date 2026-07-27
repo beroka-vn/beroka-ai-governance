@@ -10,7 +10,7 @@ fail() {
 
 require_text() {
   file=$1 text=$2
-  grep -F "$text" "$ROOT/$file" >/dev/null ||
+  grep -F -- "$text" "$ROOT/$file" >/dev/null ||
     fail "missing [$text] in $file"
 }
 
@@ -27,7 +27,7 @@ first_code_block_after_heading() {
 
 reject_text() {
   file=$1 text=$2
-  if grep -F "$text" "$ROOT/$file" >/dev/null; then
+  if grep -F -- "$text" "$ROOT/$file" >/dev/null; then
     fail "forbidden [$text] in $file"
   fi
 }
@@ -42,19 +42,23 @@ require_text README.md 'one client on each execution environment'
 require_text handbook.md 'AUTH_PENDING'
 require_text handbook.md 'CONNECTOR_HEALTH_UNAVAILABLE'
 require_text PACKAGE-DESIGN.md '15-second total deadline'
-require_text PACKAGE-DESIGN.md \
-  'The release launcher asset is piped into a shell; it clones the embedded'
-require_text PACKAGE-DESIGN.md \
-  'annotated tag and invokes the package CLI only after tag type, peeled commit,'
-require_text PACKAGE-DESIGN.md 'checked-out HEAD each equal the embedded commit'
 [ -f "$ROOT/release/bootstrap.sh.in" ] ||
   fail 'missing release launcher template'
 
-noninteractive_launcher='gh release download \
-  --repo beroka-vn/beroka-ai-governance \
-  --pattern bootstrap.sh \
-  --output - |
-  sh -s -- --client codex --non-interactive'
+noninteractive_launcher=$(cat <<'EOF'
+(
+  set -eu
+  bootstrap_file=$(mktemp "${TMPDIR:-/tmp}/beroka-bootstrap.XXXXXX")
+  trap 'rm -f "$bootstrap_file"' EXIT HUP INT TERM
+  gh auth setup-git --hostname github.com
+  gh release download \
+    --repo beroka-vn/beroka-ai-governance \
+    --pattern bootstrap.sh \
+    --output "$bootstrap_file"
+  sh "$bootstrap_file" --client codex --non-interactive
+)
+EOF
+)
 section_fixture=$(mktemp "$ROOT/tests/.release-section.XXXXXX")
 trap 'rm -f "$section_fixture"' EXIT HUP INT TERM
 {
@@ -70,6 +74,53 @@ fi
 rm -f "$section_fixture"
 trap - EXIT HUP INT TERM
 
+behavior_root=$(mktemp -d "${TMPDIR:-/tmp}/beroka-release-test.XXXXXX")
+trap 'rm -rf "$behavior_root"' EXIT HUP INT TERM
+mkdir "$behavior_root/bin"
+cat >"$behavior_root/bin/gh" <<'EOF'
+#!/bin/sh
+set -eu
+case "$1:$2" in
+  auth:setup-git)
+    printf '%s\n' 'auth setup-git' >>"$GH_CALLS"
+    ;;
+  release:download)
+    printf '%s\n' 'release download' >>"$GH_CALLS"
+    exit 23
+    ;;
+  *)
+    exit 64
+    ;;
+esac
+EOF
+cat >"$behavior_root/bin/sh" <<'EOF'
+#!/bin/sh
+set -eu
+: >"$INNER_SH_CALLED"
+EOF
+chmod +x "$behavior_root/bin/gh" "$behavior_root/bin/sh"
+first_code_block_after_heading README.md '## Quick start' \
+  >"$behavior_root/quick-start.sh"
+: >"$behavior_root/gh-calls"
+if PATH="$behavior_root/bin:$PATH" \
+  GH_CALLS="$behavior_root/gh-calls" \
+  INNER_SH_CALLED="$behavior_root/inner-sh-called" \
+  /bin/sh "$behavior_root/quick-start.sh"; then
+  fail 'README Quick start succeeds when gh release download fails'
+fi
+[ "$(cat "$behavior_root/gh-calls")" = "$(printf '%s\n%s' \
+  'auth setup-git' 'release download')" ] ||
+  fail 'README Quick start does not set up Git auth before release download'
+[ ! -e "$behavior_root/inner-sh-called" ] ||
+  fail 'README Quick start invokes the bootstrap shell after download failure'
+rm -rf "$behavior_root"
+trap - EXIT HUP INT TERM
+
+require_text PACKAGE-DESIGN.md \
+  'The downloaded release launcher clones the embedded'
+require_text PACKAGE-DESIGN.md \
+  'annotated tag and invokes the package CLI only after tag type, peeled commit,'
+require_text PACKAGE-DESIGN.md 'checked-out HEAD each equal the embedded commit'
 [ "$(first_code_block_after_heading README.md '## Quick start')" = \
   "$noninteractive_launcher" ] ||
   fail 'README Quick start does not begin with the exact non-interactive launcher'
@@ -94,11 +145,22 @@ reject_text PACKAGE-DESIGN.md 'It never pipes network output directly to a shell
 
 for file in README.md handbook.md PACKAGE-DESIGN.md; do
   require_text "$file" 'gh auth login --hostname github.com --web'
+  require_text "$file" 'gh auth setup-git --hostname github.com'
+  require_text "$file" 'client-owned GitHub OAuth'
+  require_text "$file" 'private HTTPS clone'
+  reject_text "$file" '--output - |'
+  reject_text "$file" 'curl | sh'
   reject_text "$file" 'releases/latest/download/bootstrap.sh'
+  reject_text "$file" 'latest URL'
   reject_text "$file" 'immutable legacy test sample'
   reject_text "$file" 'Backend-only'
   reject_text "$file" 'do not register a Frontend repository'
 done
+require_text README.md 'No token is requested, printed, copied, logged, or stored.'
+require_text handbook.md \
+  'Không yêu cầu, in, sao chép, ghi log hoặc lưu token.'
+require_text PACKAGE-DESIGN.md \
+  'No token is requested, printed, copied, logged, or stored.'
 reject_text handbook.md 'GITHUB_PAT'
 reject_text handbook.md 'GitHub client bắt buộc PAT'
 
