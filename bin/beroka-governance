@@ -1540,7 +1540,7 @@ claude_atlassian_endpoint() {
 codex_probe_complete() {
   cpc_file=$1
   [ -s "$cpc_file" ] || return 1
-  codex_probe_file_has_invalid_bytes "$cpc_file" && return 1
+  [ "$(codex_probe_file_transport_state "$cpc_file")" = VALID ] || return 1
   if codex_reauthentication_required <"$cpc_file" ||
      codex_http_auth_required <"$cpc_file"
   then
@@ -1574,7 +1574,7 @@ codex_probe_complete() {
 
 codex_probe_response() {
   cpr_file=$1
-  codex_probe_file_has_invalid_bytes "$cpr_file" && return 1
+  [ "$(codex_probe_file_transport_state "$cpr_file")" = VALID ] || return 1
   cpr_response=
   while IFS= read -r cpr_candidate; do
     cpr_kind=$(printf '%s\n' "$cpr_candidate" |
@@ -1616,10 +1616,11 @@ EOF
 
 codex_probe_response_count() {
   cprc_file=$1
-  if codex_probe_file_has_invalid_bytes "$cprc_file"; then
-    printf '%s\n' -1
-    return 0
-  fi
+  cprc_transport=$(codex_probe_file_transport_state "$cprc_file")
+  case "$cprc_transport" in
+    INVALID) printf '%s\n' -1; return 0 ;;
+    INCOMPLETE_SUFFIX) printf '%s\n' -2; return 0 ;;
+  esac
   cprc_responses=0
   while IFS= read -r cprc_candidate; do
     cprc_kind=$(printf '%s\n' "$cprc_candidate" |
@@ -1633,7 +1634,7 @@ codex_probe_response_count() {
   printf '%s\n' "$cprc_responses"
 }
 
-codex_probe_file_has_invalid_bytes() {
+codex_probe_file_transport_state() {
   LC_ALL=C od -An -v -t u1 "$1" 2>/dev/null |
     awk '{
       for (i=1; i<=NF; i++) {
@@ -1684,7 +1685,11 @@ codex_probe_file_has_invalid_bytes() {
         }
       }
     }
-    END { exit !(invalid || remaining) }'
+    END {
+      if (invalid) print "INVALID"
+      else if (remaining) print "INCOMPLETE_SUFFIX"
+      else print "VALID"
+    }'
 }
 
 codex_probe_stop() {
@@ -1741,16 +1746,28 @@ codex_connector_probe() {
   while [ "$ccp_elapsed" -lt 13 ]; do
     sleep 1
     ccp_elapsed=$((ccp_elapsed + 1))
-    if codex_probe_file_has_invalid_bytes "$ccp_output"; then
-      ccp_invalid_transport=1
-      break
-    fi
+    ccp_transport=$(codex_probe_file_transport_state "$ccp_output")
+    case "$ccp_transport" in
+      INVALID)
+        ccp_invalid_transport=1
+        break
+        ;;
+      INCOMPLETE_SUFFIX)
+        if kill -0 "$ccp_pid" 2>/dev/null; then
+          continue
+        fi
+        ccp_invalid_transport=1
+        break
+        ;;
+    esac
     if codex_probe_complete "$ccp_output"; then
       ccp_complete=1
       break
     fi
     ccp_responses=$(codex_probe_response_count "$ccp_output")
-    if [ "$ccp_responses" -lt 0 ]; then
+    if [ "$ccp_responses" -lt -1 ]; then
+      continue
+    elif [ "$ccp_responses" -lt 0 ]; then
       ccp_invalid_transport=1
       break
     fi
@@ -1764,7 +1781,8 @@ codex_connector_probe() {
 
   exec 3>&-
   codex_probe_stop "$ccp_pid"
-  if codex_probe_file_has_invalid_bytes "$ccp_output"; then
+  ccp_transport=$(codex_probe_file_transport_state "$ccp_output")
+  if [ "$ccp_transport" != VALID ]; then
     ccp_invalid_transport=1
   fi
   if [ "$ccp_invalid_transport" -eq 1 ]; then

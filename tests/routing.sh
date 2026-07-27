@@ -61,6 +61,21 @@ fix_wave_not_contains() {
 cat >"$FAKE_BIN/sleep" <<'EOF'
 #!/bin/sh
 set -eu
+if [ "${FAKE_CODEX_WAIT_FOR_UTF8_SPLIT:-0}" = 1 ]; then
+  split_polls=$(sed -n '1p' "$XDG_CONFIG_HOME/fake-codex-split-polls" 2>/dev/null || :)
+  split_polls=${split_polls:-0}
+  split_polls=$((split_polls + 1))
+  printf '%s\n' "$split_polls" >"$XDG_CONFIG_HOME/fake-codex-split-polls"
+  if [ "$split_polls" -eq 1 ]; then split_marker=$XDG_CONFIG_HOME/fake-codex-split-first
+  else split_marker=$XDG_CONFIG_HOME/fake-codex-split-complete
+  fi
+  split_waits=0
+  while [ ! -f "$split_marker" ] && [ "$split_waits" -lt 100 ]; do
+    /bin/sleep 0.01
+    split_waits=$((split_waits + 1))
+  done
+  exit 0
+fi
 if [ "${FAKE_CODEX_WAIT_FOR_DECOY:-0}" = 1 ]; then
   decoy_polls=$(sed -n '1p' \
     "$XDG_CONFIG_HOME/fake-codex-decoy-polls" 2>/dev/null || :)
@@ -204,6 +219,13 @@ case "$*" in
             printf '%s\302\242\342\202\254\360\220\215\210%s\n' \
               '{"id":1,"result":{"data":[{"name":"atlassian","note":"ASCII ' \
               '","tools":{"createJiraIssue":{},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]}}'
+            ;;
+          split-utf8-3)
+            printf '%s\342' '{"id":1,"result":{"data":[{"name":"atlassian","note":"before'
+            : >"$XDG_CONFIG_HOME/fake-codex-split-first"
+            /bin/sleep 0.08
+            printf '\202\254%s\n' 'after","tools":{"createJiraIssue":{},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]}}'
+            : >"$XDG_CONFIG_HOME/fake-codex-split-complete"
             ;;
           invalid-utf8-continuation)
             printf '%s\200%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","note":"before' 'after","tools":{"createJiraIssue":{}},"authStatus":"oAuth"}]}}'
@@ -983,6 +1005,19 @@ do
   fix_wave_not_contains "$output" 'OAuth URL:'
   fix_wave_not_contains "$output" 'createJiraIssue'
 done
+
+export FAKE_CODEX_WAIT_FOR_UTF8_SPLIT=1
+rm -f "$XDG_CONFIG_HOME"/fake-codex-split-*
+printf '%s\n' split-utf8-3 >"$XDG_CONFIG_HOME/fake-codex-health"
+if output=$($CLI preflight "$consumer" \
+  --client codex --operation jira-write --non-interactive 2>&1)
+then
+  fix_wave_contains "$output" 'Capability state: SUPPORTED'
+  fix_wave_contains "$output" 'Result: PASS'
+else
+  fix_wave_fail 'split UTF-8 corrupted Jira inventory'
+fi
+unset FAKE_CODEX_WAIT_FOR_UTF8_SPLIT
 
 printf '%s\n' nested-extension-before-tools \
   >"$XDG_CONFIG_HOME/fake-codex-health"

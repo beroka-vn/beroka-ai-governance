@@ -20,6 +20,23 @@ export PATH
 cat >"$FAKE_BIN/sleep" <<'EOF'
 #!/bin/sh
 set -eu
+if [ "${FAKE_CODEX_WAIT_FOR_UTF8_SPLIT:-0}" = 1 ]; then
+  split_polls=$(sed -n '1p' "$XDG_CONFIG_HOME/fake-codex-split-polls" 2>/dev/null || :)
+  split_polls=${split_polls:-0}
+  split_polls=$((split_polls + 1))
+  printf '%s\n' "$split_polls" >"$XDG_CONFIG_HOME/fake-codex-split-polls"
+  if [ "$split_polls" -eq 1 ]; then
+    split_marker=$XDG_CONFIG_HOME/fake-codex-split-first
+  else
+    split_marker=$XDG_CONFIG_HOME/fake-codex-split-complete
+  fi
+  split_waits=0
+  while [ ! -f "$split_marker" ] && [ "$split_waits" -lt 100 ]; do
+    /bin/sleep 0.01
+    split_waits=$((split_waits + 1))
+  done
+  exit 0
+fi
 if [ "${FAKE_CODEX_WAIT_FOR_DECOY:-0}" = 1 ]; then
   decoy_polls=$(sed -n '1p' \
     "$XDG_CONFIG_HOME/fake-codex-decoy-polls" 2>/dev/null || :)
@@ -221,7 +238,8 @@ case "$*" in
           escaped-wrapper-keys|semantic-duplicate-data|\
           semantic-duplicate-name|semantic-duplicate-tools|\
           semantic-duplicate-auth-status|raw-nul-response|escaped-nul-text|\
-          nested-extension-before-tools|valid-raw-unicode|invalid-utf8-*)
+          nested-extension-before-tools|valid-raw-unicode|invalid-utf8-*|\
+          split-utf8-*)
             escaped_probes=$(sed -n '1p' \
               "$XDG_CONFIG_HOME/fake-codex-escaped-probes" \
               2>/dev/null || :)
@@ -347,9 +365,30 @@ case "$*" in
             printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","extension":{"nested":[{"text":"invalid\qescape"}]},"tools":{"atlassianUserInfo":{}},"authStatus":"oAuth"}]}}'
             ;;
           valid-raw-unicode)
-            printf '%s\302\242\342\202\254\360\220\215\210%s\n' \
+            printf '%s\302\200\337\277\340\240\200\355\237\277\356\200\200\357\277\277\360\220\200\200\364\217\277\277%s\n' \
               '{"id":1,"result":{"data":[{"name":"atlassian","note":"ASCII ' \
               '","tools":{"atlassianUserInfo":{}},"authStatus":"oAuth"}]}}'
+            ;;
+          split-utf8-2)
+            printf '%s\302' '{"id":1,"result":{"data":[{"name":"atlassian","note":"before'
+            : >"$XDG_CONFIG_HOME/fake-codex-split-first"
+            /bin/sleep 0.08
+            printf '\242%s\n' 'after","tools":{"atlassianUserInfo":{}},"authStatus":"oAuth"}]}}'
+            : >"$XDG_CONFIG_HOME/fake-codex-split-complete"
+            ;;
+          split-utf8-3)
+            printf '%s\342' '{"id":1,"result":{"data":[{"name":"atlassian","note":"before'
+            : >"$XDG_CONFIG_HOME/fake-codex-split-first"
+            /bin/sleep 0.08
+            printf '\202\254%s\n' 'after","tools":{"atlassianUserInfo":{}},"authStatus":"oAuth"}]}}'
+            : >"$XDG_CONFIG_HOME/fake-codex-split-complete"
+            ;;
+          split-utf8-4)
+            printf '%s\360' '{"id":1,"result":{"data":[{"name":"atlassian","note":"before'
+            : >"$XDG_CONFIG_HOME/fake-codex-split-first"
+            /bin/sleep 0.08
+            printf '\220\215\210%s\n' 'after","tools":{"atlassianUserInfo":{}},"authStatus":"oAuth"}]}}'
+            : >"$XDG_CONFIG_HOME/fake-codex-split-complete"
             ;;
           invalid-utf8-continuation)
             printf '%s\200%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","note":"before' 'after","tools":{"atlassianUserInfo":{}},"authStatus":"oAuth"}]}}'
@@ -368,6 +407,10 @@ case "$*" in
             ;;
           invalid-utf8-truncated)
             printf '%s\342\202%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","note":"before' 'after","tools":{"atlassianUserInfo":{}},"authStatus":"oAuth"}]}}'
+            ;;
+          invalid-utf8-eof-truncated)
+            printf '%s\342\202' '{"id":1,"result":{"data":[{"name":"atlassian","note":"before'
+            exit 0
             ;;
           healthy-custom-tools)
             printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","serverInfo":null,"tools":{"searchJiraIssuesUsingJql":{}},"resources":[],"resourceTemplates":[],"authStatus":"oAuth"}]}}'
@@ -742,13 +785,30 @@ else
   fix_wave_fail 'valid raw UTF-8 did not pass Codex setup'
 fi
 
+export FAKE_CODEX_WAIT_FOR_UTF8_SPLIT=1
+for split_utf8 in split-utf8-2 split-utf8-3 split-utf8-4; do
+  rm -f "$XDG_CONFIG_HOME"/fake-codex-split-* \
+    "$XDG_CONFIG_HOME/fake-codex-escaped-probes"
+  printf '%s\n' "$split_utf8" >"$XDG_CONFIG_HOME/fake-codex-health"
+  if output=$($CLI setup-connectors --client codex --non-interactive 2>&1)
+  then
+    fix_wave_contains "$output" 'Result: PASS'
+  else
+    fix_wave_fail "$split_utf8 did not survive split transport"
+  fi
+  split_probes=$(sed -n '1p' "$XDG_CONFIG_HOME/fake-codex-escaped-probes" 2>/dev/null || :)
+  [ "$split_probes" = 1 ] || fix_wave_fail "$split_utf8 used ${split_probes:-0} probes"
+done
+unset FAKE_CODEX_WAIT_FOR_UTF8_SPLIT
+
 for invalid_utf8 in \
   invalid-utf8-continuation \
   invalid-utf8-ff-fe \
   invalid-utf8-overlong \
   invalid-utf8-surrogate \
   invalid-utf8-too-high \
-  invalid-utf8-truncated
+  invalid-utf8-truncated \
+  invalid-utf8-eof-truncated
 do
   rm -f "$XDG_CONFIG_HOME/fake-codex-escaped-probes"
   printf '%s\n' "$invalid_utf8" >"$XDG_CONFIG_HOME/fake-codex-health"
