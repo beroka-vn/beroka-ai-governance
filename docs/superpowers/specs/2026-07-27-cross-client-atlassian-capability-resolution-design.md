@@ -167,8 +167,8 @@ Capability evidence: PROVIDER_CONTRACT
 Runtime inventory: COMPLETE|UNAVAILABLE
 ```
 
-All three clients return the same semantic state for equivalent connector
-conditions.
+All clients use the same semantic state vocabulary; evidence rules remain
+client-specific as defined above.
 
 ## Write safety
 
