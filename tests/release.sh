@@ -14,30 +14,11 @@ require_text() {
     fail "missing [$text] in $file"
 }
 
-require_code_block() {
-  file=$1 expected=$2
-  awk -v expected="$expected" '
-    /^```/ {
-      if (in_block) {
-        if (block == expected) found = 1
-        in_block = 0
-        block = ""
-      } else {
-        in_block = 1
-      }
-      next
-    }
-    in_block {
-      block = block (block ? "\n" : "") $0
-    }
-    END { exit found ? 0 : 1 }
-  ' "$ROOT/$file" || fail "missing exact command block in $file"
-}
-
 first_code_block_after_heading() {
   file=$1 heading=$2
   awk -v heading="$heading" '
-    $0 == heading { after_heading = 1; next }
+    !after_heading && $0 == heading { after_heading = 1; next }
+    after_heading && !in_block && /^#{1,6}[[:space:]]/ { exit }
     after_heading && !in_block && /^```/ { in_block = 1; next }
     in_block && /^```/ { exit }
     in_block { print }
@@ -85,16 +66,37 @@ require_text PACKAGE-DESIGN.md 'checked-out HEAD each equal the embedded commit'
 noninteractive_launcher='curl -fsSL \
   https://github.com/beroka-vn/beroka-ai-governance/releases/latest/download/bootstrap.sh |
   sh -s -- --client codex --non-interactive'
+section_fixture=$(mktemp "$ROOT/tests/.release-section.XXXXXX")
+trap 'rm -f "$section_fixture"' EXIT HUP INT TERM
+{
+  printf '%s\n' '### Release launcher' 'No launcher in this section.'
+  printf '%s\n' '### Release launcher' '```bash'
+  printf '%s\n' "$noninteractive_launcher" '```'
+} >"$section_fixture"
+if [ "$(first_code_block_after_heading \
+  "tests/${section_fixture##*/}" '### Release launcher')" = \
+  "$noninteractive_launcher" ]; then
+  fail 'section parser accepts a launcher from a later section'
+fi
+rm -f "$section_fixture"
+trap - EXIT HUP INT TERM
+
 [ "$(first_code_block_after_heading README.md '## Quick start')" = \
   "$noninteractive_launcher" ] ||
   fail 'README Quick start does not begin with the exact non-interactive launcher'
-require_code_block README.md "$noninteractive_launcher"
-require_code_block handbook.md "$noninteractive_launcher"
-require_code_block PACKAGE-DESIGN.md "$noninteractive_launcher"
+[ "$(first_code_block_after_heading \
+  handbook.md '### Bootstrap và install')" = "$noninteractive_launcher" ] ||
+  fail 'handbook Bootstrap và install does not begin with the exact non-interactive launcher'
+[ "$(first_code_block_after_heading \
+  PACKAGE-DESIGN.md '### Release launcher')" = "$noninteractive_launcher" ] ||
+  fail 'PACKAGE-DESIGN Release launcher does not begin with the exact non-interactive launcher'
 
 for file in README.md handbook.md PACKAGE-DESIGN.md; do
-  if grep -Eq '^[[:space:]]*sh -s -- --client codex[[:space:]]*$' \
-    "$ROOT/$file"; then
+  if awk '
+    /^[[:space:]]*sh -s -- --client (codex|claude|cursor)([[:space:]]|$)/ &&
+      $0 !~ /--non-interactive([[:space:]]|$)/ { found = 1 }
+    END { exit found ? 0 : 1 }
+  ' "$ROOT/$file"; then
     fail "interactive launcher remains in active onboarding: $file"
   fi
 done

@@ -307,7 +307,7 @@ git config --global \
   https://github.com/beroka-vn/beroka-ai-governance.git
 release_dir=$XDG_DATA_HOME/beroka-ai-governance/releases/v1.1.0
 mkdir -p "$(dirname -- "$release_dir")"
-git clone -q --depth 1 --branch v1.1.0 \
+git -c advice.detachedHead=false clone -q --depth 1 --branch v1.1.0 \
   https://github.com/beroka-vn/beroka-ai-governance.git "$release_dir"
 
 consumer=$TEST_ROOT/consumer
@@ -395,7 +395,7 @@ pin_test_release() {
   git -C "$source_repo" commit -qm "test: create $ptr_version release"
   git -C "$source_repo" tag -a "$ptr_version" -m "$ptr_version"
   ptr_release=$XDG_DATA_HOME/beroka-ai-governance/releases/$ptr_version
-  git clone -q --depth 1 --branch "$ptr_version" \
+  git -c advice.detachedHead=false clone -q --depth 1 --branch "$ptr_version" \
     https://github.com/beroka-vn/beroka-ai-governance.git "$ptr_release"
   ptr_commit=$(git -C "$ptr_release" rev-parse HEAD)
   sed -i \

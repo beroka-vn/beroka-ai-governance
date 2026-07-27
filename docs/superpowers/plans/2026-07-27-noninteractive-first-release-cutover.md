@@ -52,13 +52,19 @@ noninteractive_launcher='curl -fsSL \
 [ "$(first_code_block_after_heading README.md '## Quick start')" = \
   "$noninteractive_launcher" ] ||
   fail 'README Quick start does not begin with the exact non-interactive launcher'
-require_code_block README.md "$noninteractive_launcher"
-require_code_block handbook.md "$noninteractive_launcher"
-require_code_block PACKAGE-DESIGN.md "$noninteractive_launcher"
+[ "$(first_code_block_after_heading \
+  handbook.md '### Bootstrap và install')" = "$noninteractive_launcher" ] ||
+  fail 'handbook Bootstrap và install does not begin with the exact non-interactive launcher'
+[ "$(first_code_block_after_heading \
+  PACKAGE-DESIGN.md '### Release launcher')" = "$noninteractive_launcher" ] ||
+  fail 'PACKAGE-DESIGN Release launcher does not begin with the exact non-interactive launcher'
 
 for file in README.md handbook.md PACKAGE-DESIGN.md; do
-  if grep -Eq '^[[:space:]]*sh -s -- --client codex[[:space:]]*$' \
-    "$ROOT/$file"; then
+  if awk '
+    /^[[:space:]]*sh -s -- --client (codex|claude|cursor)([[:space:]]|$)/ &&
+      $0 !~ /--non-interactive([[:space:]]|$)/ { found = 1 }
+    END { exit found ? 0 : 1 }
+  ' "$ROOT/$file"; then
     fail "interactive launcher remains in active onboarding: $file"
   fi
 done
@@ -328,14 +334,21 @@ Do not merge the PR. Do not delete any release/tag and do not publish
 `v1.0.1`. After the user reports the PR merged, run:
 
 ```sh
+followup_pr=$(gh pr view 13 \
+  --repo beroka-vn/beroka-ai-governance \
+  --json state,mergeCommit)
+[ "$(printf '%s\n' "$followup_pr" | jq -r '.state')" = MERGED ]
+followup_merge=$(printf '%s\n' "$followup_pr" |
+  jq -er '.mergeCommit.oid')
 git fetch origin main
-followup_merge=$(git rev-parse origin/main)
+git merge-base --is-ancestor "$followup_merge" origin/main
 git merge-base --is-ancestor HEAD "$followup_merge"
-git show "$followup_merge:VERSION"
+[ "$(git show "$followup_merge:VERSION")" = v1.0.1 ]
 ```
 
-Expected: feature HEAD is an ancestor of the merge commit and VERSION is
-`v1.0.1`.
+Expected: PR #13 is `MERGED`; its immutable merge OID is an ancestor of the
+fetched `origin/main`; feature HEAD is an ancestor of that exact merge OID; and
+the merge OID contains `VERSION=v1.0.1`.
 
 ---
 
@@ -372,7 +385,7 @@ Run:
 
 ```sh
 release=v1.0.1
-release_commit=$(git rev-parse origin/main)
+release_commit=$followup_merge
 git tag -a "$release" "$release_commit" \
   -m "Beroka AI governance package v1.0.1 candidate"
 asset_root=$(mktemp -d \
@@ -392,8 +405,8 @@ fi
 [ "$(git rev-parse 'refs/tags/v1.0.1^{commit}')" = "$release_commit" ]
 ```
 
-Expected: the local tag and embedded asset commit both equal the follow-up
-merge commit.
+Expected: the local tag and embedded asset commit both equal PR #13's exact
+merge OID. A later `origin/main` tip must never replace it.
 
 - [ ] **Step 3: Create isolated pilot repositories and environment**
 

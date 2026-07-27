@@ -47,8 +47,6 @@ beroka-governance bootstrap "$(git rev-parse --show-toplevel)" \
   --non-interactive
 ```
 
-The equivalent one-line command is `beroka-governance bootstrap "$(git rev-parse --show-toplevel)" --client claude --non-interactive`.
-
 The reviewed repository state enables the client, but connector configuration
 and OAuth remain local to each developer machine. A developer using another
 machine may still need to complete that client's local OAuth flow.
