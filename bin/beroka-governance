@@ -2419,6 +2419,9 @@ resolve_provider_capability() {
   CAPABILITY_STATE=UNKNOWN
   CAPABILITY_EVIDENCE_SOURCE=NONE
   CAPABILITY_INVENTORY_STATE=UNAVAILABLE
+  case "$rpc_capability" in
+    jira-board-verification|confluence-folder-parent-write) return 0 ;;
+  esac
   load_provider_capability "$rpc_capability" || return 0
   [ "$CAPABILITY_PROVIDER_STATE" = SUPPORTED ] || {
     CAPABILITY_STATE=UNSUPPORTED

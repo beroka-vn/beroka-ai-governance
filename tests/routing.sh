@@ -880,6 +880,8 @@ printf '%s\n' \
   '# endpoint	required_tools	tested_on	capability	evidence	state' \
   'https://mcp.atlassian.com/v1/mcp/authv2	createJiraIssue,getJiraIssue,getJiraIssueTypeMetaWithFields,getJiraProjectIssueTypesMetadata	2026-07-27	jira-issue-write	official-contract	SUPPORTED' \
   'https://mcp.atlassian.com/v1/mcp/authv2	createConfluencePage,getConfluencePage	2026-07-27	confluence-page-parent-write	official-contract	SUPPORTED' \
+  'https://mcp.atlassian.com/v1/mcp/authv2	createJiraIssue,getJiraIssue,getJiraIssueTypeMetaWithFields,getJiraProjectIssueTypesMetadata	2026-07-27	jira-board-verification	official-contract	SUPPORTED' \
+  'https://mcp.atlassian.com/v1/mcp/authv2	createConfluencePage,getConfluencePage	2026-07-27	confluence-folder-parent-write	official-contract	SUPPORTED' \
   >"$source_repo/runtime/compatibility/atlassian.tsv"
 pin_test_release v1.1.2
 printf '%s\n' healthy-all >"$XDG_CONFIG_HOME/fake-codex-health"
@@ -889,6 +891,29 @@ assert_contains "$output" 'Capability state: SUPPORTED'
 assert_contains "$output" 'Capability evidence: PROVIDER_CONTRACT'
 assert_contains "$output" 'Runtime inventory: COMPLETE'
 assert_contains "$output" 'Result: PASS'
+
+if output=$($CLI preflight "$consumer" \
+  --client codex --operation confluence-write --non-interactive 2>&1)
+then
+  fail 'provider evidence enabled folder-parent writes'
+fi
+assert_contains "$output" 'Capability state: UNKNOWN'
+assert_contains "$output" 'Result: CONNECTOR_CAPABILITY_REQUIRED'
+
+board_config='SCHEMA_VERSION=1
+PROFILE=standalone
+JIRA_PROJECT_KEY=APP
+JIRA_BOARD_ID=12
+INTEGRATION_PROFILE=none
+CROSS_REPO_POLICY=explicit-only'
+publish_routing "$board_config"
+if output=$($CLI preflight "$consumer" \
+  --client codex --operation jira-board-verify --non-interactive 2>&1)
+then
+  fail 'provider evidence enabled board verification'
+fi
+assert_contains "$output" 'Capability state: UNKNOWN'
+assert_contains "$output" 'Result: CONNECTOR_CAPABILITY_REQUIRED'
 
 FAKE_CODEX_VERSION=99.77.55
 export FAKE_CODEX_VERSION
@@ -926,8 +951,11 @@ fi
 assert_contains "$output" 'Capability state: UNKNOWN'
 assert_contains "$output" 'Result: CONNECTOR_CAPABILITY_REQUIRED'
 
-sed -i '/	jira-issue-write	/d' \
-  "$source_repo/runtime/compatibility/atlassian.tsv"
+compatibility_temp=$(mktemp \
+  "$source_repo/runtime/compatibility/atlassian.tsv.XXXXXX")
+awk -F '\t' '$4 != "jira-issue-write"' \
+  "$source_repo/runtime/compatibility/atlassian.tsv" >"$compatibility_temp"
+mv "$compatibility_temp" "$source_repo/runtime/compatibility/atlassian.tsv"
 printf '%s\n' \
   'https://mcp.atlassian.com/v1/mcp/authv2	createJiraIssue,createJiraIssue,getJiraIssue,getJiraIssueTypeMetaWithFields,getJiraProjectIssueTypesMetadata	2026-07-27	jira-issue-write	official-contract	SUPPORTED' \
   >>"$source_repo/runtime/compatibility/atlassian.tsv"
@@ -940,8 +968,11 @@ fi
 assert_contains "$output" 'Capability state: UNKNOWN'
 assert_contains "$output" 'Result: CONNECTOR_CAPABILITY_REQUIRED'
 
-sed -i '/	jira-issue-write	/d' \
-  "$source_repo/runtime/compatibility/atlassian.tsv"
+compatibility_temp=$(mktemp \
+  "$source_repo/runtime/compatibility/atlassian.tsv.XXXXXX")
+awk -F '\t' '$4 != "jira-issue-write"' \
+  "$source_repo/runtime/compatibility/atlassian.tsv" >"$compatibility_temp"
+mv "$compatibility_temp" "$source_repo/runtime/compatibility/atlassian.tsv"
 printf '%s\n' \
   'https://mcp.atlassian.com/v1/mcp/authv2	createJiraIssue,getJiraIssue,getJiraIssueTypeMetaWithFields,getJiraProjectIssueTypesMetadata	2026-07-27	jira-issue-write	unrecognized	SUPPORTED' \
   >>"$source_repo/runtime/compatibility/atlassian.tsv"
@@ -954,8 +985,11 @@ fi
 assert_contains "$output" 'Capability state: UNKNOWN'
 assert_contains "$output" 'Result: CONNECTOR_CAPABILITY_REQUIRED'
 
-sed -i '/	jira-issue-write	/d' \
-  "$source_repo/runtime/compatibility/atlassian.tsv"
+compatibility_temp=$(mktemp \
+  "$source_repo/runtime/compatibility/atlassian.tsv.XXXXXX")
+awk -F '\t' '$4 != "jira-issue-write"' \
+  "$source_repo/runtime/compatibility/atlassian.tsv" >"$compatibility_temp"
+mv "$compatibility_temp" "$source_repo/runtime/compatibility/atlassian.tsv"
 printf '%s\n' \
   'https://mcp.atlassian.com/v1/mcp/authv2	createJiraIssue,getJiraIssue,getJiraIssueTypeMetaWithFields,getJiraProjectIssueTypesMetadata	invalid-date	jira-issue-write	official-contract	SUPPORTED' \
   >>"$source_repo/runtime/compatibility/atlassian.tsv"
