@@ -6,13 +6,22 @@ to Confluence.
 
 ## Quick start
 
-From the Git root of the repository to register, install the latest stable
-release and set up one explicit client with:
+From the Git root of the repository to register, install the first supported
+private release and set up one explicit client with:
 
 ```bash
-curl -fsSL \
-  https://github.com/beroka-vn/beroka-ai-governance/releases/latest/download/bootstrap.sh |
+gh release download \
+  --repo beroka-vn/beroka-ai-governance \
+  --pattern bootstrap.sh \
+  --output - |
   sh -s -- --client codex --non-interactive
+```
+
+`gh` must be installed and authenticated for the private repository. If
+authentication is missing, run:
+
+```bash
+gh auth login --hostname github.com --web
 ```
 
 Replace `codex` with `claude` or `cursor`. The client flag is mandatory.
@@ -35,7 +44,9 @@ entrypoint.
 
 Review and commit the repository changes, merge them through the normal
 application-repository pull request, then start a fresh AI session. Existing
-registrations keep their lock; bootstrap never silently upgrades them.
+registrations keep their lock; bootstrap never silently upgrades them. This
+reset establishes `v1.0.0` as the first supported release; every tag published
+after it is immutable.
 
 Client setup is additive: each bootstrap adds only its selected client's
 entrypoint and never rewrites entrypoints already enabled for another client.

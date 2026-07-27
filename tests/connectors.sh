@@ -748,7 +748,7 @@ awk '
   END { exit found ? 0 : 1 }
 ' "$ROOT/README.md" ||
   fail 'README does not document adding another client'
-grep -F 'releases/latest/download/bootstrap.sh' "$ROOT/README.md" >/dev/null ||
+grep -F 'gh release download' "$ROOT/README.md" >/dev/null ||
   fail 'README does not document the release launcher'
 grep -F 'AUTH_PENDING' "$ROOT/handbook.md" >/dev/null ||
   fail 'handbook does not document pending authentication'

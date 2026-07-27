@@ -414,7 +414,7 @@ grep -F 'latest stable annotated' "$ROOT/PACKAGE-DESIGN.md" >/dev/null ||
   fail 'package design does not define latest'
 grep -F 'fresh AI session' "$ROOT/handbook.md" >/dev/null ||
   fail 'handbook does not document the bootstrap handoff'
-grep -F 'releases/latest/download/bootstrap.sh' "$ROOT/README.md" >/dev/null ||
+grep -F 'gh release download' "$ROOT/README.md" >/dev/null ||
   fail 'README does not document the release launcher'
 grep -F 'AUTH_PENDING' "$ROOT/handbook.md" >/dev/null ||
   fail 'handbook does not document pending authentication'
