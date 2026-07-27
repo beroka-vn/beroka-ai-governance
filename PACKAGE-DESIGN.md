@@ -190,14 +190,100 @@ artifacts; it never commits or pushes them.
 ### Release launcher
 
 Each stable release publishes `bootstrap.sh` as a GitHub Release asset. From a
-repository Git root, `gh` must be installed and authenticated for the private
-repository. If authentication is missing, run
-`gh auth login --hostname github.com --web`. The supported team deployment
-command is:
+repository Git root, the interactive team deployment command verifies that the
+selected AI client exists, offers to install missing `gh`/`jq`, asks before
+GitHub OAuth, and then delegates connector/OAuth setup to the verified release:
 
 ```bash
 (
   set -eu
+  client=codex
+
+  dependency_error() {
+    printf '%s\n' 'Result: DEPENDENCY_MISSING' "$1" >&2
+    exit 1
+  }
+  run_as_root() {
+    if [ "$(id -u)" -eq 0 ]; then
+      "$@"
+    elif command -v sudo >/dev/null 2>&1; then
+      sudo "$@"
+    else
+      dependency_error "Install:$missing"
+    fi
+  }
+
+  client_command=$client
+  [ "$client" != cursor ] || client_command=cursor-agent
+  command -v "$client_command" >/dev/null 2>&1 ||
+    dependency_error "Install $client_command, then rerun this command"
+
+  missing=
+  for dependency in gh jq; do
+    command -v "$dependency" >/dev/null 2>&1 ||
+      missing="$missing $dependency"
+  done
+  if [ -n "$missing" ]; then
+    [ -t 0 ] && [ -t 1 ] ||
+      dependency_error "Install:$missing"
+    installer=
+    for candidate in apt-get dnf brew; do
+      if command -v "$candidate" >/dev/null 2>&1; then
+        installer=$candidate
+        break
+      fi
+    done
+    [ -n "$installer" ] || dependency_error "Install:$missing"
+    printf 'Missing dependencies:%s\n' "$missing"
+    printf 'Install with %s (may request sudo)? [y/N] ' "$installer"
+    IFS= read -r answer || answer=
+    case "$answer" in
+      y|Y|yes|YES) ;;
+      *) dependency_error "Install:$missing" ;;
+    esac
+    case "$installer" in
+      apt-get)
+        run_as_root apt-get update &&
+          run_as_root apt-get install -y $missing ||
+          dependency_error "Install:$missing"
+        ;;
+      dnf)
+        run_as_root dnf install -y $missing ||
+          dependency_error "Install:$missing"
+        ;;
+      brew)
+        brew install $missing || dependency_error "Install:$missing"
+        ;;
+    esac
+  fi
+
+  for dependency in gh jq; do
+    command -v "$dependency" >/dev/null 2>&1 ||
+      dependency_error "Install: $dependency"
+  done
+
+  if ! gh auth status --hostname github.com >/dev/null 2>&1; then
+    [ -t 0 ] && [ -t 1 ] || {
+      printf '%s\n' \
+        'Result: GITHUB_AUTH_REQUIRED' \
+        'Remediation: gh auth login --hostname github.com --web' >&2
+      exit 1
+    }
+    printf 'GitHub authentication required. Start browser OAuth? [y/N] '
+    IFS= read -r answer || answer=
+    case "$answer" in
+      y|Y|yes|YES)
+        gh auth login --hostname github.com --web
+        ;;
+      *)
+        printf '%s\n' \
+          'Result: GITHUB_AUTH_REQUIRED' \
+          'Remediation: gh auth login --hostname github.com --web' >&2
+        exit 1
+        ;;
+    esac
+  fi
+
   bootstrap_file=$(mktemp "${TMPDIR:-/tmp}/beroka-bootstrap.XXXXXX")
   trap 'rm -f "$bootstrap_file"' EXIT HUP INT TERM
   gh auth setup-git --hostname github.com
@@ -206,9 +292,13 @@ command is:
     --pattern bootstrap.sh \
     --clobber \
     --output "$bootstrap_file"
-  sh "$bootstrap_file" --client codex --non-interactive
+  sh "$bootstrap_file" --client "$client"
 )
 ```
+
+Only the explicit dependency confirmation may invoke `apt-get`, `dnf`, `brew`,
+or `sudo`; declining returns `DEPENDENCY_MISSING`. Governance does not install
+the selected AI client.
 
 `gh auth setup-git --hostname github.com` configures Git to reuse
 client-owned GitHub OAuth for the launcher's private HTTPS clone.
@@ -226,6 +316,47 @@ connector configuration, and OAuth are local to one client in one execution
 environment. Setup is repeated once per client per execution environment;
 changing a model inside the same client needs no setup. OAuth credentials remain
 owned by the client or OS keyring.
+
+Bootstrap reports `Repository pull request: REQUIRED` when managed repository
+files changed, and `NOT_REQUIRED` for local-only connector/OAuth work. It emits
+that decision before connector health or OAuth can stop the command.
+
+### Automation / CI
+
+Automation installs nothing and never opens a browser. Its launcher fails
+closed when a selected client, `gh`, `jq`, or GitHub authentication is missing:
+
+```bash
+(
+  set -eu
+  client=codex
+  client_command=$client
+  [ "$client" != cursor ] || client_command=cursor-agent
+  for dependency in "$client_command" gh jq; do
+    command -v "$dependency" >/dev/null 2>&1 || {
+      printf '%s\n' \
+        'Result: DEPENDENCY_MISSING' \
+        "Remediation: install $dependency" >&2
+      exit 1
+    }
+  done
+  gh auth status --hostname github.com >/dev/null 2>&1 || {
+    printf '%s\n' \
+      'Result: GITHUB_AUTH_REQUIRED' \
+      'Remediation: gh auth login --hostname github.com --web' >&2
+    exit 1
+  }
+  bootstrap_file=$(mktemp "${TMPDIR:-/tmp}/beroka-bootstrap.XXXXXX")
+  trap 'rm -f "$bootstrap_file"' EXIT HUP INT TERM
+  gh auth setup-git --hostname github.com
+  gh release download \
+    --repo beroka-vn/beroka-ai-governance \
+    --pattern bootstrap.sh \
+    --clobber \
+    --output "$bootstrap_file"
+  sh "$bootstrap_file" --client "$client" --non-interactive
+)
+```
 
 ### Install
 
