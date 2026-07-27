@@ -221,7 +221,7 @@ case "$*" in
           escaped-wrapper-keys|semantic-duplicate-data|\
           semantic-duplicate-name|semantic-duplicate-tools|\
           semantic-duplicate-auth-status|raw-nul-response|escaped-nul-text|\
-          nested-extension-before-tools)
+          nested-extension-before-tools|valid-raw-unicode|invalid-utf8-*)
             escaped_probes=$(sed -n '1p' \
               "$XDG_CONFIG_HOME/fake-codex-escaped-probes" \
               2>/dev/null || :)
@@ -345,6 +345,29 @@ case "$*" in
             ;;
           malformed-nested-extension-before-tools)
             printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","extension":{"nested":[{"text":"invalid\qescape"}]},"tools":{"atlassianUserInfo":{}},"authStatus":"oAuth"}]}}'
+            ;;
+          valid-raw-unicode)
+            printf '%s\302\242\342\202\254\360\220\215\210%s\n' \
+              '{"id":1,"result":{"data":[{"name":"atlassian","note":"ASCII ' \
+              '","tools":{"atlassianUserInfo":{}},"authStatus":"oAuth"}]}}'
+            ;;
+          invalid-utf8-continuation)
+            printf '%s\200%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","note":"before' 'after","tools":{"atlassianUserInfo":{}},"authStatus":"oAuth"}]}}'
+            ;;
+          invalid-utf8-ff-fe)
+            printf '%s\377\376%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","note":"before' 'after","tools":{"atlassianUserInfo":{}},"authStatus":"oAuth"}]}}'
+            ;;
+          invalid-utf8-overlong)
+            printf '%s\300\200%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","note":"before' 'after","tools":{"atlassianUserInfo":{}},"authStatus":"oAuth"}]}}'
+            ;;
+          invalid-utf8-surrogate)
+            printf '%s\355\240\200%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","note":"before' 'after","tools":{"atlassianUserInfo":{}},"authStatus":"oAuth"}]}}'
+            ;;
+          invalid-utf8-too-high)
+            printf '%s\364\220\200\200%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","note":"before' 'after","tools":{"atlassianUserInfo":{}},"authStatus":"oAuth"}]}}'
+            ;;
+          invalid-utf8-truncated)
+            printf '%s\342\202%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","note":"before' 'after","tools":{"atlassianUserInfo":{}},"authStatus":"oAuth"}]}}'
             ;;
           healthy-custom-tools)
             printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","serverInfo":null,"tools":{"searchJiraIssuesUsingJql":{}},"resources":[],"resourceTemplates":[],"authStatus":"oAuth"}]}}'
@@ -709,6 +732,51 @@ escaped_nul_probes=$(sed -n '1p' \
   "$XDG_CONFIG_HOME/fake-codex-escaped-probes" 2>/dev/null || :)
 [ "$escaped_nul_probes" = 1 ] ||
   fix_wave_fail "escaped-nul-text used ${escaped_nul_probes:-0} probes"
+
+printf '%s\n' valid-raw-unicode \
+  >"$XDG_CONFIG_HOME/fake-codex-health"
+if output=$($CLI setup-connectors --client codex --non-interactive 2>&1)
+then
+  fix_wave_contains "$output" 'Result: PASS'
+else
+  fix_wave_fail 'valid raw UTF-8 did not pass Codex setup'
+fi
+
+for invalid_utf8 in \
+  invalid-utf8-continuation \
+  invalid-utf8-ff-fe \
+  invalid-utf8-overlong \
+  invalid-utf8-surrogate \
+  invalid-utf8-too-high \
+  invalid-utf8-truncated
+do
+  rm -f "$XDG_CONFIG_HOME/fake-codex-escaped-probes"
+  printf '%s\n' "$invalid_utf8" >"$XDG_CONFIG_HOME/fake-codex-health"
+  invalid_utf8_output=$TEST_ROOT/$invalid_utf8-output
+  if $CLI setup-connectors --client codex --non-interactive \
+    >"$invalid_utf8_output" 2>&1
+  then
+    fix_wave_fail "$invalid_utf8 passed Codex setup"
+  fi
+  if LC_ALL=C od -An -v -t u1 "$invalid_utf8_output" |
+    awk '{
+      for (i=1; i<=NF; i++) if ($i == 0 || $i > 127) found=1
+    }
+    END { exit !found }'
+  then
+    fix_wave_fail "$invalid_utf8 leaked raw bytes"
+  fi
+  output=$(cat "$invalid_utf8_output")
+  fix_wave_contains "$output" 'Result: CONNECTOR_HEALTH_UNAVAILABLE'
+  invalid_utf8_probes=$(sed -n '1p' \
+    "$XDG_CONFIG_HOME/fake-codex-escaped-probes" 2>/dev/null || :)
+  [ "$invalid_utf8_probes" = 1 ] ||
+    fix_wave_fail "$invalid_utf8 used ${invalid_utf8_probes:-0} probes"
+  fix_wave_not_contains "$output" 'ATLASSIAN_AUTH_REQUIRED'
+  fix_wave_not_contains "$output" 'codex mcp login atlassian'
+  fix_wave_not_contains "$output" 'OAuth URL:'
+  fix_wave_not_contains "$output" 'atlassianUserInfo'
+done
 
 printf '%s\n' nested-extension-before-tools \
   >"$XDG_CONFIG_HOME/fake-codex-health"
