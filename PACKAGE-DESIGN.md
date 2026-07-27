@@ -117,9 +117,10 @@ the five allowlisted keys. It must never `source`, `eval`, or execute the lock
 file. A candidate lock without `CLIENTS` is invalid before the first public
 release and must be recreated with bootstrap.
 
-Each listed entrypoint contains routing only and independently loads the same
-central release. They do not duplicate governance rules or templates. At
-session start they require the agent to:
+Each listed entrypoint contains routing and the minimal shared context-
+rehydration policy, then independently loads the same central release. They do
+not duplicate governance rules or templates. At session start they require the
+agent to:
 
 1. resolve the canonical GitHub remote and match it to `REPOSITORY`;
 2. read and validate `.beroka-governance.lock`;

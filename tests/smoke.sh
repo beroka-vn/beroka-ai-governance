@@ -141,12 +141,21 @@ assert_contains "$doctor_output" 'Version: v1.0.0'
 
 context_output=$($CLI context "$consumer")
 assert_contains "$context_output" 'PINNED ENTRYPOINT v1.0.0'
-rehydration_rule='After context compaction, a session resume, or a new chat, rerun'
-assert_contains "$(cat "$consumer/AGENTS.md")" "$rehydration_rule"
-assert_contains "$(cat "$consumer/CLAUDE.md")" "$rehydration_rule"
-assert_contains "$(cat "$consumer/.cursor/rules/beroka-governance.mdc")" \
-  "$rehydration_rule"
-assert_contains "$context_output" "$rehydration_rule"
+rehydration_policy='After context compaction, a session resume, or a new chat, rerun
+`beroka-governance context "$PWD"` before the next governed action. Never rely
+on governance details preserved only in a conversation summary. In-progress
+source work need not be discarded, but governance must be rehydrated before the
+next planning, implementation, or external action. Run a fresh
+operation-specific preflight immediately before every external write; never
+reuse a result from before compaction.'
+for rehydration_output in \
+  "$(cat "$consumer/AGENTS.md")" \
+  "$(cat "$consumer/CLAUDE.md")" \
+  "$(cat "$consumer/.cursor/rules/beroka-governance.mdc")" \
+  "$context_output"
+do
+  assert_contains "$rehydration_output" "$rehydration_policy"
+done
 case "$context_output" in
   *'Routing:'*) fail 'legacy Context resolved routing' ;;
 esac
