@@ -307,7 +307,7 @@ git config --global \
   https://github.com/beroka-vn/beroka-ai-governance.git
 release_dir=$XDG_DATA_HOME/beroka-ai-governance/releases/v1.1.0
 mkdir -p "$(dirname -- "$release_dir")"
-git clone -q --depth 1 --branch v1.1.0 \
+git -c advice.detachedHead=false clone -q --depth 1 --branch v1.1.0 \
   https://github.com/beroka-vn/beroka-ai-governance.git "$release_dir"
 
 consumer=$TEST_ROOT/consumer
@@ -395,7 +395,7 @@ pin_test_release() {
   git -C "$source_repo" commit -qm "test: create $ptr_version release"
   git -C "$source_repo" tag -a "$ptr_version" -m "$ptr_version"
   ptr_release=$XDG_DATA_HOME/beroka-ai-governance/releases/$ptr_version
-  git clone -q --depth 1 --branch "$ptr_version" \
+  git -c advice.detachedHead=false clone -q --depth 1 --branch "$ptr_version" \
     https://github.com/beroka-vn/beroka-ai-governance.git "$ptr_release"
   ptr_commit=$(git -C "$ptr_release" rev-parse HEAD)
   sed -i \
@@ -1017,9 +1017,8 @@ grep -F -- 'releases/latest/download/bootstrap.sh' "$ROOT/README.md" >/dev/null 
   fix_wave_fail 'README does not select the latest-release launcher'
 grep -F -- 'release=v1.0.1' "$ROOT/handbook.md" >/dev/null ||
   fix_wave_fail 'handbook does not select v1.0.1'
-grep -F '`v1.0.0` is the first public stable release' \
-  "$ROOT/PACKAGE-DESIGN.md" >/dev/null ||
-  fix_wave_fail 'package design does not define the first stable release'
+grep -F 'VERSION=v1.0.1' "$ROOT/PACKAGE-DESIGN.md" >/dev/null ||
+  fix_wave_fail 'package design does not select v1.0.1'
 
 [ "$FIX_WAVE_FAILURES" -eq 0 ] ||
   fail "$FIX_WAVE_FAILURES fix-wave regressions remain"

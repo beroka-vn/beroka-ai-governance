@@ -14,30 +14,11 @@ require_text() {
     fail "missing [$text] in $file"
 }
 
-require_code_block() {
-  file=$1 expected=$2
-  awk -v expected="$expected" '
-    /^```/ {
-      if (in_block) {
-        if (block == expected) found = 1
-        in_block = 0
-        block = ""
-      } else {
-        in_block = 1
-      }
-      next
-    }
-    in_block {
-      block = block (block ? "\n" : "") $0
-    }
-    END { exit found ? 0 : 1 }
-  ' "$ROOT/$file" || fail "missing exact command block in $file"
-}
-
 first_code_block_after_heading() {
   file=$1 heading=$2
   awk -v heading="$heading" '
-    $0 == heading { after_heading = 1; next }
+    !after_heading && $0 == heading { after_heading = 1; next }
+    after_heading && !in_block && /^#{1,6}[[:space:]]/ { exit }
     after_heading && !in_block && /^```/ { in_block = 1; next }
     in_block && /^```/ { exit }
     in_block { print }
@@ -67,13 +48,9 @@ reject_text() {
 [ "$(cat "$ROOT/VERSION")" = v1.0.1 ] ||
   fail 'VERSION is not v1.0.1'
 
-require_text README.md '`v1.0.0` is the first public stable release'
 require_text README.md 'Backend and Frontend repositories'
 require_text handbook.md 'Chuyển quyết định cho developer'
-require_text PACKAGE-DESIGN.md \
-  '`v1.0.0` is the first public stable release'
 require_text README.md 'releases/latest/download/bootstrap.sh'
-require_text README.md 'sh -s -- --client codex'
 require_text README.md 'one client on each execution environment'
 require_text handbook.md 'AUTH_PENDING'
 require_text handbook.md 'CONNECTOR_HEALTH_UNAVAILABLE'
@@ -86,16 +63,48 @@ require_text PACKAGE-DESIGN.md 'checked-out HEAD each equal the embedded commit'
 [ -f "$ROOT/release/bootstrap.sh.in" ] ||
   fail 'missing release launcher template'
 
-interactive_launcher='curl -fsSL \
-  https://github.com/beroka-vn/beroka-ai-governance/releases/latest/download/bootstrap.sh |
-  sh -s -- --client codex'
 noninteractive_launcher='curl -fsSL \
   https://github.com/beroka-vn/beroka-ai-governance/releases/latest/download/bootstrap.sh |
   sh -s -- --client codex --non-interactive'
+section_fixture=$(mktemp "$ROOT/tests/.release-section.XXXXXX")
+trap 'rm -f "$section_fixture"' EXIT HUP INT TERM
+{
+  printf '%s\n' '### Release launcher' 'No launcher in this section.'
+  printf '%s\n' '### Release launcher' '```bash'
+  printf '%s\n' "$noninteractive_launcher" '```'
+} >"$section_fixture"
+if [ "$(first_code_block_after_heading \
+  "tests/${section_fixture##*/}" '### Release launcher')" = \
+  "$noninteractive_launcher" ]; then
+  fail 'section parser accepts a launcher from a later section'
+fi
+rm -f "$section_fixture"
+trap - EXIT HUP INT TERM
+
 [ "$(first_code_block_after_heading README.md '## Quick start')" = \
-  "$interactive_launcher" ] ||
-  fail 'README Quick start does not begin with the exact interactive launcher'
-require_code_block README.md "$noninteractive_launcher"
+  "$noninteractive_launcher" ] ||
+  fail 'README Quick start does not begin with the exact non-interactive launcher'
+[ "$(first_code_block_after_heading \
+  handbook.md '### Bootstrap và install')" = "$noninteractive_launcher" ] ||
+  fail 'handbook Bootstrap và install does not begin with the exact non-interactive launcher'
+[ "$(first_code_block_after_heading \
+  PACKAGE-DESIGN.md '### Release launcher')" = "$noninteractive_launcher" ] ||
+  fail 'PACKAGE-DESIGN Release launcher does not begin with the exact non-interactive launcher'
+
+for file in README.md handbook.md PACKAGE-DESIGN.md; do
+  if awk '
+    /^[[:space:]]*sh -s -- --client (codex|claude|cursor)([[:space:]]|$)/ &&
+      $0 !~ /--non-interactive([[:space:]]|$)/ { found = 1 }
+    END { exit found ? 0 : 1 }
+  ' "$ROOT/$file"; then
+    fail "interactive launcher remains in active onboarding: $file"
+  fi
+done
+
+reject_text README.md '`v1.0.0` is the first public stable release'
+reject_text handbook.md '`v1.0.0` là first public stable release'
+reject_text PACKAGE-DESIGN.md \
+  '`v1.0.0` is the first public stable release'
 
 reject_text handbook.md 'canonical remote chưa có `v1.0.0`'
 reject_text handbook.md 'tạo annotated `v1.0.0`'

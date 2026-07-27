@@ -6,14 +6,13 @@ to Confluence.
 
 ## Quick start
 
-`v1.0.0` is the first public stable release and remains immutable. From the
-Git root of the repository to register, install the latest stable release and
-set up one explicit client with:
+From the Git root of the repository to register, install the latest stable
+release and set up one explicit client with:
 
 ```bash
 curl -fsSL \
   https://github.com/beroka-vn/beroka-ai-governance/releases/latest/download/bootstrap.sh |
-  sh -s -- --client codex
+  sh -s -- --client codex --non-interactive
 ```
 
 Replace `codex` with `claude` or `cursor`. The client flag is mandatory.
@@ -21,20 +20,18 @@ Run setup once for one client on each execution environment, then repeat it
 for every additional client there. All enabled clients load the same pinned
 governance release. Changing a model inside the same client needs no setup.
 
+The command never opens a browser. When client-owned OAuth is missing or
+invalid, installation and repository registration remain in place and the
+command returns the exact remediation. Complete that client OAuth flow, then
+rerun the same command. Governance never accepts or stores a developer API
+token.
+
 The launcher verifies its embedded annotated tag and commit before it executes
 package code. Bootstrap installs and pins that release, registers the current
 repository, configures exactly one selected client, and runs Doctor. Review the
 resulting application-repository diff in its normal pull request before
 merging, then start a fresh agent session so the client loads the registered
 entrypoint.
-
-Automation must specify every decision and never opens a browser:
-
-```bash
-curl -fsSL \
-  https://github.com/beroka-vn/beroka-ai-governance/releases/latest/download/bootstrap.sh |
-  sh -s -- --client codex --non-interactive
-```
 
 Review and commit the repository changes, merge them through the normal
 application-repository pull request, then start a fresh AI session. Existing
@@ -45,7 +42,9 @@ entrypoint and never rewrites entrypoints already enabled for another client.
 For example, add Claude Code later in its execution environment with:
 
 ```bash
-beroka-governance bootstrap "$(git rev-parse --show-toplevel)" --client claude
+beroka-governance bootstrap "$(git rev-parse --show-toplevel)" \
+  --client claude \
+  --non-interactive
 ```
 
 The reviewed repository state enables the client, but connector configuration

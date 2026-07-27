@@ -73,14 +73,14 @@ connector inspection requires `jq` for every selected client; Cursor setup also
 uses it to preserve user-level MCP JSON. It must not require Python, a daemon,
 or a new package manager.
 
-Each release is an immutable annotated SemVer tag. `v1.0.0` is the first public stable release.
-After publication, its tag must never be moved or replaced.
+Each release is an immutable annotated SemVer tag. `v1.0.1` is the first
+supported team release.
 
 ## Developer-machine layout
 
 ```text
 ~/.local/bin/beroka-governance
-~/.local/share/beroka-ai-governance/releases/v1.0.0/
+~/.local/share/beroka-ai-governance/releases/v1.0.1/
 ~/.config/beroka-ai-governance/registered-repos
 ```
 
@@ -105,7 +105,7 @@ Example lock file:
 ```text
 SOURCE=beroka-vn/beroka-ai-governance
 REPOSITORY=beroka-vn/example-backend
-VERSION=v1.0.0
+VERSION=v1.0.1
 COMMIT=0123456789abcdef0123456789abcdef01234567
 CLIENTS=codex,claude
 ```
@@ -140,7 +140,9 @@ workspace; validated package content is emitted through command output.
 ### Bootstrap
 
 ```bash
-beroka-governance bootstrap /path/to/repo --client codex
+beroka-governance bootstrap /path/to/repo \
+  --client codex \
+  --non-interactive
 ```
 
 Bootstrap composes the existing install, register, connector setup, and Doctor
@@ -160,12 +162,12 @@ artifacts; it never commits or pushes them.
 ### Release launcher
 
 Each stable release publishes `bootstrap.sh` as a GitHub Release asset. From a
-repository Git root, the supported interactive command is:
+repository Git root, the supported team deployment command is:
 
 ```bash
 curl -fsSL \
   https://github.com/beroka-vn/beroka-ai-governance/releases/latest/download/bootstrap.sh |
-  sh -s -- --client codex
+  sh -s -- --client codex --non-interactive
 ```
 
 The launcher accepts exactly one explicit client, clones its embedded annotated
@@ -183,7 +185,7 @@ owned by the client or OS keyring.
 ### Install
 
 ```bash
-beroka-governance install v1.0.0
+beroka-governance install v1.0.1
 ```
 
 The release launcher asset is piped into a shell; it clones the embedded
@@ -258,7 +260,7 @@ mode returns `GITHUB_AUTH_REQUIRED` with that exact remediation command.
 ### Register
 
 ```bash
-beroka-governance register /path/to/repo --version v1.0.0 --client codex
+beroka-governance register /path/to/repo --version v1.0.1 --client codex
 ```
 
 Register validates the Git repository, uniquely discovered canonical remote,
@@ -311,7 +313,7 @@ effect in a new session after the update is merged.
 ### Rollback
 
 ```bash
-beroka-governance rollback /path/to/repo --to v1.0.0
+beroka-governance rollback /path/to/repo --to v1.0.1
 ```
 
 Rollback applies the same checks as update and pins a previously published
