@@ -240,6 +240,30 @@ case "$*" in
               '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]}}' \
               '"extra"' '{}'
             ;;
+          dual-result-error)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]},"error":{"code":-32603,"message":"failed"}}'
+            ;;
+          pure-error)
+            error_probes=$(sed -n '1p' \
+              "$XDG_CONFIG_HOME/fake-codex-error-probes" 2>/dev/null || :)
+            error_probes=${error_probes:-0}
+            error_probes=$((error_probes + 1))
+            printf '%s\n' "$error_probes" \
+              >"$XDG_CONFIG_HOME/fake-codex-error-probes"
+            printf '%s\n' '{"id":1,"error":{"code":-32603,"message":"failed"}}'
+            ;;
+          malformed-reauth-missing-comma)
+            printf '%s\n' '{"method":"mcpServer/startupStatus/updated" "params":{"name":"atlassian","failureReason":"reauthenticationRequired"}}'
+            ;;
+          malformed-reauth-illegal-escape)
+            printf '%s\n' '{"method":"mcpServer/startupStatus/updated","params":{"name":"atlassian","failureReason":"reauthenticationRequired","message":"invalid\qescape"}}'
+            ;;
+          malformed-reauth-trailing-member)
+            printf '%s\n' '{"method":"mcpServer/startupStatus/updated","params":{"name":"atlassian","failureReason":"reauthenticationRequired"}},"extra":{}'
+            ;;
+          malformed-reauth-trailing-token)
+            printf '%s\n' '{"method":"mcpServer/startupStatus/updated","params":{"name":"atlassian","failureReason":"reauthenticationRequired"}} true'
+            ;;
         esac
         ;;
       *) exit 1 ;;
@@ -290,6 +314,53 @@ output=$($CLI setup-connectors --client codex --non-interactive)
 assert_contains "$output" 'Result: PASS'
 [ "$(sed -n '1p' "$XDG_CONFIG_HOME/fake-codex-probes")" -ge 2 ] ||
   fail 'Codex did not re-probe after an unclassifiable response'
+
+for malformed_reauth in \
+  malformed-reauth-missing-comma \
+  malformed-reauth-illegal-escape \
+  malformed-reauth-trailing-member \
+  malformed-reauth-trailing-token
+do
+  printf '%s\n' "$malformed_reauth" >"$XDG_CONFIG_HOME/fake-codex-health"
+  if output=$($CLI setup-connectors --client codex --non-interactive 2>&1)
+  then
+    fix_wave_fail "$malformed_reauth passed Codex setup"
+  else
+    fix_wave_contains "$output" 'Result: CONNECTOR_HEALTH_UNAVAILABLE'
+  fi
+  fix_wave_not_contains "$output" 'ATLASSIAN_AUTH_REQUIRED'
+  fix_wave_not_contains "$output" 'codex mcp login atlassian'
+  fix_wave_not_contains "$output" 'OAuth URL:'
+  fix_wave_not_contains "$output" 'reauthenticationRequired'
+done
+
+printf '%s\n' dual-result-error >"$XDG_CONFIG_HOME/fake-codex-health"
+if output=$($CLI setup-connectors --client codex --non-interactive 2>&1)
+then
+  fix_wave_fail 'dual result/error response passed Codex setup'
+else
+  fix_wave_contains "$output" 'Result: CONNECTOR_HEALTH_UNAVAILABLE'
+fi
+fix_wave_not_contains "$output" 'ATLASSIAN_AUTH_REQUIRED'
+fix_wave_not_contains "$output" 'codex mcp login atlassian'
+fix_wave_not_contains "$output" 'OAuth URL:'
+fix_wave_not_contains "$output" 'createJiraIssue'
+
+rm -f "$XDG_CONFIG_HOME/fake-codex-error-probes"
+printf '%s\n' pure-error >"$XDG_CONFIG_HOME/fake-codex-health"
+if output=$($CLI setup-connectors --client codex --non-interactive 2>&1)
+then
+  fix_wave_fail 'pure error response passed Codex setup'
+else
+  fix_wave_contains "$output" 'Result: CONNECTOR_HEALTH_UNAVAILABLE'
+fi
+error_probes=$(sed -n '1p' \
+  "$XDG_CONFIG_HOME/fake-codex-error-probes" 2>/dev/null || :)
+[ "$error_probes" = 1 ] ||
+  fix_wave_fail "pure error response used ${error_probes:-0} probes"
+fix_wave_not_contains "$output" 'ATLASSIAN_AUTH_REQUIRED'
+fix_wave_not_contains "$output" 'codex mcp login atlassian'
+fix_wave_not_contains "$output" 'OAuth URL:'
 
 printf '%s\n' ignore-term >"$XDG_CONFIG_HOME/fake-codex-health"
 rm -f "$XDG_CONFIG_HOME/fake-codex-pid"
@@ -685,10 +756,18 @@ assert_not_contains "$(cat "$CALLS")" 'codex '
 assert_not_contains "$(cat "$CALLS")" 'claude '
 
 printf '%s\n' ready-tools-failed >"$XDG_CONFIG_HOME/fake-cursor-health"
-if output=$($CLI setup-connectors --client cursor --non-interactive 2>&1); then
-  fail 'Cursor setup accepted a failed tool inventory'
+if output=$($CLI setup-connectors --client cursor --non-interactive 2>&1)
+then
+  fix_wave_contains "$output" 'Connector: PASS'
+  fix_wave_contains "$output" 'Authentication: PASS'
+  fix_wave_contains "$output" 'Result: PASS'
+else
+  fix_wave_fail 'Cursor setup rejected Ready with unavailable tool inventory'
 fi
-assert_contains "$output" 'Result: CONNECTOR_HEALTH_UNAVAILABLE'
+fix_wave_not_contains "$output" 'ATLASSIAN_AUTH_REQUIRED'
+fix_wave_not_contains "$output" 'cursor-agent mcp login atlassian'
+fix_wave_not_contains "$output" 'OAuth URL:'
+fix_wave_not_contains "$output" 'Tool inventory failed'
 
 printf '%s\n' auth-required >"$XDG_CONFIG_HOME/fake-cursor-health"
 : >"$CALLS"
@@ -805,6 +884,28 @@ assert_not_contains "$output" 'atlassianUserInfo'
 assert_not_contains "$(cat "$CALLS")" 'codex mcp login atlassian'
 [ "$(grep -Fc 'codex app-server --stdio' "$CALLS")" -eq 1 ] ||
   fail 'connector-aware Doctor repeated its health probe'
+
+mkdir -p "$CONSUMER/.cursor/rules"
+cp \
+  "$RELEASE_SOURCE/templates/agent-entrypoints/team-dev-ai-workflow.mdc" \
+  "$CONSUMER/.cursor/rules/beroka-governance.mdc"
+cursor_lock_temp=$(mktemp "$CONSUMER/.beroka-governance.lock.XXXXXX")
+sed 's/^CLIENTS=codex$/CLIENTS=codex,cursor/' \
+  "$CONSUMER/.beroka-governance.lock" >"$cursor_lock_temp"
+mv "$cursor_lock_temp" "$CONSUMER/.beroka-governance.lock"
+printf '%s\n' ready-tools-failed >"$XDG_CONFIG_HOME/fake-cursor-health"
+if output=$($CLI doctor "$CONSUMER" --client cursor 2>&1)
+then
+  fix_wave_contains "$output" 'Connector: PASS'
+  fix_wave_contains "$output" 'Authentication: PASS'
+  fix_wave_contains "$output" 'Result: PASS'
+else
+  fix_wave_fail 'Cursor Doctor rejected Ready with unavailable tool inventory'
+fi
+fix_wave_not_contains "$output" 'ATLASSIAN_AUTH_REQUIRED'
+fix_wave_not_contains "$output" 'cursor-agent mcp login atlassian'
+fix_wave_not_contains "$output" 'OAuth URL:'
+fix_wave_not_contains "$output" 'Tool inventory failed'
 
 mv "$FAKE_BIN/codex" "$FAKE_BIN/codex.disabled"
 if output=$($CLI doctor "$CONSUMER" --client codex 2>&1); then

@@ -212,6 +212,24 @@ case "$*" in
               '{"method":"mcpServer/startupStatus/updated","params":{"name":"other","metadata":{"name":"atlassian","failureReason":"reauthenticationRequired"}}}' \
               '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]}}'
             ;;
+          dual-result-error)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]},"error":{"code":-32603,"message":"failed"}}'
+            ;;
+          pure-error)
+            printf '%s\n' '{"id":1,"error":{"code":-32603,"message":"failed"}}'
+            ;;
+          malformed-reauth-missing-comma)
+            printf '%s\n' '{"method":"mcpServer/startupStatus/updated" "params":{"name":"atlassian","failureReason":"reauthenticationRequired"}}'
+            ;;
+          malformed-reauth-illegal-escape)
+            printf '%s\n' '{"method":"mcpServer/startupStatus/updated","params":{"name":"atlassian","failureReason":"reauthenticationRequired","message":"invalid\qescape"}}'
+            ;;
+          malformed-reauth-trailing-member)
+            printf '%s\n' '{"method":"mcpServer/startupStatus/updated","params":{"name":"atlassian","failureReason":"reauthenticationRequired"}},"extra":{}'
+            ;;
+          malformed-reauth-trailing-token)
+            printf '%s\n' '{"method":"mcpServer/startupStatus/updated","params":{"name":"atlassian","failureReason":"reauthenticationRequired"}} true'
+            ;;
           auth-required|'')
             printf '%s\n' \
               '{"method":"mcpServer/startupStatus/updated","params":{"name":"atlassian","failureReason":"reauthenticationRequired"}}' \
@@ -302,7 +320,7 @@ case "$*" in
     ;;
   'mcp list')
     case "$(sed -n '1p' "$XDG_CONFIG_HOME/fake-cursor-health" 2>/dev/null || :)" in
-      empty|healthy|description-prefixes|legacy-free-text|missing|prose-only|similar|trailing-prose)
+      empty|healthy|description-prefixes|legacy-free-text|missing|prose-only|ready-tools-failed|similar|trailing-prose)
         printf '%s\n' 'atlassian: Ready'
         ;;
       auth-required|'') printf '%s\n' 'atlassian: Authentication required' ;;
@@ -359,6 +377,10 @@ case "$*" in
           '- searchJiraIssuesUsingJql (cloudId, jql) searches issues'
         ;;
       missing) printf '%s\n' 'getJiraIssue(issueKey)' ;;
+      ready-tools-failed)
+        printf '%s\n' 'Tool inventory failed'
+        exit 1
+        ;;
       *) exit 1 ;;
     esac
     ;;
@@ -929,6 +951,42 @@ do
   assert_not_contains "$output" 'createJiraIssue'
 done
 
+for malformed_reauth in \
+  malformed-reauth-missing-comma \
+  malformed-reauth-illegal-escape \
+  malformed-reauth-trailing-member \
+  malformed-reauth-trailing-token
+do
+  printf '%s\n' "$malformed_reauth" >"$XDG_CONFIG_HOME/fake-codex-health"
+  if output=$($CLI preflight "$consumer" \
+    --client codex --operation jira-write --non-interactive 2>&1)
+  then
+    fail "$malformed_reauth passed Jira preflight"
+  fi
+  assert_contains "$output" 'Result: CONNECTOR_HEALTH_UNAVAILABLE'
+  assert_not_contains "$output" 'Capability state: SUPPORTED'
+  assert_not_contains "$output" 'ATLASSIAN_AUTH_REQUIRED'
+  assert_not_contains "$output" 'codex mcp login atlassian'
+  assert_not_contains "$output" 'OAuth URL:'
+  assert_not_contains "$output" 'reauthenticationRequired'
+done
+
+for terminal_error_response in pure-error dual-result-error; do
+  printf '%s\n' "$terminal_error_response" \
+    >"$XDG_CONFIG_HOME/fake-codex-health"
+  if output=$($CLI preflight "$consumer" \
+    --client codex --operation jira-write --non-interactive 2>&1)
+  then
+    fail "$terminal_error_response passed Jira preflight"
+  fi
+  assert_contains "$output" 'Result: CONNECTOR_HEALTH_UNAVAILABLE'
+  assert_not_contains "$output" 'Capability state: SUPPORTED'
+  assert_not_contains "$output" 'ATLASSIAN_AUTH_REQUIRED'
+  assert_not_contains "$output" 'codex mcp login atlassian'
+  assert_not_contains "$output" 'OAuth URL:'
+  assert_not_contains "$output" 'createJiraIssue'
+done
+
 : >"$XDG_CONFIG_HOME/fake-claude-configured"
 printf '%s\n' auth-required-multiserver \
   >"$XDG_CONFIG_HOME/fake-claude-health"
@@ -1315,8 +1373,25 @@ assert_not_contains "$output" 'getAccessibleAtlassianResources'
 assert_not_contains "$output" 'getJiraIssueTypeMetaWithFields'
 assert_not_contains "$output" 'searchJiraIssuesUsingJql'
 
+printf '%s\n' ready-tools-failed >"$XDG_CONFIG_HOME/fake-cursor-health"
+if output=$($CLI preflight "$consumer" \
+  --client cursor --operation jira-write --non-interactive 2>&1)
+then
+  fail 'Cursor provider preflight passed with unavailable tool inventory'
+fi
+assert_contains "$output" 'Capability state: UNKNOWN'
+assert_contains "$output" 'Capability evidence: NONE'
+assert_contains "$output" 'Runtime inventory: UNAVAILABLE'
+assert_contains "$output" 'Result: CONNECTOR_CAPABILITY_REQUIRED'
+assert_not_contains "$output" 'ATLASSIAN_AUTH_REQUIRED'
+assert_not_contains "$output" 'cursor-agent mcp login atlassian'
+assert_not_contains "$output" 'OAuth URL:'
+assert_not_contains "$output" 'Tool inventory failed'
+assert_not_contains "$output" 'createJiraIssue'
+
 FAKE_CURSOR_VERSION=77.55.33
 export FAKE_CURSOR_VERSION
+printf '%s\n' healthy >"$XDG_CONFIG_HOME/fake-cursor-health"
 output=$($CLI preflight "$consumer" \
   --client cursor --operation jira-write --non-interactive)
 assert_contains "$output" 'Capability state: SUPPORTED'

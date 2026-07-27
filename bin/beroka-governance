@@ -1546,6 +1546,13 @@ codex_probe_complete() {
     return 0
   fi
   cpc_response=$(codex_probe_response "$cpc_file") || return 1
+  cpc_kind=$(printf '%s\n' "$cpc_response" |
+    codex_probe_response_kind) || return 1
+  case "$cpc_kind" in
+    error|dual) return 0 ;;
+    result) ;;
+    *) return 1 ;;
+  esac
   cpc_record=$(printf '%s\n' "$cpc_response" |
     codex_atlassian_record) || return 1
   cpc_auth=$(printf '%s\n' "$cpc_record" |
@@ -1570,6 +1577,28 @@ codex_probe_response() {
   ' "$1") || return 1
   printf '%s\n' "$cpr_response" | json_validate_object || return 1
   printf '%s\n' "$cpr_response"
+}
+
+codex_probe_response_kind() {
+  cprk_response=$(cat)
+  cprk_result=0
+  cprk_error=0
+  if printf '%s\n' "$cprk_response" |
+    json_top_level_object result >/dev/null
+  then
+    cprk_result=1
+  fi
+  if printf '%s\n' "$cprk_response" |
+    json_top_level_object error >/dev/null
+  then
+    cprk_error=1
+  fi
+  case "$cprk_result$cprk_error" in
+    10) printf '%s\n' result ;;
+    01) printf '%s\n' error ;;
+    11) printf '%s\n' dual ;;
+    *) printf '%s\n' unknown ;;
+  esac
 }
 
 codex_probe_response_count() {
@@ -1723,7 +1752,11 @@ connector_probe() {
 }
 
 codex_atlassian_record() {
-  awk '
+  car_response=$(cat)
+  car_kind=$(printf '%s\n' "$car_response" |
+    codex_probe_response_kind) || return 1
+  [ "$car_kind" = result ] || return 1
+  printf '%s\n' "$car_response" | awk '
     function string_at(start,    i, c, escaped) {
       parsed_string=""
       escaped=0
@@ -2229,6 +2262,8 @@ json_top_level_tools() {
 codex_reauthentication_required() {
   crr_matches=0
   while IFS= read -r crr_message; do
+    printf '%s\n' "$crr_message" |
+      json_validate_object >/dev/null || continue
     crr_method=$(printf '%s\n' "$crr_message" |
       json_top_level_string method) || continue
     [ "$crr_method" = mcpServer/startupStatus/updated ] || continue
@@ -2384,13 +2419,7 @@ connector_health() {
       ;;
     cursor)
       case "$CONNECTOR_PROBE_STATE" in
-        ready|connected)
-          [ "$CONNECTOR_PROBE_TOOLS_OK" -eq 0 ] || return 0
-          case "$CONNECTOR_PROBE_TOOLS" in
-            *auth*|*Auth*|*login*|*401*|*403*) return 1 ;;
-            *) return 2 ;;
-          esac
-          ;;
+        ready|connected) return 0 ;;
         *auth*|*login*|*401*|*403*) return 1 ;;
         *) return 2 ;;
       esac
