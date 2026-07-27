@@ -78,13 +78,19 @@ case "$*" in
         health=$(sed -n '1p' "$XDG_CONFIG_HOME/fake-codex-health" 2>/dev/null || :)
         case "$health" in
           healthy-all)
-            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]}}'
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]}}'
             ;;
           healthy-missing-jira-metadata)
-            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]}}'
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]}}'
             ;;
           healthy-missing-confluence-read)
-            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"createConfluencePage":{}},"authStatus":"oAuth"}]}}'
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{}},"authStatus":"oAuth"}]}}'
+            ;;
+          healthy-missing-resource-discovery)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]}}'
+            ;;
+          healthy-missing-jql)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]}}'
             ;;
           healthy-read-only)
             printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"getJiraIssue":{}},"authStatus":"oAuth"}]}}'
@@ -126,7 +132,7 @@ case "$*" in
           healthy-unrelated-reauth)
             printf '%s\n' \
               '{"method":"mcpServer/startupStatus/updated","params":{"name":"other","metadata":{"name":"atlassian","failureReason":"reauthenticationRequired"}}}' \
-              '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]}}'
+              '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]}}'
             ;;
           auth-required|'')
             printf '%s\n' \
@@ -218,7 +224,7 @@ case "$*" in
     ;;
   'mcp list')
     case "$(sed -n '1p' "$XDG_CONFIG_HOME/fake-cursor-health" 2>/dev/null || :)" in
-      healthy|description-prefixes|legacy-free-text|similar|missing)
+      empty|healthy|description-prefixes|legacy-free-text|missing|prose-only|similar)
         printf '%s\n' 'atlassian: Ready'
         ;;
       auth-required|'') printf '%s\n' 'atlassian: Authentication required' ;;
@@ -230,17 +236,27 @@ case "$*" in
       healthy)
         printf '%s\n' \
           'createJiraIssue(projectKey, issueType, summary)' \
+          'getAccessibleAtlassianResources()' \
           'getJiraIssue(issueKey)' \
           'getJiraIssueTypeMetaWithFields(projectKey, issueType)' \
-          'getJiraProjectIssueTypesMetadata(projectKey)'
+          'getJiraProjectIssueTypesMetadata(projectKey)' \
+          'searchJiraIssuesUsingJql(cloudId, jql)'
         ;;
       description-prefixes)
         printf '%s\n' \
           'createJiraIssue is configured for another server' \
+          'getAccessibleAtlassianResources: configuration only' \
           'getJiraIssue: configuration example only' \
           'getJiraIssueTypeMetaWithFields is mentioned in prose' \
           'getJiraProjectIssueTypesMetadata: description only' \
+          'searchJiraIssuesUsingJql is mentioned in prose' \
           'searchConfluenceUsingCql(query)'
+        ;;
+      empty) : ;;
+      prose-only)
+        printf '%s\n' \
+          'No tools are declared' \
+          'Configuration is empty'
         ;;
       legacy-free-text)
         printf '%s\n' \
@@ -494,6 +510,33 @@ output=$($CLI preflight "$consumer" \
 assert_contains "$output" 'Capability state: SUPPORTED'
 assert_not_contains "$(cat "$CALLS")" 'gh '
 
+printf '%s\n' healthy-missing-resource-discovery \
+  >"$XDG_CONFIG_HOME/fake-codex-health"
+for missing_resource_operation in jira-write confluence-write; do
+  if output=$($CLI preflight "$consumer" \
+    --client codex --operation "$missing_resource_operation" \
+    --non-interactive 2>&1)
+  then
+    fail "$missing_resource_operation passed without resource discovery"
+  fi
+  assert_contains "$output" 'Capability state: UNSUPPORTED'
+  assert_contains "$output" 'Runtime inventory: COMPLETE'
+  assert_not_contains "$output" 'getAccessibleAtlassianResources'
+  assert_not_contains "$output" 'searchJiraIssuesUsingJql'
+done
+
+printf '%s\n' healthy-missing-jql >"$XDG_CONFIG_HOME/fake-codex-health"
+if output=$($CLI preflight "$consumer" \
+  --client codex --operation jira-write --non-interactive 2>&1)
+then
+  fail 'jira-write passed without JQL search'
+fi
+assert_contains "$output" 'Capability state: UNSUPPORTED'
+assert_contains "$output" 'Runtime inventory: COMPLETE'
+assert_not_contains "$output" 'getAccessibleAtlassianResources'
+assert_not_contains "$output" 'searchJiraIssuesUsingJql'
+
+printf '%s\n' healthy-all >"$XDG_CONFIG_HOME/fake-codex-health"
 mkdir -p "$HOME/.cursor"
 printf '%s\n' \
   '{"mcpServers":{"atlassian":{"url":"https://mcp.atlassian.com/v1/mcp/authv2"}}}' \
@@ -503,7 +546,7 @@ output=$($CLI preflight "$consumer" \
   --client cursor --operation jira-write --non-interactive)
 assert_contains "$output" 'Capability state: SUPPORTED'
 
-for cursor_health in description-prefixes similar missing; do
+for cursor_health in empty prose-only description-prefixes similar missing; do
   printf '%s\n' "$cursor_health" >"$XDG_CONFIG_HOME/fake-cursor-health"
   if output=$($CLI preflight "$consumer" \
     --client cursor --operation jira-write --non-interactive 2>&1)
@@ -924,10 +967,10 @@ assert_contains "$output" 'Capability state: UNKNOWN'
 printf '%s\n' \
   '# schema=2' \
   '# endpoint	required_tools	tested_on	capability	evidence	state' \
-  'https://mcp.atlassian.com/v1/mcp/authv2	createJiraIssue,getJiraIssue,getJiraIssueTypeMetaWithFields,getJiraProjectIssueTypesMetadata	2026-07-27	jira-issue-write	official-contract	SUPPORTED' \
-  'https://mcp.atlassian.com/v1/mcp/authv2	createConfluencePage,getConfluencePage	2026-07-27	confluence-page-parent-write	official-contract	SUPPORTED' \
-  'https://mcp.atlassian.com/v1/mcp/authv2	createJiraIssue,getJiraIssue,getJiraIssueTypeMetaWithFields,getJiraProjectIssueTypesMetadata	2026-07-27	jira-board-verification	official-contract	SUPPORTED' \
-  'https://mcp.atlassian.com/v1/mcp/authv2	createConfluencePage,getConfluencePage	2026-07-27	confluence-folder-parent-write	official-contract	SUPPORTED' \
+  'https://mcp.atlassian.com/v1/mcp/authv2	createJiraIssue,getAccessibleAtlassianResources,getJiraIssue,getJiraIssueTypeMetaWithFields,getJiraProjectIssueTypesMetadata,searchJiraIssuesUsingJql	2026-07-27	jira-issue-write	official-contract	SUPPORTED' \
+  'https://mcp.atlassian.com/v1/mcp/authv2	createConfluencePage,getAccessibleAtlassianResources,getConfluencePage	2026-07-27	confluence-page-parent-write	official-contract	SUPPORTED' \
+  'https://mcp.atlassian.com/v1/mcp/authv2	createJiraIssue,getAccessibleAtlassianResources,getJiraIssue,getJiraIssueTypeMetaWithFields,getJiraProjectIssueTypesMetadata,searchJiraIssuesUsingJql	2026-07-27	jira-board-verification	official-contract	SUPPORTED' \
+  'https://mcp.atlassian.com/v1/mcp/authv2	createConfluencePage,getAccessibleAtlassianResources,getConfluencePage	2026-07-27	confluence-folder-parent-write	official-contract	SUPPORTED' \
   >"$source_repo/runtime/compatibility/atlassian.tsv"
 pin_test_release v1.1.2
 printf '%s\n' healthy-all >"$XDG_CONFIG_HOME/fake-codex-health"
@@ -938,7 +981,9 @@ assert_contains "$output" 'Capability evidence: PROVIDER_CONTRACT'
 assert_contains "$output" 'Runtime inventory: COMPLETE'
 assert_contains "$output" 'Result: PASS'
 assert_not_contains "$output" 'createJiraIssue'
+assert_not_contains "$output" 'getAccessibleAtlassianResources'
 assert_not_contains "$output" 'getJiraIssueTypeMetaWithFields'
+assert_not_contains "$output" 'searchJiraIssuesUsingJql'
 
 if output=$($CLI preflight "$consumer" \
   --client codex --operation confluence-write --non-interactive 2>&1)
@@ -1005,7 +1050,9 @@ assert_contains "$output" 'Capability state: SUPPORTED'
 assert_contains "$output" 'Capability evidence: PROVIDER_CONTRACT'
 assert_contains "$output" 'Runtime inventory: UNAVAILABLE'
 assert_not_contains "$output" 'createJiraIssue'
+assert_not_contains "$output" 'getAccessibleAtlassianResources'
 assert_not_contains "$output" 'getJiraIssueTypeMetaWithFields'
+assert_not_contains "$output" 'searchJiraIssuesUsingJql'
 
 FAKE_CLAUDE_VERSION=88.66.44
 export FAKE_CLAUDE_VERSION
@@ -1021,7 +1068,9 @@ assert_contains "$output" 'Capability state: SUPPORTED'
 assert_contains "$output" 'Capability evidence: PROVIDER_CONTRACT'
 assert_contains "$output" 'Runtime inventory: COMPLETE'
 assert_not_contains "$output" 'createJiraIssue'
+assert_not_contains "$output" 'getAccessibleAtlassianResources'
 assert_not_contains "$output" 'getJiraIssueTypeMetaWithFields'
+assert_not_contains "$output" 'searchJiraIssuesUsingJql'
 
 FAKE_CURSOR_VERSION=77.55.33
 export FAKE_CURSOR_VERSION
@@ -1041,11 +1090,13 @@ assert_contains "$output" 'Capability evidence: RUNTIME_INVENTORY'
 assert_contains "$output" 'Runtime inventory: COMPLETE'
 assert_contains "$output" 'Result: CONNECTOR_CAPABILITY_REQUIRED'
 assert_not_contains "$output" 'createJiraIssue'
+assert_not_contains "$output" 'getAccessibleAtlassianResources'
 assert_not_contains "$output" 'getJiraIssueTypeMetaWithFields'
+assert_not_contains "$output" 'searchJiraIssuesUsingJql'
 
 printf '%s\n' healthy-all >"$XDG_CONFIG_HOME/fake-codex-health"
 printf '%s\n' \
-  'https://mcp.atlassian.com/v1/mcp/authv2	createJiraIssue,getJiraIssue,getJiraIssueTypeMetaWithFields,getJiraProjectIssueTypesMetadata	2026-07-27	jira-issue-write	official-contract	SUPPORTED' \
+  'https://mcp.atlassian.com/v1/mcp/authv2	createJiraIssue,getAccessibleAtlassianResources,getJiraIssue,getJiraIssueTypeMetaWithFields,getJiraProjectIssueTypesMetadata,searchJiraIssuesUsingJql	2026-07-27	jira-issue-write	official-contract	SUPPORTED' \
   >>"$source_repo/runtime/compatibility/atlassian.tsv"
 pin_test_release v1.1.3
 if output=$($CLI preflight "$consumer" \
@@ -1062,7 +1113,7 @@ awk -F '\t' '$4 != "jira-issue-write"' \
   "$source_repo/runtime/compatibility/atlassian.tsv" >"$compatibility_temp"
 mv "$compatibility_temp" "$source_repo/runtime/compatibility/atlassian.tsv"
 printf '%s\n' \
-  'https://mcp.atlassian.com/v1/mcp/authv2	createJiraIssue,createJiraIssue,getJiraIssue,getJiraIssueTypeMetaWithFields,getJiraProjectIssueTypesMetadata	2026-07-27	jira-issue-write	official-contract	SUPPORTED' \
+  'https://mcp.atlassian.com/v1/mcp/authv2	createJiraIssue,createJiraIssue,getAccessibleAtlassianResources,getJiraIssue,getJiraIssueTypeMetaWithFields,getJiraProjectIssueTypesMetadata,searchJiraIssuesUsingJql	2026-07-27	jira-issue-write	official-contract	SUPPORTED' \
   >>"$source_repo/runtime/compatibility/atlassian.tsv"
 pin_test_release v1.1.4
 if output=$($CLI preflight "$consumer" \
@@ -1079,7 +1130,7 @@ awk -F '\t' '$4 != "jira-issue-write"' \
   "$source_repo/runtime/compatibility/atlassian.tsv" >"$compatibility_temp"
 mv "$compatibility_temp" "$source_repo/runtime/compatibility/atlassian.tsv"
 printf '%s\n' \
-  'https://mcp.atlassian.com/v1/mcp/authv2	createJiraIssue,getJiraIssue,getJiraIssueTypeMetaWithFields,getJiraProjectIssueTypesMetadata	2026-07-27	jira-issue-write	unrecognized	SUPPORTED' \
+  'https://mcp.atlassian.com/v1/mcp/authv2	createJiraIssue,getAccessibleAtlassianResources,getJiraIssue,getJiraIssueTypeMetaWithFields,getJiraProjectIssueTypesMetadata,searchJiraIssuesUsingJql	2026-07-27	jira-issue-write	unrecognized	SUPPORTED' \
   >>"$source_repo/runtime/compatibility/atlassian.tsv"
 pin_test_release v1.1.5
 if output=$($CLI preflight "$consumer" \
@@ -1096,7 +1147,7 @@ awk -F '\t' '$4 != "jira-issue-write"' \
   "$source_repo/runtime/compatibility/atlassian.tsv" >"$compatibility_temp"
 mv "$compatibility_temp" "$source_repo/runtime/compatibility/atlassian.tsv"
 printf '%s\n' \
-  'https://mcp.atlassian.com/v1/mcp/authv2	createJiraIssue,getJiraIssue,getJiraIssueTypeMetaWithFields,getJiraProjectIssueTypesMetadata	2025-02-29	jira-issue-write	official-contract	SUPPORTED' \
+  'https://mcp.atlassian.com/v1/mcp/authv2	createJiraIssue,getAccessibleAtlassianResources,getJiraIssue,getJiraIssueTypeMetaWithFields,getJiraProjectIssueTypesMetadata,searchJiraIssuesUsingJql	2025-02-29	jira-issue-write	official-contract	SUPPORTED' \
   >>"$source_repo/runtime/compatibility/atlassian.tsv"
 pin_test_release v1.1.6
 if output=$($CLI preflight "$consumer" \
@@ -1110,8 +1161,8 @@ assert_contains "$output" 'Result: CONNECTOR_CAPABILITY_REQUIRED'
 printf '%s\n' \
   '# schema=2' \
   '# endpoint	required_tools	tested_on	capability	evidence	state' \
-  'https://mcp.atlassian.com/v1/mcp/authv2	createJiraIssue,getJiraIssue,getJiraIssueTypeMetaWithFields,getJiraProjectIssueTypesMetadata	2026-07-27	jira-issue-write	official-contract	SUPPORTED' \
-  'https://mcp.atlassian.com/v1/mcp/authv2	getConfluencePage,createConfluencePage	2026-07-27	confluence-page-parent-write	official-contract	SUPPORTED' \
+  'https://mcp.atlassian.com/v1/mcp/authv2	createJiraIssue,getAccessibleAtlassianResources,getJiraIssue,getJiraIssueTypeMetaWithFields,getJiraProjectIssueTypesMetadata,searchJiraIssuesUsingJql	2026-07-27	jira-issue-write	official-contract	SUPPORTED' \
+  'https://mcp.atlassian.com/v1/mcp/authv2	getConfluencePage,getAccessibleAtlassianResources,createConfluencePage	2026-07-27	confluence-page-parent-write	official-contract	SUPPORTED' \
   >"$source_repo/runtime/compatibility/atlassian.tsv"
 pin_test_release v1.1.7
 if output=$($CLI preflight "$consumer" \
@@ -1125,9 +1176,9 @@ assert_contains "$output" 'Result: CONNECTOR_CAPABILITY_REQUIRED'
 printf '%s\n' \
   '# schema=2' \
   '# endpoint	required_tools	tested_on	capability	evidence	state' \
-  'https://mcp.atlassian.com/v1/mcp/authv2	createJiraIssue,getJiraIssue,getJiraIssueTypeMetaWithFields,getJiraProjectIssueTypesMetadata	2026-07-27	jira-issue-write	official-contract	SUPPORTED' \
-  'https://mcp.atlassian.com/v1/mcp/authv2	createConfluencePage,getConfluencePage	2026-07-27	confluence-page-parent-write	official-contract	SUPPORTED' \
-  'https://mcp.atlassian.com/v1/mcp/authv2	createConfluencePage,getConfluencePage	2026-07-27	confluence-page-parent-write	isolated-pilot	UNSUPPORTED' \
+  'https://mcp.atlassian.com/v1/mcp/authv2	createJiraIssue,getAccessibleAtlassianResources,getJiraIssue,getJiraIssueTypeMetaWithFields,getJiraProjectIssueTypesMetadata,searchJiraIssuesUsingJql	2026-07-27	jira-issue-write	official-contract	SUPPORTED' \
+  'https://mcp.atlassian.com/v1/mcp/authv2	createConfluencePage,getAccessibleAtlassianResources,getConfluencePage	2026-07-27	confluence-page-parent-write	official-contract	SUPPORTED' \
+  'https://mcp.atlassian.com/v1/mcp/authv2	createConfluencePage,getAccessibleAtlassianResources,getConfluencePage	2026-07-27	confluence-page-parent-write	isolated-pilot	UNSUPPORTED' \
   >"$source_repo/runtime/compatibility/atlassian.tsv"
 pin_test_release v1.1.8
 if output=$($CLI preflight "$consumer" \

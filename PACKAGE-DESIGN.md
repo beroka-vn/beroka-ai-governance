@@ -418,6 +418,8 @@ normalize only the runtime inventory supplied by Codex, Claude Code,
 or Cursor. Preflight exposes only classified capability evidence and inventory
 state, never raw tools, connector responses, client versions, OAuth state, or
 credentials.
+A successful Cursor inventory command is `COMPLETE` even when exact
+normalization accepts no declarations; a failed command is `UNAVAILABLE`.
 
 Before a Jira create, resolve exact project metadata and search for the
 intended record. Create once and read back the returned key to validate project,

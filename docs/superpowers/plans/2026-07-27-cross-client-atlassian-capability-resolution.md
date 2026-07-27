@@ -116,8 +116,8 @@ Change the production file to:
 ```text
 # schema=2
 # endpoint	required_tools	tested_on	capability	evidence	state
-https://mcp.atlassian.com/v1/mcp/authv2	createJiraIssue,getJiraIssue,getJiraIssueTypeMetaWithFields,getJiraProjectIssueTypesMetadata	2026-07-27	jira-issue-write	official-contract	SUPPORTED
-https://mcp.atlassian.com/v1/mcp/authv2	createConfluencePage,getConfluencePage	2026-07-27	confluence-page-parent-write	official-contract	SUPPORTED
+https://mcp.atlassian.com/v1/mcp/authv2	createJiraIssue,getAccessibleAtlassianResources,getJiraIssue,getJiraIssueTypeMetaWithFields,getJiraProjectIssueTypesMetadata,searchJiraIssuesUsingJql	2026-07-27	jira-issue-write	official-contract	SUPPORTED
+https://mcp.atlassian.com/v1/mcp/authv2	createConfluencePage,getAccessibleAtlassianResources,getConfluencePage	2026-07-27	confluence-page-parent-write	official-contract	SUPPORTED
 ```
 
 - [ ] **Step 4: Run focused validation**
@@ -163,7 +163,7 @@ Change the Codex `healthy-all` fixture in `tests/routing.sh` to include the
 metadata tools:
 
 ```json
-{"id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]}}
+{"id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]}}
 ```
 
 Make fake versions variable:
@@ -230,10 +230,12 @@ load_provider_capability() {
       {
         allowed["createConfluencePage"]=1
         allowed["createJiraIssue"]=1
+        allowed["getAccessibleAtlassianResources"]=1
         allowed["getConfluencePage"]=1
         allowed["getJiraIssue"]=1
         allowed["getJiraIssueTypeMetaWithFields"]=1
         allowed["getJiraProjectIssueTypesMetadata"]=1
+        allowed["searchJiraIssuesUsingJql"]=1
         tool_count=split($2, tools, ",")
         for (i=1; i<=tool_count; i++)
           if (!allowed[tools[i]]) invalid=1
@@ -352,8 +354,10 @@ resolve_provider_capability() {
 Extend the canonical inventory list with:
 
 ```text
+getAccessibleAtlassianResources
 getJiraIssueTypeMetaWithFields
 getJiraProjectIssueTypesMetadata
+searchJiraIssuesUsingJql
 ```
 
 Do not print `CAPABILITY_REQUIRED_TOOLS` or `CAPABILITY_INVENTORY`.
@@ -398,12 +402,14 @@ Make the fake Cursor client emit an inventory containing all Jira tools:
 ```sh
 'mcp list-tools atlassian')
   case "$(sed -n '1p' "$XDG_CONFIG_HOME/fake-cursor-health" 2>/dev/null || :)" in
-    healthy)
-      printf '%s\n' \
-        'createJiraIssue(projectKey, issueType, summary)' \
-        'getJiraIssue(issueKey)' \
-        'getJiraIssueTypeMetaWithFields(projectKey, issueType)' \
-        'getJiraProjectIssueTypesMetadata(projectKey)'
+      healthy)
+        printf '%s\n' \
+          'createJiraIssue(projectKey, issueType, summary)' \
+          'getAccessibleAtlassianResources()' \
+          'getJiraIssue(issueKey)' \
+          'getJiraIssueTypeMetaWithFields(projectKey, issueType)' \
+          'getJiraProjectIssueTypesMetadata(projectKey)' \
+          'searchJiraIssuesUsingJql(cloudId, jql)'
       ;;
     similar)
       printf '%s\n' \
@@ -461,7 +467,7 @@ cursor_tool_names() {
       if (match(line, /^[A-Za-z][A-Za-z0-9_]*/)) {
         name=substr(line, RSTART, RLENGTH)
         rest=substr(line, RLENGTH + 1, 1)
-        if (rest == "" || rest ~ /[[:space:](:]/) print name
+        if (rest == "" || rest == "(") print name
       }
     }
   '
@@ -473,13 +479,14 @@ In the Cursor branch of `connector_inventory`, normalize once:
 ```sh
 CAPABILITY_INVENTORY=$(printf '%s\n' "$CONNECTOR_PROBE_TOOLS" |
   cursor_tool_names) || return 1
-[ -n "$CAPABILITY_INVENTORY" ] || return 1
 CAPABILITY_INVENTORY_FORMAT=json
 CAPABILITY_INVENTORY_COMPLETE=1
 ```
 
 Reusing the existing exact-line `json` inventory matcher prevents tool names
 mentioned only in descriptions or argument text from counting.
+A successful command with zero accepted declarations remains a complete empty
+inventory; only command failure leaves provider inventory unavailable.
 
 - [ ] **Step 4: Verify connector and routing behavior**
 

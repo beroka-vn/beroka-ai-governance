@@ -512,9 +512,11 @@ case "$*" in
       healthy)
         printf '%s\n' \
           'createJiraIssue(projectKey, issueType, summary)' \
+          'getAccessibleAtlassianResources()' \
           'getJiraIssue(issueKey)' \
           'getJiraIssueTypeMetaWithFields(projectKey, issueType)' \
-          'getJiraProjectIssueTypesMetadata(projectKey)'
+          'getJiraProjectIssueTypesMetadata(projectKey)' \
+          'searchJiraIssuesUsingJql(cloudId, jql)'
         ;;
       ready-tools-failed) printf '%s\n' 'Tool inventory failed'; exit 1 ;;
       *) printf '%s\n' 'Authentication required'; exit 1 ;;

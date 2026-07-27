@@ -2176,15 +2176,14 @@ connector_inventory() {
       ;;
     cursor)
       connector_probe cursor || return 1
-      [ "$CONNECTOR_PROBE_TOOLS_OK" -eq 1 ] &&
-        [ -n "$CONNECTOR_PROBE_TOOLS" ] || return 1
+      [ "$CONNECTOR_PROBE_TOOLS_OK" -eq 1 ] || return 1
       if [ "$ci_mode" = legacy ]; then
+        [ -n "$CONNECTOR_PROBE_TOOLS" ] || return 1
         CAPABILITY_INVENTORY=$CONNECTOR_PROBE_TOOLS
         CAPABILITY_INVENTORY_FORMAT=text
       else
         CAPABILITY_INVENTORY=$(printf '%s\n' "$CONNECTOR_PROBE_TOOLS" |
           cursor_tool_names) || return 1
-        [ -n "$CAPABILITY_INVENTORY" ] || return 1
         CAPABILITY_INVENTORY_FORMAT=json
       fi
       CAPABILITY_INVENTORY_COMPLETE=1
@@ -2365,10 +2364,12 @@ load_provider_capability() {
       {
         allowed["createConfluencePage"]=1
         allowed["createJiraIssue"]=1
+        allowed["getAccessibleAtlassianResources"]=1
         allowed["getConfluencePage"]=1
         allowed["getJiraIssue"]=1
         allowed["getJiraIssueTypeMetaWithFields"]=1
         allowed["getJiraProjectIssueTypesMetadata"]=1
+        allowed["searchJiraIssuesUsingJql"]=1
         tool_count=split($2, tools, ",")
         for (i=1; i<=tool_count; i++) {
           if (!allowed[tools[i]] ||

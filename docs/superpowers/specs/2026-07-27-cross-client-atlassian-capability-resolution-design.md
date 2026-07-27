@@ -81,9 +81,13 @@ or duplicate record makes the requested capability `UNKNOWN`; it never becomes
 The initial reviewed schema-2 records are:
 
 ```text
-https://mcp.atlassian.com/v1/mcp/authv2	createJiraIssue,getJiraIssue,getJiraIssueTypeMetaWithFields,getJiraProjectIssueTypesMetadata	2026-07-27	jira-issue-write	official-contract	SUPPORTED
-https://mcp.atlassian.com/v1/mcp/authv2	createConfluencePage,getConfluencePage	2026-07-27	confluence-page-parent-write	official-contract	SUPPORTED
+https://mcp.atlassian.com/v1/mcp/authv2	createJiraIssue,getAccessibleAtlassianResources,getJiraIssue,getJiraIssueTypeMetaWithFields,getJiraProjectIssueTypesMetadata,searchJiraIssuesUsingJql	2026-07-27	jira-issue-write	official-contract	SUPPORTED
+https://mcp.atlassian.com/v1/mcp/authv2	createConfluencePage,getAccessibleAtlassianResources,getConfluencePage	2026-07-27	confluence-page-parent-write	official-contract	SUPPORTED
 ```
+
+Both records require resource discovery because Atlassian tools consume a
+`cloudId`. The Jira record also requires JQL search because the governed create
+workflow searches for the intended existing issue before creating once.
 
 `jira-board-verification` and `confluence-folder-parent-write` have no
 production record until an isolated live pilot proves their complete
@@ -116,6 +120,8 @@ nested, cross-server, duplicated, or malformed keys do not count.
 Use `cursor-agent mcp list-tools atlassian`. Parse only exact tool identifiers
 from the documented command output. Configuration text, argument descriptions,
 similar names, and tools belonging to another server do not count.
+A successful command is a `COMPLETE` inventory even when it contains no accepted
+declarations; a command failure leaves inventory `UNAVAILABLE`.
 
 ### Claude Code
 
