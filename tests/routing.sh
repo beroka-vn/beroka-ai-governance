@@ -968,7 +968,11 @@ then
   fail 'complete inventory missing a required provider tool passed'
 fi
 assert_contains "$output" 'Capability state: UNSUPPORTED'
+assert_contains "$output" 'Capability evidence: RUNTIME_INVENTORY'
+assert_contains "$output" 'Runtime inventory: COMPLETE'
 assert_contains "$output" 'Result: CONNECTOR_CAPABILITY_REQUIRED'
+assert_not_contains "$output" 'createJiraIssue'
+assert_not_contains "$output" 'getJiraIssueTypeMetaWithFields'
 
 printf '%s\n' healthy-all >"$XDG_CONFIG_HOME/fake-codex-health"
 printf '%s\n' \
