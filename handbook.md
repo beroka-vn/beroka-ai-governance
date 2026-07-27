@@ -43,12 +43,13 @@ WSL là target environments; native Windows PowerShell không thuộc V1.
 
 ### Điều kiện trước khi cài
 
-- Có Git, POSIX shell và quyền Git/GitHub đã authenticate để clone private
-  repository; package không chứa credentials.
+- Có Git, POSIX shell, `gh` đã cài và đã authenticate cho private repository;
+  package không chứa credentials. Nếu thiếu GitHub authentication, chạy
+  `gh auth login --hostname github.com --web`.
 - `$HOME/.local/bin` phải có trong `PATH` sau khi `install` để gọi
   `beroka-governance`.
-- Dùng một annotated SemVer tag đã được review và publish. Release hiện hành
-  cho team là `v1.0.1`; mọi tag được publish từ cutover này là immutable.
+- Dùng một annotated SemVer tag đã được review và publish. Reset này thiết lập
+  `v1.0.0` là release được hỗ trợ đầu tiên; mọi tag publish sau đó là immutable.
 - Repository đích là Git repository có đúng một canonical GitHub remote khớp
   repository identity. Tên local remote không bắt buộc là `origin`. Review
   diff của repository đích bằng PR trước khi merge; không đăng ký trực tiếp
@@ -59,13 +60,16 @@ WSL là target environments; native Windows PowerShell không thuộc V1.
 
 ### Bootstrap và install
 
-Từ Git root của repository cần đăng ký, chạy release launcher. Launcher lấy
-latest stable release, nhưng chỉ chạy package sau khi xác minh annotated tag và
-embedded commit:
+Từ Git root của repository cần đăng ký, chạy release launcher đã authenticate.
+`gh` phải được cài và authenticate cho private repository; nếu thiếu auth, chạy
+`gh auth login --hostname github.com --web`. Launcher chỉ chạy package sau khi
+xác minh annotated tag và embedded commit:
 
 ```bash
-curl -fsSL \
-  https://github.com/beroka-vn/beroka-ai-governance/releases/latest/download/bootstrap.sh |
+gh release download \
+  --repo beroka-vn/beroka-ai-governance \
+  --pattern bootstrap.sh \
+  --output - |
   sh -s -- --client codex --non-interactive
 ```
 
@@ -173,7 +177,7 @@ vì vậy vẫn dùng được khi routing đang thiếu hoặc pending.
 
 ```bash
 repo=/srv/beroka/backend
-release=v1.0.1
+release=v1.0.0
 
 beroka-governance register "$repo" --version "$release" --client codex
 git -C "$repo" diff -- .beroka-governance.lock AGENTS.md
@@ -443,7 +447,8 @@ tại. Sau khi developer sửa kết nối, agent phải chạy lại preflight.
 
 ## Release gate trước khi publish tag
 
-`v1.0.1` là release chính thức đầu tiên cho team. Trước mọi push tag,
+Reset này thiết lập `v1.0.0` là release được hỗ trợ đầu tiên cho team; mọi tag
+publish sau đó là immutable. Trước mọi push tag,
 coordinator phải nhận:
 
 - exact local branch, candidate version và release commit;

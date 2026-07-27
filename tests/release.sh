@@ -25,19 +25,6 @@ first_code_block_after_heading() {
   ' "$ROOT/$file"
 }
 
-reject_active_v100_release_gate() {
-  active_lines=$(awk '
-    /^## Release gate trước khi publish tag/ { in_gate = 1; next }
-    in_gate && /^## / { exit }
-    in_gate && /v1\.0\.0/ &&
-      $0 !~ /immutable: never/ &&
-      $0 !~ /Không dùng candidate flow/ &&
-      $0 !~ /replace hoặc delete/ { print }
-  ' "$ROOT/handbook.md")
-  [ -z "$active_lines" ] ||
-    fail 'release gate contains active v1.0.0 instructions'
-}
-
 reject_text() {
   file=$1 text=$2
   if grep -F "$text" "$ROOT/$file" >/dev/null; then
@@ -45,12 +32,12 @@ reject_text() {
   fi
 }
 
-[ "$(cat "$ROOT/VERSION")" = v1.0.1 ] ||
-  fail 'VERSION is not v1.0.1'
+[ "$(cat "$ROOT/VERSION")" = v1.0.0 ] ||
+  fail 'VERSION is not v1.0.0'
 
 require_text README.md 'Backend and Frontend repositories'
 require_text handbook.md 'Chuyển quyết định cho developer'
-require_text README.md 'releases/latest/download/bootstrap.sh'
+require_text README.md 'gh release download'
 require_text README.md 'one client on each execution environment'
 require_text handbook.md 'AUTH_PENDING'
 require_text handbook.md 'CONNECTOR_HEALTH_UNAVAILABLE'
@@ -63,8 +50,10 @@ require_text PACKAGE-DESIGN.md 'checked-out HEAD each equal the embedded commit'
 [ -f "$ROOT/release/bootstrap.sh.in" ] ||
   fail 'missing release launcher template'
 
-noninteractive_launcher='curl -fsSL \
-  https://github.com/beroka-vn/beroka-ai-governance/releases/latest/download/bootstrap.sh |
+noninteractive_launcher='gh release download \
+  --repo beroka-vn/beroka-ai-governance \
+  --pattern bootstrap.sh \
+  --output - |
   sh -s -- --client codex --non-interactive'
 section_fixture=$(mktemp "$ROOT/tests/.release-section.XXXXXX")
 trap 'rm -f "$section_fixture"' EXIT HUP INT TERM
@@ -101,18 +90,11 @@ for file in README.md handbook.md PACKAGE-DESIGN.md; do
   fi
 done
 
-reject_text README.md '`v1.0.0` is the first public stable release'
-reject_text handbook.md '`v1.0.0` là first public stable release'
-reject_text PACKAGE-DESIGN.md \
-  '`v1.0.0` is the first public stable release'
-
-reject_text handbook.md 'canonical remote chưa có `v1.0.0`'
-reject_text handbook.md 'tạo annotated `v1.0.0`'
-reject_text handbook.md 'Install published `v1.0.0`'
 reject_text PACKAGE-DESIGN.md 'It never pipes network output directly to a shell.'
-reject_active_v100_release_gate
 
 for file in README.md handbook.md PACKAGE-DESIGN.md; do
+  require_text "$file" 'gh auth login --hostname github.com --web'
+  reject_text "$file" 'releases/latest/download/bootstrap.sh'
   reject_text "$file" 'immutable legacy test sample'
   reject_text "$file" 'Backend-only'
   reject_text "$file" 'do not register a Frontend repository'
