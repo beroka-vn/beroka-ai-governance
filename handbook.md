@@ -48,8 +48,9 @@ WSL là target environments; native Windows PowerShell không thuộc V1.
   `gh auth login --hostname github.com --web`.
 - `$HOME/.local/bin` phải có trong `PATH` sau khi `install` để gọi
   `beroka-governance`.
-- Dùng một annotated SemVer tag đã được review và publish. Reset này thiết lập
-  `v1.0.0` là release được hỗ trợ đầu tiên; mọi tag publish sau đó là immutable.
+- Dùng một annotated SemVer tag đã được review và publish. `v1.0.1` là
+  corrective release được hỗ trợ hiện tại. `v1.0.0` vẫn immutable nhưng đã được
+  thay thế cho onboarding; mọi tag publish sau đó là immutable.
 - Repository đích là Git repository có đúng một canonical GitHub remote khớp
   repository identity. Tên local remote không bắt buộc là `origin`. Review
   diff của repository đích bằng PR trước khi merge; không đăng ký trực tiếp
@@ -187,7 +188,7 @@ vì vậy vẫn dùng được khi routing đang thiếu hoặc pending.
 
 ```bash
 repo=/srv/beroka/backend
-release=v1.0.0
+release=v1.0.1
 
 beroka-governance register "$repo" --version "$release" --client codex
 git -C "$repo" diff -- .beroka-governance.lock AGENTS.md
@@ -313,6 +314,35 @@ canonical remote đã discover, rồi chạy `beroka-governance context` để l
 runtime English từ cùng exact release. Client không có trong `CLIENTS` không có
 Beroka-managed entrypoint; managed content chưa được list là `ENTRYPOINT_DRIFT`.
 Repository chưa register không được package áp dụng.
+
+### Rehydrate context và boundary đa client
+
+Sau context compaction, session resume hoặc new chat, agent phải chạy lại
+`beroka-governance context "$PWD"` trước governed action tiếp theo; không dựa
+vào governance detail chỉ còn trong conversation summary. Source work đang làm
+không cần bỏ, nhưng phải rehydrate governance trước planning, implementation
+hoặc external action tiếp theo. Mỗi external write cần operation-specific
+preflight mới ngay trước action; không reuse kết quả từ trước compaction.
+
+Codex personal instructions thuộc `~/.codex/AGENTS.md`; shared instructions
+thuộc repository `AGENTS.md`. Claude personal instructions thuộc
+`~/.claude/CLAUDE.md` hoặc ignored `CLAUDE.local.md`; shared instructions thuộc
+repository `CLAUDE.md`. Cursor personal instructions thuộc User Rules;
+governance chỉ sở hữu `.cursor/rules/beroka-governance.mdc` và không sửa Cursor
+rules khác.
+
+Enable client mới là one-time reviewed repository change: thêm client vào
+`CLIENTS` và tạo managed entrypoint của client đó. Bootstrap configures the
+selected client locally trước review. Repository enablement trở thành shared sau merge;
+execution environment khác chỉ configure connector/OAuth của client đó sau này
+khi health yêu cầu.
+CLI hard-enforce technical stop conditions cho registration,
+release/lock/entrypoint integrity, routing, connector/authentication và
+operation preflight. Workflow rules như ownership, issue scope, branch use và
+validation vẫn instruction-driven trừ khi CI, hooks, branch protection hoặc
+platform policy khác enforce chúng. Personal hoặc repository-local instructions
+có thể narrow governance nhưng không authorize bypass central technical stop
+condition.
 
 ## Quyền tối thiểu
 
@@ -457,8 +487,9 @@ tại. Sau khi developer sửa kết nối, agent phải chạy lại preflight.
 
 ## Release gate trước khi publish tag
 
-Reset này thiết lập `v1.0.0` là release được hỗ trợ đầu tiên cho team; mọi tag
-publish sau đó là immutable. Trước mọi push tag,
+`v1.0.1` là corrective release được hỗ trợ hiện tại. `v1.0.0` vẫn immutable
+nhưng đã được thay thế cho onboarding; mọi tag publish sau đó là immutable.
+Trước mọi push tag,
 coordinator phải nhận:
 
 - exact local branch, candidate version và release commit;

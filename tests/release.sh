@@ -32,8 +32,29 @@ reject_text() {
   fi
 }
 
-[ "$(cat "$ROOT/VERSION")" = v1.0.0 ] ||
-  fail 'VERSION is not v1.0.0'
+[ "$(cat "$ROOT/VERSION")" = v1.0.1 ] ||
+  fail 'VERSION is not v1.0.1'
+
+require_text README.md '`v1.0.1` is the current supported corrective release.'
+require_text README.md '`v1.0.0` remains'
+require_text README.md 'immutable but is superseded for onboarding;'
+reject_text README.md 'establishes `v1.0.0` as the first supported release'
+require_text handbook.md \
+  '`v1.0.1` là corrective release được hỗ trợ hiện tại.'
+require_text handbook.md '`v1.0.0` vẫn immutable'
+require_text handbook.md 'thay thế cho onboarding'
+reject_text handbook.md 'thiết lập `v1.0.0` là release được hỗ trợ đầu tiên'
+require_text PACKAGE-DESIGN.md \
+  '`v1.0.1` is the current supported corrective release.'
+require_text PACKAGE-DESIGN.md '`v1.0.0` remains'
+require_text PACKAGE-DESIGN.md 'immutable but is superseded for onboarding.'
+reject_text PACKAGE-DESIGN.md \
+  'establishes `v1.0.0` as the first supported team release'
+require_text handbook.md 'release=v1.0.1'
+require_text PACKAGE-DESIGN.md 'VERSION=v1.0.1'
+require_text PACKAGE-DESIGN.md 'beroka-governance install v1.0.1'
+require_text PACKAGE-DESIGN.md \
+  'beroka-governance register /path/to/repo --version v1.0.1 --client codex'
 
 require_text README.md 'Backend and Frontend repositories'
 require_text handbook.md 'Chuyển quyết định cho developer'

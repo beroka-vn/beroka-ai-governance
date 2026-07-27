@@ -54,9 +54,10 @@ entrypoint.
 
 Review and commit the repository changes, merge them through the normal
 application-repository pull request, then start a fresh AI session. Existing
-registrations keep their lock; bootstrap never silently upgrades them. This
-reset establishes `v1.0.0` as the first supported release; every tag published
-after it is immutable.
+registrations keep their lock; bootstrap never silently upgrades them.
+`v1.0.1` is the current supported corrective release. `v1.0.0` remains
+immutable but is superseded for onboarding; every tag published after it is
+immutable.
 
 Client setup is additive: each bootstrap adds only its selected client's
 entrypoint and never rewrites entrypoints already enabled for another client.

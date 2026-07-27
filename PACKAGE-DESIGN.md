@@ -73,14 +73,15 @@ connector inspection requires `jq` for every selected client; Cursor setup also
 uses it to preserve user-level MCP JSON. It must not require Python, a daemon,
 or a new package manager.
 
-This reset establishes `v1.0.0` as the first supported team release. Every
-subsequently published tag is immutable and annotated SemVer.
+`v1.0.1` is the current supported corrective release. `v1.0.0` remains
+immutable but is superseded for onboarding. Every subsequently published tag
+is immutable and annotated SemVer.
 
 ## Developer-machine layout
 
 ```text
 ~/.local/bin/beroka-governance
-~/.local/share/beroka-ai-governance/releases/v1.0.0/
+~/.local/share/beroka-ai-governance/releases/v1.0.1/
 ~/.config/beroka-ai-governance/registered-repos
 ```
 
@@ -105,7 +106,7 @@ Example lock file:
 ```text
 SOURCE=beroka-vn/beroka-ai-governance
 REPOSITORY=beroka-vn/example-backend
-VERSION=v1.0.0
+VERSION=v1.0.1
 COMMIT=0123456789abcdef0123456789abcdef01234567
 CLIENTS=codex,claude
 ```
@@ -116,9 +117,10 @@ the five allowlisted keys. It must never `source`, `eval`, or execute the lock
 file. A candidate lock without `CLIENTS` is invalid before the first public
 release and must be recreated with bootstrap.
 
-Each listed entrypoint contains routing only and independently loads the same
-central release. They do not duplicate governance rules or templates. At
-session start they require the agent to:
+Each listed entrypoint contains routing and the minimal shared context-
+rehydration policy, then independently loads the same central release. They do
+not duplicate governance rules or templates. At session start they require the
+agent to:
 
 1. resolve the canonical GitHub remote and match it to `REPOSITORY`;
 2. read and validate `.beroka-governance.lock`;
@@ -134,6 +136,32 @@ is `ENTRYPOINT_DRIFT`. Repository-specific instructions may narrow central
 governance but may not use it to broaden agent authority or bypass a stop
 condition. The clients do not need to import or directly read files outside the
 workspace; validated package content is emitted through command output.
+
+After context compaction, a session resume, or a new chat, clients rerun
+`beroka-governance context "$PWD"` before the next governed action and never
+rely on governance details preserved only in a conversation summary. In-progress
+source work need not be discarded, but governance is rehydrated before the next
+planning, implementation, or external action. Every external write requires a
+fresh operation-specific preflight immediately before it; a preflight from
+before compaction is never reused.
+
+Codex personal instructions are `~/.codex/AGENTS.md` and shared instructions
+are repository `AGENTS.md`. Claude personal instructions are
+`~/.claude/CLAUDE.md` or ignored `CLAUDE.local.md`, while shared instructions
+are repository `CLAUDE.md`. Cursor personal instructions are User Rules;
+governance owns only `.cursor/rules/beroka-governance.mdc` and never modifies
+other Cursor rules. Enabling a client is a one-time reviewed repository change
+that adds it to `CLIENTS` and creates its managed entrypoint. Bootstrap
+configures its selected client locally before review. Repository enablement
+becomes shared after merge; other execution environments configure only that
+client's connector/OAuth later when health requires it.
+
+The CLI hard-enforces technical stop conditions for registration,
+release/lock/entrypoint integrity, routing, connector/authentication, and
+operation preflight. Ownership, issue scope, branch use, and validation remain
+instruction-driven unless CI, hooks, branch protection, or another platform
+policy enforces them. Personal and repository-local instructions may narrow
+governance but cannot authorize bypassing a central technical stop condition.
 
 ## CLI lifecycle
 
@@ -201,7 +229,7 @@ owned by the client or OS keyring.
 ### Install
 
 ```bash
-beroka-governance install v1.0.0
+beroka-governance install v1.0.1
 ```
 
 The downloaded release launcher clones the embedded
@@ -276,7 +304,7 @@ mode returns `GITHUB_AUTH_REQUIRED` with that exact remediation command.
 ### Register
 
 ```bash
-beroka-governance register /path/to/repo --version v1.0.0 --client codex
+beroka-governance register /path/to/repo --version v1.0.1 --client codex
 ```
 
 Register validates the Git repository, uniquely discovered canonical remote,
