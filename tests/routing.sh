@@ -80,6 +80,15 @@ case "$*" in
           healthy-all)
             printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]}}'
             ;;
+          healthy-valid-nested-tool-values)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{"metadata":{"description":"brace } and escaped \" quote"}},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]}}'
+            ;;
+          healthy-malformed-tool-value)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":"not-an-object","getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]}}'
+            ;;
+          healthy-duplicate-required-tool)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{},"createJiraIssue":{},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]}}'
+            ;;
           healthy-missing-jira-metadata)
             printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]}}'
             ;;
@@ -224,7 +233,7 @@ case "$*" in
     ;;
   'mcp list')
     case "$(sed -n '1p' "$XDG_CONFIG_HOME/fake-cursor-health" 2>/dev/null || :)" in
-      empty|healthy|description-prefixes|legacy-free-text|missing|prose-only|similar)
+      empty|healthy|description-prefixes|legacy-free-text|missing|prose-only|similar|trailing-prose)
         printf '%s\n' 'atlassian: Ready'
         ;;
       auth-required|'') printf '%s\n' 'atlassian: Authentication required' ;;
@@ -235,12 +244,12 @@ case "$*" in
     case "$(sed -n '1p' "$XDG_CONFIG_HOME/fake-cursor-health" 2>/dev/null || :)" in
       healthy)
         printf '%s\n' \
-          'createJiraIssue(projectKey, issueType, summary)' \
-          'getAccessibleAtlassianResources()' \
-          'getJiraIssue(issueKey)' \
-          'getJiraIssueTypeMetaWithFields(projectKey, issueType)' \
-          'getJiraProjectIssueTypesMetadata(projectKey)' \
-          'searchJiraIssuesUsingJql(cloudId, jql)'
+          '- createJiraIssue (projectKey, issueType, summary)' \
+          '- getAccessibleAtlassianResources ()' \
+          '- getJiraIssue (issueKey)' \
+          '- getJiraIssueTypeMetaWithFields (projectKey, issueType)' \
+          '- getJiraProjectIssueTypesMetadata (projectKey)' \
+          '- searchJiraIssuesUsingJql (cloudId, jql)'
         ;;
       description-prefixes)
         printf '%s\n' \
@@ -270,6 +279,15 @@ case "$*" in
         printf '%s\n' \
           'createJiraIssuePreview(projectKey)' \
           'description: call getJiraIssue after creation'
+        ;;
+      trailing-prose)
+        printf '%s\n' \
+          '- createJiraIssue (projectKey, issueType, summary) creates an issue' \
+          '- getAccessibleAtlassianResources () lists sites' \
+          '- getJiraIssue (issueKey) reads an issue' \
+          '- getJiraIssueTypeMetaWithFields (projectKey, issueType) lists fields' \
+          '- getJiraProjectIssueTypesMetadata (projectKey) lists issue types' \
+          '- searchJiraIssuesUsingJql (cloudId, jql) searches issues'
         ;;
       missing) printf '%s\n' 'getJiraIssue(issueKey)' ;;
       *) exit 1 ;;
@@ -510,6 +528,26 @@ output=$($CLI preflight "$consumer" \
 assert_contains "$output" 'Capability state: SUPPORTED'
 assert_not_contains "$(cat "$CALLS")" 'gh '
 
+printf '%s\n' healthy-valid-nested-tool-values \
+  >"$XDG_CONFIG_HOME/fake-codex-health"
+output=$($CLI preflight "$consumer" \
+  --client codex --operation jira-write --non-interactive)
+assert_contains "$output" 'Capability state: SUPPORTED'
+
+for invalid_tool_map in \
+  healthy-malformed-tool-value healthy-duplicate-required-tool
+do
+  printf '%s\n' "$invalid_tool_map" >"$XDG_CONFIG_HOME/fake-codex-health"
+  if output=$($CLI preflight "$consumer" \
+    --client codex --operation jira-write --non-interactive 2>&1)
+  then
+    fail "$invalid_tool_map supplied the Atlassian inventory"
+  fi
+  assert_contains "$output" 'Capability state: UNKNOWN'
+  assert_contains "$output" 'Result: CONNECTOR_CAPABILITY_REQUIRED'
+  assert_not_contains "$output" 'Capability state: SUPPORTED'
+done
+
 printf '%s\n' healthy-missing-resource-discovery \
   >"$XDG_CONFIG_HOME/fake-codex-health"
 for missing_resource_operation in jira-write confluence-write; do
@@ -546,7 +584,9 @@ output=$($CLI preflight "$consumer" \
   --client cursor --operation jira-write --non-interactive)
 assert_contains "$output" 'Capability state: SUPPORTED'
 
-for cursor_health in empty prose-only description-prefixes similar missing; do
+for cursor_health in \
+  empty prose-only description-prefixes similar trailing-prose missing
+do
   printf '%s\n' "$cursor_health" >"$XDG_CONFIG_HOME/fake-cursor-health"
   if output=$($CLI preflight "$consumer" \
     --client cursor --operation jira-write --non-interactive 2>&1)

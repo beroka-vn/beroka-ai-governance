@@ -511,12 +511,12 @@ case "$*" in
     case "$(sed -n '1p' "$XDG_CONFIG_HOME/fake-cursor-health" 2>/dev/null || :)" in
       healthy)
         printf '%s\n' \
-          'createJiraIssue(projectKey, issueType, summary)' \
-          'getAccessibleAtlassianResources()' \
-          'getJiraIssue(issueKey)' \
-          'getJiraIssueTypeMetaWithFields(projectKey, issueType)' \
-          'getJiraProjectIssueTypesMetadata(projectKey)' \
-          'searchJiraIssuesUsingJql(cloudId, jql)'
+          '- createJiraIssue (projectKey, issueType, summary)' \
+          '- getAccessibleAtlassianResources ()' \
+          '- getJiraIssue (issueKey)' \
+          '- getJiraIssueTypeMetaWithFields (projectKey, issueType)' \
+          '- getJiraProjectIssueTypesMetadata (projectKey)' \
+          '- searchJiraIssuesUsingJql (cloudId, jql)'
         ;;
       ready-tools-failed) printf '%s\n' 'Tool inventory failed'; exit 1 ;;
       *) printf '%s\n' 'Authentication required'; exit 1 ;;
