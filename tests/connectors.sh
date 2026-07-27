@@ -217,7 +217,10 @@ case "$*" in
         case "$health" in
           escaped-id-one-result|escaped-result-only|escaped-error-with-result|\
           escaped-id-conflict-with-result|escaped-result-with-error|\
-          semantic-duplicate-result|semantic-duplicate-error)
+          semantic-duplicate-result|semantic-duplicate-error|\
+          escaped-wrapper-keys|semantic-duplicate-data|\
+          semantic-duplicate-name|semantic-duplicate-tools|\
+          semantic-duplicate-auth-status|raw-nul-response|escaped-nul-text)
             escaped_probes=$(sed -n '1p' \
               "$XDG_CONFIG_HOME/fake-codex-escaped-probes" \
               2>/dev/null || :)
@@ -312,6 +315,29 @@ case "$*" in
             ;;
           semantic-duplicate-error)
             printf '%s\n' '{"id":1,"error":null,"e\u0072ror":{"code":-32603,"message":"failed"}}'
+            ;;
+          escaped-wrapper-keys)
+            printf '%s\n' '{"id":1,"result":{"d\u0061ta":[{"n\u0061me":"atlassian","serverInfo":null,"t\u006fols":{"atlassianUserInfo":{}},"resources":[],"resourceTemplates":[],"authSt\u0061tus":"oAuth"}]}}'
+            ;;
+          semantic-duplicate-data)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"atlassianUserInfo":{}},"authStatus":"oAuth"}],"d\u0061ta":[]}}'
+            ;;
+          semantic-duplicate-name)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","n\u0061me":"other","tools":{"atlassianUserInfo":{}},"authStatus":"oAuth"}]}}'
+            ;;
+          semantic-duplicate-tools)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"atlassianUserInfo":{}},"t\u006fols":{},"authStatus":"oAuth"}]}}'
+            ;;
+          semantic-duplicate-auth-status)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"atlassianUserInfo":{}},"authStatus":"oAuth","authSt\u0061tus":"notLoggedIn"}]}}'
+            ;;
+          raw-nul-response)
+            printf '%s\000%s\n' \
+              '{"id":1,"result":{"data":[{"name":"atlassian","note":"before' \
+              'after","tools":{"atlassianUserInfo":{}},"authStatus":"oAuth"}]}}'
+            ;;
+          escaped-nul-text)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","note":"before\u0000after","tools":{"atlassianUserInfo":{}},"authStatus":"oAuth"}]}}'
             ;;
           healthy-custom-tools)
             printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","serverInfo":null,"tools":{"searchJiraIssuesUsingJql":{}},"resources":[],"resourceTemplates":[],"authStatus":"oAuth"}]}}'
@@ -593,6 +619,90 @@ do
   fix_wave_not_contains "$output" 'OAuth URL:'
   fix_wave_not_contains "$output" 'atlassianUserInfo'
 done
+
+rm -f "$XDG_CONFIG_HOME/fake-codex-escaped-probes"
+printf '%s\n' escaped-wrapper-keys \
+  >"$XDG_CONFIG_HOME/fake-codex-health"
+if output=$($CLI setup-connectors --client codex --non-interactive 2>&1)
+then
+  fix_wave_contains "$output" 'Result: PASS'
+else
+  fix_wave_fail 'escaped semantic wrapper keys did not pass Codex setup'
+fi
+wrapper_probes=$(sed -n '1p' \
+  "$XDG_CONFIG_HOME/fake-codex-escaped-probes" 2>/dev/null || :)
+[ "$wrapper_probes" = 1 ] ||
+  fix_wave_fail "escaped-wrapper-keys used ${wrapper_probes:-0} probes"
+
+for rejected_wrapper in \
+  semantic-duplicate-data \
+  semantic-duplicate-name \
+  semantic-duplicate-tools \
+  semantic-duplicate-auth-status
+do
+  rm -f "$XDG_CONFIG_HOME/fake-codex-escaped-probes"
+  printf '%s\n' "$rejected_wrapper" \
+    >"$XDG_CONFIG_HOME/fake-codex-health"
+  if output=$($CLI setup-connectors --client codex --non-interactive 2>&1)
+  then
+    fix_wave_fail "$rejected_wrapper passed Codex setup"
+  else
+    fix_wave_contains "$output" 'Result: CONNECTOR_HEALTH_UNAVAILABLE'
+  fi
+  wrapper_probes=$(sed -n '1p' \
+    "$XDG_CONFIG_HOME/fake-codex-escaped-probes" 2>/dev/null || :)
+  [ "$wrapper_probes" = 1 ] ||
+    fix_wave_fail "$rejected_wrapper used ${wrapper_probes:-0} probes"
+  fix_wave_not_contains "$output" 'Capability state: SUPPORTED'
+  fix_wave_not_contains "$output" 'ATLASSIAN_AUTH_REQUIRED'
+  fix_wave_not_contains "$output" 'codex mcp login atlassian'
+  fix_wave_not_contains "$output" 'OAuth URL:'
+  fix_wave_not_contains "$output" 'atlassianUserInfo'
+done
+
+rm -f "$XDG_CONFIG_HOME/fake-codex-escaped-probes"
+printf '%s\n' raw-nul-response \
+  >"$XDG_CONFIG_HOME/fake-codex-health"
+raw_nul_output=$TEST_ROOT/raw-nul-output
+if $CLI setup-connectors --client codex --non-interactive \
+  >"$raw_nul_output" 2>&1
+then
+  fix_wave_fail 'raw-nul-response passed Codex setup'
+fi
+if LC_ALL=C od -An -v -t u1 "$raw_nul_output" |
+  awk '{
+    for (i=1; i<=NF; i++) if ($i == 0) found=1
+  }
+  END { exit !found }'
+then
+  fix_wave_fail 'raw NUL leaked into Codex setup output'
+fi
+output=$(cat "$raw_nul_output")
+fix_wave_contains "$output" 'Result: CONNECTOR_HEALTH_UNAVAILABLE'
+raw_nul_probes=$(sed -n '1p' \
+  "$XDG_CONFIG_HOME/fake-codex-escaped-probes" 2>/dev/null || :)
+[ "$raw_nul_probes" = 1 ] ||
+  fix_wave_fail "raw-nul-response used ${raw_nul_probes:-0} probes"
+fix_wave_not_contains "$output" 'Capability state: SUPPORTED'
+fix_wave_not_contains "$output" 'ATLASSIAN_AUTH_REQUIRED'
+fix_wave_not_contains "$output" 'codex mcp login atlassian'
+fix_wave_not_contains "$output" 'OAuth URL:'
+fix_wave_not_contains "$output" 'atlassianUserInfo'
+
+rm -f "$XDG_CONFIG_HOME/fake-codex-escaped-probes"
+printf '%s\n' escaped-nul-text \
+  >"$XDG_CONFIG_HOME/fake-codex-health"
+if output=$($CLI setup-connectors --client codex --non-interactive 2>&1)
+then
+  fix_wave_contains "$output" 'Result: PASS'
+else
+  fix_wave_fail 'escaped JSON NUL text did not pass Codex setup'
+fi
+escaped_nul_probes=$(sed -n '1p' \
+  "$XDG_CONFIG_HOME/fake-codex-escaped-probes" 2>/dev/null || :)
+[ "$escaped_nul_probes" = 1 ] ||
+  fix_wave_fail "escaped-nul-text used ${escaped_nul_probes:-0} probes"
+
 unset FAKE_CODEX_WAIT_FOR_ESCAPED
 
 for malformed_reauth in \
