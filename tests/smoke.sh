@@ -93,8 +93,11 @@ make_release_fixture() {
   git -C "$source_repo" commit -qm 'test: add schema-2 release'
   git -C "$source_repo" tag -a v1.1.1 -m 'v1.1.1'
   printf 'v1.1.2\n' >"$source_repo/VERSION"
-  sed -i '1s/schema=2/schema=3/' \
-    "$source_repo/runtime/compatibility/atlassian.tsv"
+  compatibility_temp=$(mktemp \
+    "$source_repo/runtime/compatibility/atlassian.tsv.XXXXXX")
+  sed '1s/schema=2/schema=3/' \
+    "$source_repo/runtime/compatibility/atlassian.tsv" >"$compatibility_temp"
+  mv "$compatibility_temp" "$source_repo/runtime/compatibility/atlassian.tsv"
   git -C "$source_repo" add VERSION runtime/compatibility/atlassian.tsv
   git -C "$source_repo" commit -qm 'test: reject unsupported schema release'
   git -C "$source_repo" tag -a v1.1.2 -m 'v1.1.2'
@@ -635,9 +638,11 @@ release_v112=$XDG_DATA_HOME/beroka-ai-governance/releases/v1.1.2
 git -c advice.detachedHead=false clone -q --depth 1 --branch v1.1.2 \
   https://github.com/beroka-vn/beroka-ai-governance.git "$release_v112"
 release_v112_commit=$(git -C "$release_v112" rev-parse HEAD)
-sed -i \
+lock_temp=$(mktemp "$schema2_repo/.beroka-governance.lock.XXXXXX")
+sed \
   "s/^VERSION=.*/VERSION=v1.1.2/;s/^COMMIT=.*/COMMIT=$release_v112_commit/" \
-  "$schema2_repo/.beroka-governance.lock"
+  "$schema2_repo/.beroka-governance.lock" >"$lock_temp"
+mv "$lock_temp" "$schema2_repo/.beroka-governance.lock"
 if schema3_output=$($CLI doctor "$schema2_repo" 2>&1); then
   fail 'doctor accepted an unsupported Atlassian compatibility schema'
 fi
@@ -645,9 +650,11 @@ assert_contains "$schema3_output" 'Result: VERSION_MISMATCH'
 git -C "$schema1_repo" add .
 git -C "$schema1_repo" commit -qm 'test: register schema-1 release'
 release_v111_commit=$(git -C "$XDG_DATA_HOME/beroka-ai-governance/releases/v1.1.1" rev-parse HEAD)
-sed -i \
+lock_temp=$(mktemp "$schema2_repo/.beroka-governance.lock.XXXXXX")
+sed \
   "s/^VERSION=.*/VERSION=v1.1.1/;s/^COMMIT=.*/COMMIT=$release_v111_commit/" \
-  "$schema2_repo/.beroka-governance.lock"
+  "$schema2_repo/.beroka-governance.lock" >"$lock_temp"
+mv "$lock_temp" "$schema2_repo/.beroka-governance.lock"
 git -C "$schema2_repo" add .
 git -C "$schema2_repo" commit -qm 'test: register schema-2 release'
 $CLI unregister "$schema1_repo"

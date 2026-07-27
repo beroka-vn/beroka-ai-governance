@@ -597,6 +597,8 @@ Operation: <requested operation>
 Jira project: <only for jira-write>
 Capability: <only for the requested capability>
 Capability state: SUPPORTED
+Capability evidence: PROVIDER_CONTRACT
+Runtime inventory: COMPLETE | UNAVAILABLE
 Result: PASS
 ```
 

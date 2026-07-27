@@ -2154,6 +2154,7 @@ cursor_tool_names() {
 
 connector_inventory() {
   ci_client=$1
+  ci_mode=${2:-provider}
   CAPABILITY_INVENTORY=
   CAPABILITY_INVENTORY_COMPLETE=0
   CAPABILITY_INVENTORY_FORMAT=
@@ -2175,18 +2176,24 @@ connector_inventory() {
       connector_probe cursor || return 1
       [ "$CONNECTOR_PROBE_TOOLS_OK" -eq 1 ] &&
         [ -n "$CONNECTOR_PROBE_TOOLS" ] || return 1
-      CAPABILITY_INVENTORY=$(printf '%s\n' "$CONNECTOR_PROBE_TOOLS" |
-        cursor_tool_names) || return 1
-      [ -n "$CAPABILITY_INVENTORY" ] || return 1
-      CAPABILITY_INVENTORY_FORMAT=json
+      if [ "$ci_mode" = legacy ]; then
+        CAPABILITY_INVENTORY=$CONNECTOR_PROBE_TOOLS
+        CAPABILITY_INVENTORY_FORMAT=text
+      else
+        CAPABILITY_INVENTORY=$(printf '%s\n' "$CONNECTOR_PROBE_TOOLS" |
+          cursor_tool_names) || return 1
+        [ -n "$CAPABILITY_INVENTORY" ] || return 1
+        CAPABILITY_INVENTORY_FORMAT=json
+      fi
       CAPABILITY_INVENTORY_COMPLETE=1
       ;;
   esac
   [ "$CAPABILITY_INVENTORY_COMPLETE" -eq 1 ] || return 0
   CAPABILITY_TOOLSET=
-  for ci_tool in \
-    createConfluencePage createJiraIssue getConfluencePage getJiraIssue \
-    getJiraIssueTypeMetaWithFields getJiraProjectIssueTypesMetadata
+  ci_tools='createConfluencePage createJiraIssue getConfluencePage getJiraIssue'
+  [ "$ci_mode" = legacy ] ||
+    ci_tools="$ci_tools getJiraIssueTypeMetaWithFields getJiraProjectIssueTypesMetadata"
+  for ci_tool in $ci_tools
   do
     if inventory_has_tool "$ci_tool"; then
       if [ -n "$CAPABILITY_TOOLSET" ]; then
@@ -2349,9 +2356,8 @@ load_provider_capability() {
   lpc_capability=$1
   lpc_file=$RELEASE_DIR/runtime/compatibility/atlassian.tsv
   CAPABILITY_REQUIRED_TOOLS=
-  CAPABILITY_EVIDENCE=
   CAPABILITY_PROVIDER_STATE=UNKNOWN
-  lpc_row=$(awk -F '\t' \
+  lpc_row=$(LC_ALL=C awk -F '\t' \
     -v endpoint="$ATLASSIAN_MCP_URL" \
     -v capability="$lpc_capability" '
       /^[[:space:]]*$/ || /^#/ { next }
@@ -2363,18 +2369,45 @@ load_provider_capability() {
         allowed["getJiraIssueTypeMetaWithFields"]=1
         allowed["getJiraProjectIssueTypesMetadata"]=1
         tool_count=split($2, tools, ",")
-        for (i=1; i<=tool_count; i++)
-          if (!allowed[tools[i]]) invalid=1
+        for (i=1; i<=tool_count; i++) {
+          if (!allowed[tools[i]] ||
+              tool_seen[tools[i]] == NR ||
+              (i > 1 && tools[i-1] >= tools[i])) invalid=1
+          tool_seen[tools[i]]=NR
+        }
+        date_count=split($3, date, "-")
+        year=date[1] + 0
+        month=date[2] + 0
+        day=date[3] + 0
+        month_days[1]=31
+        month_days[2]=28 + (year % 4 == 0 &&
+          (year % 100 != 0 || year % 400 == 0))
+        month_days[3]=31
+        month_days[4]=30
+        month_days[5]=31
+        month_days[6]=30
+        month_days[7]=31
+        month_days[8]=31
+        month_days[9]=30
+        month_days[10]=31
+        month_days[11]=30
+        month_days[12]=31
         if (NF != 6 ||
-            $1 == "" ||
+            $1 != endpoint ||
             $2 !~ /^[A-Za-z][A-Za-z0-9_]*(,[A-Za-z][A-Za-z0-9_]*)*$/ ||
             $3 !~ /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/ ||
+            date_count != 3 ||
+            year < 1 ||
+            month < 1 || month > 12 ||
+            day < 1 || day > month_days[month] ||
             $4 !~ /^(jira-issue-write|confluence-page-parent-write|jira-board-verification|confluence-folder-parent-write)$/ ||
             $5 !~ /^(official-contract|isolated-pilot)$/ ||
             $6 !~ /^(SUPPORTED|UNSUPPORTED)$/) invalid=1
+        pair=$1 SUBSEP $4
+        if (++pair_count[pair] > 1) invalid=1
         if ($1 == endpoint && $4 == capability) {
           matches++
-          row=$2 "\t" $5 "\t" $6
+          row=$2 "\t" $6
         }
       }
       END {
@@ -2386,13 +2419,9 @@ load_provider_capability() {
   IFS="$(printf '\t')"
   set -- $lpc_row
   IFS=$lpc_old_ifs
-  [ "$#" -eq 3 ] || return 1
-  lpc_canonical=$(printf '%s\n' "$1" | tr ',' '\n' |
-    LC_ALL=C sort -u | paste -sd, -)
-  [ "$lpc_canonical" = "$1" ] || return 1
+  [ "$#" -eq 2 ] || return 1
   CAPABILITY_REQUIRED_TOOLS=$1
-  CAPABILITY_EVIDENCE=$2
-  CAPABILITY_PROVIDER_STATE=$3
+  CAPABILITY_PROVIDER_STATE=$2
 }
 
 inventory_has_required_tools() {
@@ -2410,7 +2439,7 @@ resolve_legacy_capability() {
   CAPABILITY_STATE=UNKNOWN
   CAPABILITY_EVIDENCE_SOURCE=NONE
   CAPABILITY_INVENTORY_STATE=UNAVAILABLE
-  connector_inventory "$rcap_client" || return 0
+  connector_inventory "$rcap_client" legacy || return 0
   if [ "$CAPABILITY_INVENTORY_COMPLETE" -eq 1 ]; then
     CAPABILITY_INVENTORY_STATE=COMPLETE
   fi
