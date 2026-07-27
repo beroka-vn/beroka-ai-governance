@@ -59,43 +59,44 @@ WSL là target environments; native Windows PowerShell không thuộc V1.
 
 ### Bootstrap và install
 
-Bootstrap checkout chỉ là tạm thời. Chạy quick start từ repository Backend hoặc
-Frontend cần đăng ký:
+Từ Git root của repository cần đăng ký, chạy release launcher. Launcher lấy
+latest stable release, nhưng chỉ chạy package sau khi xác minh annotated tag và
+embedded commit:
 
 ```bash
-repo=$(git rev-parse --show-toplevel)
-bootstrap_dir=$(mktemp -d "${TMPDIR:-/tmp}/beroka-governance-bootstrap.XXXXXX")
-
-git clone --depth 1 --single-branch --branch v1.0.0 \
-  https://github.com/beroka-vn/beroka-ai-governance.git \
-  "$bootstrap_dir/repo"
-
-sh "$bootstrap_dir/repo/bin/beroka-governance" bootstrap "$repo"
+curl -fsSL \
+  https://github.com/beroka-vn/beroka-ai-governance/releases/latest/download/bootstrap.sh |
+  sh -s -- --client codex
 ```
 
-Lần đăng ký interactive đầu tiên, `bootstrap` resolve latest stable annotated
-SemVer tag từ canonical remote, hiển thị exact version/commit và hỏi xác nhận.
-Nếu detect một client thì command hỏi xác nhận; nếu có nhiều client thì đưa
-numbered options để developer chọn đúng một. Có thể chọn explicit:
+Thay `codex` bằng `claude` hoặc `cursor`; `--client` là bắt buộc và mỗi lần
+chạy chỉ chọn đúng một client. Lặp lại setup một lần cho mỗi client trên mỗi
+execution environment. Các client enabled cùng load một pinned governance
+release; đổi model bên trong cùng một client không cần setup lại.
+
+Automation fail closed và không mở browser:
 
 ```bash
-sh "$bootstrap_dir/repo/bin/beroka-governance" bootstrap \
-  "$repo" --client codex
-```
-
-Automation phải truyền đầy đủ client và exact version:
-
-```bash
-sh "$bootstrap_dir/repo/bin/beroka-governance" bootstrap \
-  "$repo" \
-  --client codex \
-  --version v1.0.0 \
-  --non-interactive
+curl -fsSL \
+  https://github.com/beroka-vn/beroka-ai-governance/releases/latest/download/bootstrap.sh |
+  sh -s -- --client codex --non-interactive
 ```
 
 Repository đã đăng ký luôn giữ lock hiện tại; không silent upgrade. Sau khi
 command PASS, review và commit các managed files qua PR rồi mở **fresh AI session**;
 command không tự commit hoặc push.
+
+AUTH_PENDING means installation and repository registration succeeded but the
+selected client's OAuth is incomplete. Run the printed Resume command; do not
+delete or recreate the lock.
+
+CONNECTOR_HEALTH_UNAVAILABLE means governance could not classify connector
+health before the 15-second deadline. External connector-dependent writes
+remain blocked. Run the printed Resume command after connectivity recovers.
+
+A client started from a VS Code Remote SSH terminal runs on the remote host.
+Repository entrypoints are shared through Git, while the CLI, connector, and
+OAuth setup are local to that remote execution environment.
 
 ### Thiếu context hoặc lựa chọn chưa rõ
 
@@ -175,7 +176,7 @@ vì vậy vẫn dùng được khi routing đang thiếu hoặc pending.
 
 ```bash
 repo=/srv/beroka/backend
-release=v1.0.0
+release=v1.0.1
 
 beroka-governance register "$repo" --version "$release" --client codex
 git -C "$repo" diff -- .beroka-governance.lock AGENTS.md
@@ -445,18 +446,23 @@ tại. Sau khi developer sửa kết nối, agent phải chạy lại preflight.
 
 ## Release gate trước khi publish tag
 
-`v1.0.0` là first public stable release. Trước mọi push, coordinator phải nhận:
+`v1.0.0` là first public stable release đã publish và immutable: never
+recreate, move, replace hoặc delete tag/release đó. Với release candidate mới
+(ví dụ `v1.0.1`, chưa được xem là published), coordinator đặt exact candidate
+version và merge commit trước khi publish. Trước mọi push tag candidate,
+coordinator phải nhận:
 
-- exact local branch và release commit;
+- exact local branch, candidate version và release commit;
 - full automated validation output;
-- xác nhận canonical remote chưa có `v1.0.0`;
+- xác nhận canonical remote chưa có candidate tag;
 - full interactive/non-interactive developer bootstrap workflow; và
 - các manual checks còn `UNVERIFIED`.
 
 Không tạo hoặc push tag trước khi coordinator duyệt report này. Sau khi release
-PR merge, fetch canonical `main`, xác minh exact merge commit, xóa local test
-candidate, rồi tạo annotated `v1.0.0` tại commit đó. Nếu remote đã xuất hiện
-tag cùng tên thì dừng; không force hoặc overwrite.
+PR merge, fetch canonical `main`, xác minh exact merge commit, rồi tạo
+annotated candidate tag tại commit đó. Nếu remote đã có candidate tag thì dừng;
+không force hoặc overwrite. Không dùng candidate flow này để tạo lại, move,
+replace hoặc delete `v1.0.0`.
 
 Automated gate:
 
@@ -489,7 +495,8 @@ commit mới.
 
 ## Deployment checklist sau khi publish
 
-- [ ] Install published `v1.0.0` từ canonical repository.
+- [ ] Cài release đã publish bằng latest release launcher từ canonical
+      repository.
 - [ ] Bootstrap từng Backend/Frontend repository riêng, review và merge
       managed-file diff bằng application-repository PR.
 - [ ] Mở fresh agent session và xác minh pinned version bằng Doctor.

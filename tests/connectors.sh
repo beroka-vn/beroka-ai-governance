@@ -19,6 +19,19 @@ export PATH
 
 cat >"$FAKE_BIN/sleep" <<'EOF'
 #!/bin/sh
+set -eu
+if [ -n "${FAKE_CODEX_READY_AFTER:-}" ]; then
+  count=$(sed -n '1p' "$XDG_CONFIG_HOME/fake-codex-polls" 2>/dev/null || :)
+  count=${count:-0}
+  count=$((count + 1))
+  printf '%s\n' "$count" >"$XDG_CONFIG_HOME/fake-codex-polls"
+  if [ "$FAKE_CODEX_READY_AFTER" != never ] &&
+     [ "$count" -ge "$FAKE_CODEX_READY_AFTER" ]
+  then
+    : >"$XDG_CONFIG_HOME/fake-codex-ready"
+  fi
+  /bin/sleep 0.01
+fi
 exit 0
 EOF
 chmod 755 "$FAKE_BIN/sleep"
@@ -138,15 +151,46 @@ case "$*" in
     printf '%s\n' healthy >"$XDG_CONFIG_HOME/fake-codex-health"
     ;;
   'app-server --stdio')
-    input=$(cat)
-    case "$input" in
+    IFS= read -r request_1 || exit 1
+    IFS= read -r request_2 || exit 1
+    while IFS= read -r request; do
+      case "$request" in
       *'config/value/write'*)
         : >"$XDG_CONFIG_HOME/fake-codex-configured"
         printf '{"id":1,"result":{}}\n'
         ;;
       *'mcpServerStatus/list'*)
+        loops=0
+        while [ -n "${FAKE_CODEX_READY_AFTER:-}" ] &&
+              [ ! -f "$XDG_CONFIG_HOME/fake-codex-ready" ] &&
+              [ "$loops" -lt 100 ]
+        do
+          /bin/sleep 0.01
+          loops=$((loops + 1))
+        done
+        [ -z "${FAKE_CODEX_READY_AFTER:-}" ] ||
+          [ -f "$XDG_CONFIG_HOME/fake-codex-ready" ] ||
+          exit 0
         health=$(sed -n '1p' "$XDG_CONFIG_HOME/fake-codex-health" 2>/dev/null || :)
         case "$health" in
+          unknown-then-healthy)
+            probes=$(sed -n '1p' \
+              "$XDG_CONFIG_HOME/fake-codex-probes" 2>/dev/null || :)
+            probes=${probes:-0}
+            probes=$((probes + 1))
+            printf '%s\n' "$probes" \
+              >"$XDG_CONFIG_HOME/fake-codex-probes"
+            if [ "$probes" -eq 1 ]; then
+              printf '%s\n' '{"id":1,"result":{"unexpected":true}}'
+            else
+              printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","serverInfo":null,"tools":{"atlassianUserInfo":{}},"resources":[],"resourceTemplates":[],"authStatus":"oAuth"}]}}'
+            fi
+            ;;
+          ignore-term)
+            printf '%s\n' "$$" >"$XDG_CONFIG_HOME/fake-codex-pid"
+            trap '' TERM
+            while :; do :; done
+            ;;
           healthy)
             printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","serverInfo":null,"tools":{"atlassianUserInfo":{}},"resources":[],"resourceTemplates":[],"authStatus":"oAuth"}]}}'
             ;;
@@ -167,7 +211,8 @@ case "$*" in
         esac
         ;;
       *) exit 1 ;;
-    esac
+      esac
+    done
     ;;
   *) exit 1 ;;
 esac
@@ -182,14 +227,86 @@ assert_contains "$output" 'Result: ATLASSIAN_AUTH_REQUIRED'
 assert_contains "$(cat "$CALLS")" 'codex app-server --stdio'
 assert_not_contains "$(cat "$CALLS")" 'codex mcp login atlassian'
 
+printf '%s\n' auth-required >"$XDG_CONFIG_HOME/fake-codex-health"
+for ready_after in 1 3 4; do
+  rm -f \
+    "$XDG_CONFIG_HOME/fake-codex-polls" \
+    "$XDG_CONFIG_HOME/fake-codex-ready"
+  export FAKE_CODEX_READY_AFTER=$ready_after
+  if output=$($CLI setup-connectors --client codex --non-interactive 2>&1)
+  then
+    fail "Codex delayed probe $ready_after unexpectedly passed authentication"
+  fi
+  assert_contains "$output" 'Result: ATLASSIAN_AUTH_REQUIRED'
+done
+
+rm -f \
+  "$XDG_CONFIG_HOME/fake-codex-polls" \
+  "$XDG_CONFIG_HOME/fake-codex-ready"
+export FAKE_CODEX_READY_AFTER=never
+if output=$($CLI setup-connectors --client codex --non-interactive 2>&1)
+then
+  fail 'Codex probe without a response passed'
+fi
+assert_contains "$output" 'Result: CONNECTOR_HEALTH_UNAVAILABLE'
+unset FAKE_CODEX_READY_AFTER
+
+rm -f "$XDG_CONFIG_HOME/fake-codex-probes"
+printf '%s\n' unknown-then-healthy \
+  >"$XDG_CONFIG_HOME/fake-codex-health"
+output=$($CLI setup-connectors --client codex --non-interactive)
+assert_contains "$output" 'Result: PASS'
+[ "$(sed -n '1p' "$XDG_CONFIG_HOME/fake-codex-probes")" -ge 2 ] ||
+  fail 'Codex did not re-probe after an unclassifiable response'
+
+printf '%s\n' ignore-term >"$XDG_CONFIG_HOME/fake-codex-health"
+rm -f "$XDG_CONFIG_HOME/fake-codex-pid"
+started=$(/bin/date +%s)
+if output=$($CLI setup-connectors --client codex --non-interactive 2>&1)
+then
+  fail 'Codex probe with an unresponsive app server passed'
+fi
+elapsed=$(( $(/bin/date +%s) - started ))
+[ "$elapsed" -lt 5 ] ||
+  fail "Codex probe teardown exceeded its bounded allowance: ${elapsed}s"
+assert_contains "$output" 'Result: CONNECTOR_HEALTH_UNAVAILABLE'
+stubborn_pid=$(sed -n '1p' "$XDG_CONFIG_HOME/fake-codex-pid")
+if kill -0 "$stubborn_pid" 2>/dev/null; then
+  fail "Codex probe left app-server process $stubborn_pid running"
+fi
+
+printf '%s\n' auth-required >"$XDG_CONFIG_HOME/fake-codex-health"
 rm -f "$XDG_CONFIG_HOME/fake-codex-configured"
 : >"$CALLS"
 if output=$(printf 'y\nn\n' | script -qec "$CLI setup-connectors" /dev/null 2>&1); then
   fail 'interactive setup accepted declined Codex authentication'
 fi
 assert_contains "$output" 'Detected client: codex'
-assert_contains "$output" 'Result: ATLASSIAN_AUTH_REQUIRED'
+assert_contains "$output" 'Result: AUTH_PENDING'
 assert_contains "$(cat "$CALLS")" 'codex app-server --stdio'
+
+printf '%s\n' auth-required >"$XDG_CONFIG_HOME/fake-codex-health"
+if output=$(printf 'n\n' |
+  script -qec "$CLI setup-connectors --client codex" /dev/null 2>&1)
+then
+  fail 'interactive setup accepted pending authentication'
+fi
+assert_contains "$output" 'Connector: AUTH_PENDING'
+assert_contains "$output" 'Result: AUTH_PENDING'
+assert_contains "$output" \
+  'Resume: beroka-governance setup-connectors --client codex'
+
+export FAKE_CODEX_READY_AFTER=never
+rm -f \
+  "$XDG_CONFIG_HOME/fake-codex-polls" \
+  "$XDG_CONFIG_HOME/fake-codex-ready"
+if output=$($CLI setup-connectors --client codex --non-interactive 2>&1)
+then
+  fail 'setup accepted unavailable connector health'
+fi
+assert_contains "$output" 'Connector: HEALTH_UNAVAILABLE'
+assert_contains "$output" 'Result: CONNECTOR_HEALTH_UNAVAILABLE'
+unset FAKE_CODEX_READY_AFTER
 
 cat >"$FAKE_BIN/claude" <<'EOF'
 #!/bin/sh
@@ -369,7 +486,7 @@ if output=$($CLI setup-connectors --client claude --non-interactive 2>&1)
 then
   fix_wave_fail 'similarly named Claude server passed health'
 else
-  fix_wave_contains "$output" 'Result: GOVERNANCE_NOT_READY'
+  fix_wave_contains "$output" 'Result: CONNECTOR_HEALTH_UNAVAILABLE'
 fi
 
 cat >"$FAKE_BIN/cursor-agent" <<'EOF'
@@ -497,7 +614,7 @@ printf '%s\n' ready-tools-failed >"$XDG_CONFIG_HOME/fake-cursor-health"
 if output=$($CLI setup-connectors --client cursor --non-interactive 2>&1); then
   fail 'Cursor setup accepted a failed tool inventory'
 fi
-assert_contains "$output" 'Result: GOVERNANCE_NOT_READY'
+assert_contains "$output" 'Result: CONNECTOR_HEALTH_UNAVAILABLE'
 
 printf '%s\n' auth-required >"$XDG_CONFIG_HOME/fake-cursor-health"
 : >"$CALLS"
@@ -619,8 +736,15 @@ grep -F 'CLIENTS=codex,claude' "$ROOT/PACKAGE-DESIGN.md" >/dev/null ||
 grep -F 'register "$repo" --version "$release" --client codex' \
   "$ROOT/handbook.md" >/dev/null ||
   fail 'handbook register command does not select a client'
-grep -F 'bootstrap "$repo" --client claude' "$ROOT/README.md" >/dev/null ||
+grep -F 'bootstrap "$(git rev-parse --show-toplevel)" --client claude' \
+  "$ROOT/README.md" >/dev/null ||
   fail 'README does not document adding another client'
+grep -F 'releases/latest/download/bootstrap.sh' "$ROOT/README.md" >/dev/null ||
+  fail 'README does not document the release launcher'
+grep -F 'AUTH_PENDING' "$ROOT/handbook.md" >/dev/null ||
+  fail 'handbook does not document pending authentication'
+grep -F 'CONNECTOR_HEALTH_UNAVAILABLE' "$ROOT/handbook.md" >/dev/null ||
+  fail 'handbook does not document unavailable connector health'
 grep -F 'connector inspection requires `jq` for every selected client' \
   "$ROOT/PACKAGE-DESIGN.md" >/dev/null ||
   fix_wave_fail 'package design does not declare jq for connector inspection'

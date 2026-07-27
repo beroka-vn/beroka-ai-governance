@@ -6,44 +6,34 @@ to Confluence.
 
 ## Quick start
 
-`v1.0.0` is the first public stable release. The bootstrap checkout is
-temporary; bootstrap installs the pinned release and user CLI, registers one
-explicit Backend or Frontend repository, configures one selected client, and
-runs Doctor. Review the resulting application-repository diff in its normal
-pull request before merging, then start a fresh agent session so the client
-loads the registered entrypoint.
+`v1.0.0` is the first public stable release and remains immutable. From the
+Git root of the repository to register, install the latest stable release and
+set up one explicit client with:
 
 ```bash
-repo=$(git rev-parse --show-toplevel)
-bootstrap_dir=$(mktemp -d "${TMPDIR:-/tmp}/beroka-governance-bootstrap.XXXXXX")
-
-git clone --depth 1 --single-branch --branch v1.0.0 \
-  https://github.com/beroka-vn/beroka-ai-governance.git \
-  "$bootstrap_dir/repo"
-
-sh "$bootstrap_dir/repo/bin/beroka-governance" bootstrap "$repo"
+curl -fsSL \
+  https://github.com/beroka-vn/beroka-ai-governance/releases/latest/download/bootstrap.sh |
+  sh -s -- --client codex
 ```
 
-`beroka-governance bootstrap` installs and pins the latest stable release,
-registers the repository, configures exactly one selected client, and runs both
-Doctor checks. Interactive mode confirms one detected client or offers a
-numbered choice when several are installed. It shows the exact version and
-commit before a first registration. To bypass client detection, select one
-explicitly:
+Replace `codex` with `claude` or `cursor`. The client flag is mandatory.
+Run setup once for one client on each execution environment, then repeat it
+for every additional client there. All enabled clients load the same pinned
+governance release. Changing a model inside the same client needs no setup.
 
-```bash
-sh "$bootstrap_dir/repo/bin/beroka-governance" bootstrap \
-  "$repo" --client codex
-```
+The launcher verifies its embedded annotated tag and commit before it executes
+package code. Bootstrap installs and pins that release, registers the current
+repository, configures exactly one selected client, and runs Doctor. Review the
+resulting application-repository diff in its normal pull request before
+merging, then start a fresh agent session so the client loads the registered
+entrypoint.
 
 Automation must specify every decision and never opens a browser:
 
 ```bash
-sh "$bootstrap_dir/repo/bin/beroka-governance" bootstrap \
-  "$repo" \
-  --client codex \
-  --version v1.0.0 \
-  --non-interactive
+curl -fsSL \
+  https://github.com/beroka-vn/beroka-ai-governance/releases/latest/download/bootstrap.sh |
+  sh -s -- --client codex --non-interactive
 ```
 
 Review and commit the repository changes, merge them through the normal
@@ -52,10 +42,10 @@ registrations keep their lock; bootstrap never silently upgrades them.
 
 Client setup is additive: each bootstrap adds only its selected client's
 entrypoint and never rewrites entrypoints already enabled for another client.
-For example, add Claude Code later with:
+For example, add Claude Code later in its execution environment with:
 
 ```bash
-beroka-governance bootstrap "$repo" --client claude
+beroka-governance bootstrap "$(git rev-parse --show-toplevel)" --client claude
 ```
 
 The reviewed repository state enables the client, but connector configuration

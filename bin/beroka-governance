@@ -28,6 +28,7 @@ CAPABILITY_INVENTORY= CAPABILITY_INVENTORY_COMPLETE=0
 CAPABILITY_INVENTORY_FORMAT= CAPABILITY_TOOLSET=UNAVAILABLE
 CAPABILITY_STATE= PREFLIGHT_CAPABILITY=
 LOCK_CLIENTS=
+SUPPRESS_PASS_RESULT=0
 
 die() {
   code=$1
@@ -36,6 +37,11 @@ die() {
   printf '%s\n' "Result: $code" >&2
   if [ "$#" -gt 0 ]; then printf '%s\n' "$*" >&2; fi
   exit 1
+}
+
+pass_result() {
+  [ "$SUPPRESS_PASS_RESULT" -eq 1 ] ||
+    printf '%s\n' 'Result: PASS'
 }
 
 usage() {
@@ -757,7 +763,8 @@ cmd_install() {
   activate_release
   activate_cli
   tx_commit
-  printf '%s\n' "Installed: $ci_version" 'Result: PASS'
+  printf '%s\n' "Installed: $ci_version"
+  pass_result
 }
 
 managed_repo_snapshot() {
@@ -857,12 +864,27 @@ cmd_bootstrap() {
   fi
 
   bs_before=$(managed_repo_snapshot "$bs_repo")
+  SUPPRESS_PASS_RESULT=1
   cmd_install "$bs_version"
   [ "$RELEASE_COMMIT" = "$bs_expected_commit" ] ||
     die VERSION_MISMATCH \
       'Installed release commit differs from the selected release'
   cmd_register "$bs_repo" --version "$bs_version" --client "$bs_client"
   bs_after=$(managed_repo_snapshot "$bs_repo")
+
+  if [ "$bs_before" = "$bs_after" ]; then
+    bs_registration=NO_CHANGE
+    bs_entrypoint=ALREADY_CONFIGURED
+    bs_changes=NONE
+  else
+    bs_registration=PASS
+    bs_entrypoint=ADDED
+    bs_changes=REVIEW_REQUIRED
+  fi
+  printf '%s\n' \
+    'Release: PASS' \
+    "Repository registration: $bs_registration" \
+    "Client entrypoint: $bs_entrypoint"
 
   if [ "$bs_interactive" -eq 1 ]; then
     cmd_setup_connectors --client "$bs_client"
@@ -872,8 +894,6 @@ cmd_bootstrap() {
   cmd_doctor "$bs_repo"
   cmd_doctor "$bs_repo" --client "$bs_client"
 
-  bs_changes=REVIEW_REQUIRED
-  [ "$bs_before" != "$bs_after" ] || bs_changes=NONE
   printf '%s\n' \
     "Version: $bs_version" \
     "Selected client: $bs_client" \
@@ -1178,7 +1198,8 @@ cmd_register() {
   if [ "$dry_run" = --dry-run ]; then
     tx_print_actions
     tx_commit
-    printf '%s\n' "Version: $version" 'Result: PASS'
+    printf '%s\n' "Version: $version"
+    pass_result
     return
   fi
 
@@ -1186,7 +1207,8 @@ cmd_register() {
   tx_apply
   apply_registry
   tx_commit
-  printf '%s\n' "Repository: $repository" "Version: $version" 'Result: PASS'
+  printf '%s\n' "Repository: $repository" "Version: $version"
+  pass_result
 }
 
 cmd_repin() {
@@ -1502,10 +1524,136 @@ claude_atlassian_endpoint() {
   '
 }
 
+codex_probe_complete() {
+  cpc_file=$1
+  [ -s "$cpc_file" ] || return 1
+  if codex_reauthentication_required <"$cpc_file" ||
+     codex_http_auth_required <"$cpc_file"
+  then
+    return 0
+  fi
+  cpc_response=$(codex_probe_response "$cpc_file") || return 1
+  cpc_record=$(printf '%s\n' "$cpc_response" |
+    codex_atlassian_record) || return 1
+  cpc_auth=$(printf '%s\n' "$cpc_record" |
+    json_top_level_string authStatus) || return 1
+  case "$cpc_auth" in
+    notLoggedIn) return 0 ;;
+    oAuth)
+      printf '%s\n' "$cpc_record" |
+        json_top_level_tools >/dev/null
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+codex_probe_response() {
+  awk '
+    /"id"[[:space:]]*:[[:space:]]*1/ &&
+    (/"result"[[:space:]]*:/ || /"error"[[:space:]]*:/) {
+      response=$0
+    }
+    END {
+      if (response == "") exit 1
+      print response
+    }
+  ' "$1"
+}
+
+codex_probe_response_count() {
+  awk '
+    /"id"[[:space:]]*:[[:space:]]*1/ &&
+    (/"result"[[:space:]]*:/ || /"error"[[:space:]]*:/) {
+      responses++
+    }
+    END { print responses + 0 }
+  ' "$1"
+}
+
+codex_probe_stop() {
+  cps_pid=$1
+  kill -TERM "$cps_pid" 2>/dev/null || :
+  cps_polls=0
+  while kill -0 "$cps_pid" 2>/dev/null &&
+        [ "$cps_polls" -lt 2 ]
+  do
+    sleep 1
+    cps_polls=$((cps_polls + 1))
+  done
+  if kill -0 "$cps_pid" 2>/dev/null; then
+    kill -KILL "$cps_pid" 2>/dev/null || :
+  fi
+  wait "$cps_pid" 2>/dev/null || :
+}
+
+codex_connector_probe() {
+  ccp_dir=$(mktemp -d \
+    "${TMPDIR:-/tmp}/beroka-codex-probe.XXXXXX") || return 1
+  ccp_input=$ccp_dir/input
+  ccp_output=$ccp_dir/output
+  mkfifo "$ccp_input" || {
+    rm -rf "$ccp_dir"
+    return 1
+  }
+
+  codex app-server --stdio <"$ccp_input" >"$ccp_output" 2>&1 &
+  ccp_pid=$!
+  exec 3<>"$ccp_input" || {
+    codex_probe_stop "$ccp_pid"
+    rm -rf "$ccp_dir"
+    return 1
+  }
+  if ! printf '%s\n' \
+    '{"method":"initialize","id":0,"params":{"clientInfo":{"name":"beroka-governance","title":"Beroka Governance","version":"1"}}}' \
+    '{"method":"initialized","params":{}}' \
+    >&3
+  then
+    exec 3>&-
+    codex_probe_stop "$ccp_pid"
+    rm -rf "$ccp_dir"
+    return 1
+  fi
+
+  ccp_elapsed=0
+  ccp_complete=0
+  ccp_seen_responses=0
+  printf '%s\n' \
+    '{"method":"mcpServerStatus/list","id":1,"params":{"detail":"toolsAndAuthOnly","limit":100}}' \
+    >&3 || ccp_elapsed=13
+  while [ "$ccp_elapsed" -lt 13 ]; do
+    sleep 1
+    ccp_elapsed=$((ccp_elapsed + 1))
+    if codex_probe_complete "$ccp_output"; then
+      ccp_complete=1
+      break
+    fi
+    ccp_responses=$(codex_probe_response_count "$ccp_output")
+    if [ "$ccp_responses" -gt "$ccp_seen_responses" ]; then
+      ccp_seen_responses=$ccp_responses
+      printf '%s\n' \
+        '{"method":"mcpServerStatus/list","id":1,"params":{"detail":"toolsAndAuthOnly","limit":100}}' \
+        >&3 || break
+    fi
+  done
+
+  exec 3>&-
+  codex_probe_stop "$ccp_pid"
+  if [ "$ccp_complete" -eq 1 ] &&
+     ! codex_reauthentication_required <"$ccp_output" &&
+     ! codex_http_auth_required <"$ccp_output"
+  then
+    CONNECTOR_PROBE_OUTPUT=$(codex_probe_response "$ccp_output" || :)
+  else
+    CONNECTOR_PROBE_OUTPUT=$(cat "$ccp_output" 2>/dev/null || :)
+  fi
+  rm -rf "$ccp_dir"
+  [ "$ccp_complete" -eq 1 ]
+}
+
 connector_probe() {
   cp_client=$1
   [ "${CONNECTOR_PROBE_CLIENT:-}" = "$cp_client" ] && return 0
-  CONNECTOR_PROBE_CLIENT=$cp_client
+  CONNECTOR_PROBE_CLIENT=
   CONNECTOR_PROBE_OUTPUT=
   CONNECTOR_PROBE_STATUS=
   CONNECTOR_PROBE_STATE=
@@ -1513,15 +1661,7 @@ connector_probe() {
   CONNECTOR_PROBE_TOOLS_OK=0
   case "$cp_client" in
     codex)
-      CONNECTOR_PROBE_OUTPUT=$(
-        {
-          printf '%s\n' \
-            '{"method":"initialize","id":0,"params":{"clientInfo":{"name":"beroka-governance","title":"Beroka Governance","version":"1"}}}' \
-            '{"method":"initialized","params":{}}' \
-            '{"method":"mcpServerStatus/list","id":1,"params":{"detail":"toolsAndAuthOnly","limit":100}}'
-          sleep 3
-        } | codex app-server --stdio 2>&1
-      ) || return 1
+      codex_connector_probe || return 1
       ;;
     claude)
       CONNECTOR_PROBE_OUTPUT=$(claude mcp list 2>&1) || :
@@ -1567,6 +1707,7 @@ connector_probe() {
       esac
       ;;
   esac
+  CONNECTOR_PROBE_CLIENT=$cp_client
 }
 
 codex_atlassian_record() {
@@ -2244,6 +2385,30 @@ auth_required() {
   die ATLASSIAN_AUTH_REQUIRED
 }
 
+auth_pending() {
+  ap_client=$1
+  printf '%s\n' \
+    "Client: $ap_client" \
+    'Provider: atlassian' \
+    'Authentication: AUTH_REQUIRED' \
+    'Connector: AUTH_PENDING' \
+    "Remediation: $(oauth_command "$ap_client")" \
+    "Resume: beroka-governance setup-connectors --client $ap_client"
+  [ "$ap_client" != claude ] ||
+    printf '%s\n' 'In Claude: /mcp -> atlassian -> Authenticate'
+  die AUTH_PENDING
+}
+
+connector_health_unavailable() {
+  chu_client=$1
+  printf '%s\n' \
+    "Client: $chu_client" \
+    'Provider: atlassian' \
+    'Connector: HEALTH_UNAVAILABLE' \
+    "Resume: beroka-governance setup-connectors --client $chu_client"
+  die CONNECTOR_HEALTH_UNAVAILABLE
+}
+
 github_auth_required() {
   gar_client=$1
   printf '%s\n' \
@@ -2452,10 +2617,13 @@ cmd_preflight() {
             routing_cleanup
             auth_required "$pf_client"
           }
-          connector_health "$pf_client" || {
-            routing_cleanup
-            auth_required "$pf_client"
-          }
+          pf_health=0
+          connector_health "$pf_client" || pf_health=$?
+          case "$pf_health" in
+            0) ;;
+            1) routing_cleanup; auth_required "$pf_client" ;;
+            *) routing_cleanup; connector_health_unavailable "$pf_client" ;;
+          esac
           ;;
         *) routing_cleanup; auth_required "$pf_client" ;;
       esac
@@ -2465,7 +2633,7 @@ cmd_preflight() {
     fi
   elif [ "$pf_health" -ne 0 ]; then
     routing_cleanup
-    die GOVERNANCE_NOT_READY 'Cannot verify Atlassian connector health'
+    connector_health_unavailable "$pf_client"
   fi
 
   if [ -n "$PREFLIGHT_CAPABILITY" ]; then
@@ -2524,11 +2692,15 @@ cmd_setup_connectors() {
   connector_health "$setup_client" || setup_health=$?
   case "$setup_health" in
     0)
-      printf '%s\n' "Client: $setup_client" 'Connector: PASS' 'Authentication: PASS' 'Result: PASS'
+      printf '%s\n' \
+        "Client: $setup_client" \
+        'Connector: PASS' \
+        'Authentication: PASS'
+      pass_result
       return
       ;;
     1) ;;
-    *) die GOVERNANCE_NOT_READY "Cannot verify $setup_client Atlassian connector health" ;;
+    *) connector_health_unavailable "$setup_client" ;;
   esac
   if [ "$setup_interactive" -eq 1 ]; then
     printf '%s\n' \
@@ -2539,18 +2711,25 @@ cmd_setup_connectors() {
     IFS= read -r setup_answer || setup_answer=
     case "$setup_answer" in
       y|Y|yes|YES)
-        run_oauth "$setup_client" || auth_required "$setup_client"
+        run_oauth "$setup_client" || auth_pending "$setup_client"
         setup_health=0
         connector_health "$setup_client" || setup_health=$?
-        [ "$setup_health" -eq 0 ] || {
-          [ "$setup_health" -eq 1 ] && auth_required "$setup_client"
-          die GOVERNANCE_NOT_READY "Cannot verify $setup_client Atlassian connector health"
-        }
-        printf '%s\n' "Client: $setup_client" 'Connector: PASS' 'Authentication: PASS' 'Result: PASS'
+        case "$setup_health" in
+          0) ;;
+          1) auth_pending "$setup_client" ;;
+          *) connector_health_unavailable "$setup_client" ;;
+        esac
+        printf '%s\n' \
+          "Client: $setup_client" \
+          'Connector: PASS' \
+          'Authentication: PASS'
+        pass_result
         return
         ;;
     esac
   fi
+  [ "$setup_interactive" -eq 0 ] ||
+    auth_pending "$setup_client"
   auth_required "$setup_client"
 }
 
@@ -2582,11 +2761,15 @@ cmd_doctor() {
     case "$doctor_health" in
       0) ;;
       1) auth_required "$doctor_client" ;;
-      *) die GOVERNANCE_NOT_READY "Cannot verify $doctor_client Atlassian connector health" ;;
+      *) connector_health_unavailable "$doctor_client" ;;
     esac
     printf '%s\n' "Client: $doctor_client" 'Connector: PASS' 'Authentication: PASS'
   fi
-  printf '%s\n' "Repository: $LOCK_REPOSITORY" "Version: $LOCK_VERSION" "Commit: $LOCK_COMMIT" 'Result: PASS'
+  printf '%s\n' \
+    "Repository: $LOCK_REPOSITORY" \
+    "Version: $LOCK_VERSION" \
+    "Commit: $LOCK_COMMIT"
+  pass_result
 }
 
 cmd_context() {

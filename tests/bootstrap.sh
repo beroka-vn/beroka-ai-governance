@@ -38,6 +38,12 @@ assert_not_contains() {
   esac
 }
 
+assert_one_result() {
+  aor_count=$(printf '%s\n' "$1" | grep -c '^Result:' || :)
+  [ "$aor_count" -eq 1 ] ||
+    fail "expected exactly one Result line, found $aor_count in [$1]"
+}
+
 new_repo() {
   nr_path=$1 nr_name=$2
   mkdir -p "$nr_path"
@@ -79,21 +85,37 @@ case "$*" in
       '{"name":"atlassian","enabled":true,"transport":{"type":"streamable_http","url":"https://mcp.atlassian.com/v1/mcp/authv2"}}'
     ;;
   'app-server --stdio')
-    input=$(cat)
-    case "$input" in
-      *'config/value/write'*)
-        : >"$XDG_CONFIG_HOME/fake-codex-configured"
-        printf '%s\n' '{"id":1,"result":{}}'
-        ;;
-      *'mcpServerStatus/list'*)
-        printf '%s\n' \
-          '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"atlassianUserInfo":{}},"authStatus":"oAuth"}]}}'
-        ;;
-      *) exit 1 ;;
-    esac
+    IFS= read -r request_1 || exit 1
+    IFS= read -r request_2 || exit 1
+    while IFS= read -r request; do
+      case "$request" in
+        *'config/value/write'*)
+          : >"$XDG_CONFIG_HOME/fake-codex-configured"
+          printf '%s\n' '{"id":1,"result":{}}'
+          ;;
+        *'mcpServerStatus/list'*)
+          case "${FAKE_CODEX_HEALTH:-healthy}" in
+            healthy)
+              printf '%s\n' \
+                '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"atlassianUserInfo":{}},"authStatus":"oAuth"}]}}'
+              ;;
+            auth-required)
+              printf '%s\n' \
+                '{"method":"mcpServer/startupStatus/updated","params":{"name":"atlassian","status":"failed","failureReason":"reauthenticationRequired"}}' \
+                '{"id":1,"result":{"data":[{"name":"atlassian","tools":{},"authStatus":"oAuth"}]}}'
+              ;;
+            unavailable)
+              trap '' TERM
+              while :; do :; done
+              ;;
+          esac
+          ;;
+        *) ;;
+      esac
+    done
     ;;
   'mcp login atlassian')
-    fail 'bootstrap unexpectedly started Codex OAuth'
+    [ "${FAKE_CODEX_OAUTH:-}" != fail ] || exit 1
     ;;
   *) exit 1 ;;
 esac
@@ -207,9 +229,13 @@ output=$(printf 'y\ny\n' | script -qec \
 assert_contains "$output" 'Detected client: codex'
 assert_contains "$output" 'Resolved release: v1.2.0'
 assert_contains "$output" "Release commit: $v1_2_commit"
+assert_contains "$output" 'Release: PASS'
+assert_contains "$output" 'Repository registration: PASS'
+assert_contains "$output" 'Client entrypoint: ADDED'
 assert_contains "$output" 'Selected client: codex'
 assert_contains "$output" 'Repository changes: REVIEW_REQUIRED'
 assert_contains "$output" 'Result: PASS'
+assert_one_result "$output"
 assert_not_contains "$output" 'v2.0.0-rc1'
 assert_not_contains "$output" 'v9.0.0'
 grep -F 'VERSION=v1.2.0' "$repo/.beroka-governance.lock" >/dev/null ||
@@ -234,8 +260,11 @@ after=$(snapshot_repo "$repo")
 [ "$before" = "$after" ] ||
   fail 'bootstrap changed an already registered repository'
 assert_contains "$output" 'Version: v1.2.0'
+assert_contains "$output" 'Repository registration: NO_CHANGE'
+assert_contains "$output" 'Client entrypoint: ALREADY_CONFIGURED'
 assert_contains "$output" 'Selected client: codex'
 assert_contains "$output" 'Repository changes: NONE'
+assert_one_result "$output"
 
 git -C "$repo" add .beroka-governance.lock AGENTS.md
 git -C "$repo" commit -qm 'test: commit Codex bootstrap'
@@ -316,9 +345,68 @@ new_repo "$exact_repo" bootstrap-exact
 output=$($CLI bootstrap "$exact_repo" --client codex \
   --version v1.1.0 --non-interactive)
 assert_contains "$output" 'Version: v1.1.0'
+assert_one_result "$output"
 grep -F 'VERSION=v1.1.0' \
   "$exact_repo/.beroka-governance.lock" >/dev/null ||
   fail 'bootstrap did not use the explicit non-interactive version'
+
+pending_repo=$TEST_ROOT/auth-pending
+new_repo "$pending_repo" bootstrap-auth-pending
+export FAKE_CODEX_HEALTH=auth-required
+export FAKE_CODEX_OAUTH=fail
+if output=$(printf 'y\ny\n' | script -qec \
+  "$CLI bootstrap $pending_repo --client codex --version v1.1.0" \
+  /dev/null 2>&1)
+then
+  fail 'bootstrap accepted incomplete OAuth'
+fi
+assert_contains "$output" 'Result: AUTH_PENDING'
+assert_contains "$output" \
+  'Resume: beroka-governance setup-connectors --client codex'
+assert_one_result "$output"
+[ -f "$pending_repo/.beroka-governance.lock" ] &&
+  [ -f "$pending_repo/AGENTS.md" ] ||
+  fail 'AUTH_PENDING rolled back repository registration'
+pending_before=$(snapshot_repo "$pending_repo")
+if output=$(printf 'y\n' | script -qec \
+  "$CLI bootstrap $pending_repo --client codex" /dev/null 2>&1)
+then
+  fail 'bootstrap rerun accepted incomplete OAuth'
+fi
+pending_after=$(snapshot_repo "$pending_repo")
+[ "$pending_before" = "$pending_after" ] ||
+  fail 'AUTH_PENDING bootstrap rerun changed managed files'
+assert_contains "$output" 'Result: AUTH_PENDING'
+assert_one_result "$output"
+
+health_repo=$TEST_ROOT/health-unavailable
+new_repo "$health_repo" bootstrap-health-unavailable
+unset FAKE_CODEX_OAUTH
+export FAKE_CODEX_HEALTH=unavailable
+if output=$($CLI bootstrap "$health_repo" --client codex \
+  --version v1.1.0 --non-interactive 2>&1)
+then
+  fail 'bootstrap accepted unavailable connector health'
+fi
+assert_contains "$output" 'Result: CONNECTOR_HEALTH_UNAVAILABLE'
+assert_contains "$output" \
+  'Resume: beroka-governance setup-connectors --client codex'
+assert_one_result "$output"
+[ -f "$health_repo/.beroka-governance.lock" ] &&
+  [ -f "$health_repo/AGENTS.md" ] ||
+  fail 'CONNECTOR_HEALTH_UNAVAILABLE rolled back repository registration'
+health_before=$(snapshot_repo "$health_repo")
+if output=$($CLI bootstrap "$health_repo" --client codex \
+  --non-interactive 2>&1)
+then
+  fail 'bootstrap rerun accepted unavailable connector health'
+fi
+health_after=$(snapshot_repo "$health_repo")
+[ "$health_before" = "$health_after" ] ||
+  fail 'health-unavailable bootstrap rerun changed managed files'
+assert_contains "$output" 'Result: CONNECTOR_HEALTH_UNAVAILABLE'
+assert_one_result "$output"
+unset FAKE_CODEX_HEALTH
 
 grep -F 'beroka-governance bootstrap' "$ROOT/README.md" >/dev/null ||
   fail 'README does not document bootstrap'
@@ -326,5 +414,11 @@ grep -F 'latest stable annotated' "$ROOT/PACKAGE-DESIGN.md" >/dev/null ||
   fail 'package design does not define latest'
 grep -F 'fresh AI session' "$ROOT/handbook.md" >/dev/null ||
   fail 'handbook does not document the bootstrap handoff'
+grep -F 'releases/latest/download/bootstrap.sh' "$ROOT/README.md" >/dev/null ||
+  fail 'README does not document the release launcher'
+grep -F 'AUTH_PENDING' "$ROOT/handbook.md" >/dev/null ||
+  fail 'handbook does not document pending authentication'
+grep -F 'CONNECTOR_HEALTH_UNAVAILABLE' "$ROOT/handbook.md" >/dev/null ||
+  fail 'handbook does not document unavailable connector health'
 
 printf '%s\n' 'Bootstrap onboarding tests: PASS'
