@@ -410,6 +410,26 @@ safe read-only probes while evidence is incomplete. If no classifiable record
 arrives by the deadline, it returns `CONNECTOR_HEALTH_UNAVAILABLE`; unknown
 health is never treated as authentication required or as `PASS`.
 
+### Capability evidence and write safety
+
+schema 2 uses provider-owned evidence as the stable capability baseline;
+schema-1 compatibility remains for existing pinned releases. cross-client adapters
+normalize only the runtime inventory supplied by Codex, Claude Code,
+or Cursor. Preflight exposes only classified capability evidence and inventory
+state, never raw tools, connector responses, client versions, OAuth state, or
+credentials.
+
+Before a Jira create, resolve exact project metadata and search for the
+intended record. Create once and read back the returned key to validate project,
+issue type, summary, and required linkage. An indeterminate outcome is
+`CREATION_STATUS_UNKNOWN`; never retry automatically or create another record.
+Confluence create uses exact trusted space/root routing and reads back content
+and parent. Folder routing remains blocked without isolated pilot evidence.
+
+Workflow rules are instruction-driven and are not hard CLI enforcement.
+Provider permissions, platform controls, and human approval define the
+administration boundary.
+
 `--non-interactive` requires explicit client selection and never opens a
 browser. Missing, expired, or invalid authentication returns
 `ATLASSIAN_AUTH_REQUIRED` and the exact remediation command:

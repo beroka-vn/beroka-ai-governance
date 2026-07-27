@@ -910,6 +910,8 @@ assert_contains "$output" 'Capability state: SUPPORTED'
 assert_contains "$output" 'Capability evidence: PROVIDER_CONTRACT'
 assert_contains "$output" 'Runtime inventory: COMPLETE'
 assert_contains "$output" 'Result: PASS'
+assert_not_contains "$output" 'createJiraIssue'
+assert_not_contains "$output" 'getJiraIssueTypeMetaWithFields'
 
 if output=$($CLI preflight "$consumer" \
   --client codex --operation confluence-write --non-interactive 2>&1)
@@ -947,6 +949,17 @@ output=$($CLI preflight "$consumer" \
 assert_contains "$output" 'Capability state: SUPPORTED'
 assert_contains "$output" 'Capability evidence: PROVIDER_CONTRACT'
 assert_contains "$output" 'Runtime inventory: UNAVAILABLE'
+assert_not_contains "$output" 'createJiraIssue'
+assert_not_contains "$output" 'getJiraIssueTypeMetaWithFields'
+
+printf '%s\n' healthy >"$XDG_CONFIG_HOME/fake-cursor-health"
+output=$($CLI preflight "$consumer" \
+  --client cursor --operation jira-write --non-interactive)
+assert_contains "$output" 'Capability state: SUPPORTED'
+assert_contains "$output" 'Capability evidence: PROVIDER_CONTRACT'
+assert_contains "$output" 'Runtime inventory: COMPLETE'
+assert_not_contains "$output" 'createJiraIssue'
+assert_not_contains "$output" 'getJiraIssueTypeMetaWithFields'
 
 printf '%s\n' healthy-missing-jira-metadata >"$XDG_CONFIG_HOME/fake-codex-health"
 if output=$($CLI preflight "$consumer" \

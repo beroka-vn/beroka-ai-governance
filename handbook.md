@@ -604,6 +604,27 @@ Output `PASS` trên áp dụng cho operation có exact routed target và reviewe
 capability evidence; `cross-repo-write` hiện không có PASS hoặc “next
 preflight”.
 
+### Capability evidence và create/read-back
+
+Preflight chỉ in classified `Capability evidence` và `Runtime inventory`, không
+in tool names, raw connector response, client version, OAuth state hay
+credential. provider-owned evidence trong schema 2 là baseline cho Jira write
+và Confluence Page write; schema-1 compatibility vẫn được hỗ trợ cho release
+cũ. cross-client adapters chỉ chuyển inventory của Codex, Claude Code và Cursor
+về cùng capability decision; chúng không thay đổi provider contract.
+
+Trước Jira creation, resolve exact project create metadata và search intended
+existing record. Create once, rồi read back returned key để validate project,
+issue type, summary và required linkage. Nếu status không xác định, trả
+`CREATION_STATUS_UNKNOWN`; never retry automatically hoặc tạo record thứ hai.
+Confluence creation dùng exact trusted space/root routing, rồi read back created
+content và parent. Folder routing vẫn blocked nếu không có isolated pilot
+evidence.
+
+Workflow rules are instruction-driven, không phải hard CLI enforcement. CLI chỉ
+hard-enforce technical stop conditions; provider permissions, platform policy và
+human approval giữ administration boundary.
+
 Khi thất bại, agent dừng phần phụ thuộc và báo đúng nguyên nhân:
 
 ```text
