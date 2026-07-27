@@ -168,18 +168,29 @@ repository. If authentication is missing, run
 command is:
 
 ```bash
-gh release download \
-  --repo beroka-vn/beroka-ai-governance \
-  --pattern bootstrap.sh \
-  --output - |
-  sh -s -- --client codex --non-interactive
+(
+  set -eu
+  bootstrap_file=$(mktemp "${TMPDIR:-/tmp}/beroka-bootstrap.XXXXXX")
+  trap 'rm -f "$bootstrap_file"' EXIT HUP INT TERM
+  gh auth setup-git --hostname github.com
+  gh release download \
+    --repo beroka-vn/beroka-ai-governance \
+    --pattern bootstrap.sh \
+    --output "$bootstrap_file"
+  sh "$bootstrap_file" --client codex --non-interactive
+)
 ```
+
+`gh auth setup-git --hostname github.com` configures Git to reuse
+client-owned GitHub OAuth for the launcher's private HTTPS clone.
+No token is requested, printed, copied, logged, or stored.
 
 The launcher accepts exactly one explicit client, clones its embedded annotated
 tag into a temporary directory, verifies that the tag and checked-out HEAD both
 match its embedded commit, then invokes that verified release. A mismatch
 returns `RELEASE_VERIFICATION_FAILED` before repository or client changes. The
-latest URL selects the stable release asset; it never executes `main`.
+authenticated GitHub Release download selects the published stable asset; it
+never executes `main`.
 
 Repository entrypoints and the lock are shared through Git. The governance CLI,
 connector configuration, and OAuth are local to one client in one execution
@@ -193,7 +204,7 @@ owned by the client or OS keyring.
 beroka-governance install v1.0.0
 ```
 
-The release launcher asset is piped into a shell; it clones the embedded
+The downloaded release launcher clones the embedded
 annotated tag and invokes the package CLI only after tag type, peeled commit,
 and checked-out HEAD each equal the embedded commit. Direct `install` afterward
 uses the verified shallow checkout.
@@ -400,11 +411,12 @@ targets do.
   captures its one-time URL, device code, or credentials.
 - Private-repository access uses each developer's existing least-privilege Git
   or GitHub authentication.
-- The release launcher asset itself is invoked through `curl | sh`. Before it
-  runs the package CLI, it clones and verifies its embedded annotated tag,
-  peeled commit, and exact checked-out HEAD; it does not claim checksum or
-  signature verification that is not implemented. The CLI never executes a
-  lock file or fetches an unpinned branch for runtime use.
+- The release launcher asset is downloaded to a temporary file and runs only
+  after the authenticated download succeeds. Before it runs the package CLI, it
+  clones and verifies its embedded annotated tag, peeled commit, and exact
+  checked-out HEAD; it does not claim checksum or signature verification that
+  is not implemented. The CLI never executes a lock file or fetches an unpinned
+  branch for runtime use.
 - Only reviewed tags are installable by default.
 - Central repository `Read` users may clone releases but cannot publish or move
   tags.
