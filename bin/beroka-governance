@@ -2029,9 +2029,12 @@ json_top_level_object() {
 
 json_top_level_keys() {
   awk '
-    function skip_space() {
-      while (position <= object_length &&
-             substr(object, position, 1) ~ /[[:space:]]/) position++
+    function skip_space(    c) {
+      while (position <= object_length) {
+        c=substr(object, position, 1)
+        if (c != " " && c != "\t" && c != "\r" && c != "\n") break
+        position++
+      }
     }
     function parse_string(allow_escape,    c, escape, i) {
       parsed_string=""
