@@ -148,8 +148,10 @@ For one requested semantic capability:
    `UNSUPPORTED`.
 6. If inventory is `COMPLETE` and every required tool is present, return
    `SUPPORTED`.
-7. If inventory is `UNAVAILABLE`, connector health is `PASS`, and the provider
-   record is `SUPPORTED`, return `SUPPORTED`.
+7. If the selected client is Claude Code, inventory is `UNAVAILABLE`,
+   connector health is `PASS`, and the reviewed provider record is
+   `SUPPORTED`, return `SUPPORTED`. For Codex or Cursor, `UNAVAILABLE`
+   inventory remains `UNKNOWN`; neither client uses provider fallback.
 
 The client executable version is diagnostic only and is not a capability key.
 A future confirmed client regression should be handled by its health adapter or
