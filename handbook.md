@@ -315,6 +315,33 @@ runtime English từ cùng exact release. Client không có trong `CLIENTS` khô
 Beroka-managed entrypoint; managed content chưa được list là `ENTRYPOINT_DRIFT`.
 Repository chưa register không được package áp dụng.
 
+### Rehydrate context và boundary đa client
+
+Sau context compaction, session resume hoặc new chat, agent phải chạy lại
+`beroka-governance context "$PWD"` trước governed action tiếp theo; không dựa
+vào governance detail chỉ còn trong conversation summary. Source work đang làm
+không cần bỏ, nhưng phải rehydrate governance trước planning, implementation
+hoặc external action tiếp theo. Mỗi external write cần operation-specific
+preflight mới ngay trước action; không reuse kết quả từ trước compaction.
+
+Codex personal instructions thuộc `~/.codex/AGENTS.md`; shared instructions
+thuộc repository `AGENTS.md`. Claude personal instructions thuộc
+`~/.claude/CLAUDE.md` hoặc ignored `CLAUDE.local.md`; shared instructions thuộc
+repository `CLAUDE.md`. Cursor personal instructions thuộc User Rules;
+governance chỉ sở hữu `.cursor/rules/beroka-governance.mdc` và không sửa Cursor
+rules khác.
+
+Enable client mới là one-time reviewed repository change: thêm client vào
+`CLIENTS` và tạo managed entrypoint của client đó. Sau merge, mỗi execution
+environment chỉ configure connector/OAuth của client đó khi health yêu cầu.
+CLI hard-enforce technical stop conditions cho registration,
+release/lock/entrypoint integrity, routing, connector/authentication và
+operation preflight. Workflow rules như ownership, issue scope, branch use và
+validation vẫn instruction-driven trừ khi CI, hooks, branch protection hoặc
+platform policy khác enforce chúng. Personal hoặc repository-local instructions
+có thể narrow governance nhưng không authorize bypass central technical stop
+condition.
+
 ## Quyền tối thiểu
 
 | Provider | Read bắt buộc | Write chỉ khi request cần | Không yêu cầu mặc định |

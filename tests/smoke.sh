@@ -58,7 +58,8 @@ make_release_fixture() {
   rm -f "$source_repo/runtime/routing-schema"
   rm -rf "$source_repo/runtime/rules" "$source_repo/runtime/profiles" \
     "$source_repo/runtime/integrations" "$source_repo/runtime/compatibility"
-  printf 'PINNED ENTRYPOINT v1.0.0\n' >"$source_repo/runtime/entrypoint.md"
+  cp "$ROOT/runtime/entrypoint.md" "$source_repo/runtime/entrypoint.md"
+  printf 'PINNED ENTRYPOINT v1.0.0\n' >>"$source_repo/runtime/entrypoint.md"
   printf 'GOVERNANCE v1.0.0\n' >"$source_repo/governance.md"
   printf 'HANDBOOK v1.0.0\n' >"$source_repo/handbook.md"
   printf 'WORKFLOW v1.0.0\n' >"$source_repo/workflow.md"
@@ -140,6 +141,12 @@ assert_contains "$doctor_output" 'Version: v1.0.0'
 
 context_output=$($CLI context "$consumer")
 assert_contains "$context_output" 'PINNED ENTRYPOINT v1.0.0'
+rehydration_rule='After context compaction, a session resume, or a new chat, rerun'
+assert_contains "$(cat "$consumer/AGENTS.md")" "$rehydration_rule"
+assert_contains "$(cat "$consumer/CLAUDE.md")" "$rehydration_rule"
+assert_contains "$(cat "$consumer/.cursor/rules/beroka-governance.mdc")" \
+  "$rehydration_rule"
+assert_contains "$context_output" "$rehydration_rule"
 case "$context_output" in
   *'Routing:'*) fail 'legacy Context resolved routing' ;;
 esac

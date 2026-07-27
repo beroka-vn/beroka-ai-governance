@@ -136,6 +136,31 @@ governance but may not use it to broaden agent authority or bypass a stop
 condition. The clients do not need to import or directly read files outside the
 workspace; validated package content is emitted through command output.
 
+After context compaction, a session resume, or a new chat, clients rerun
+`beroka-governance context "$PWD"` before the next governed action and never
+rely on governance details preserved only in a conversation summary. In-progress
+source work need not be discarded, but governance is rehydrated before the next
+planning, implementation, or external action. Every external write requires a
+fresh operation-specific preflight immediately before it; a preflight from
+before compaction is never reused.
+
+Codex personal instructions are `~/.codex/AGENTS.md` and shared instructions
+are repository `AGENTS.md`. Claude personal instructions are
+`~/.claude/CLAUDE.md` or ignored `CLAUDE.local.md`, while shared instructions
+are repository `CLAUDE.md`. Cursor personal instructions are User Rules;
+governance owns only `.cursor/rules/beroka-governance.mdc` and never modifies
+other Cursor rules. Enabling a client is a one-time reviewed repository change
+that adds it to `CLIENTS` and creates its managed entrypoint. After merge, each
+execution environment configures only that client's connector/OAuth when health
+requires it.
+
+The CLI hard-enforces technical stop conditions for registration,
+release/lock/entrypoint integrity, routing, connector/authentication, and
+operation preflight. Ownership, issue scope, branch use, and validation remain
+instruction-driven unless CI, hooks, branch protection, or another platform
+policy enforces them. Personal and repository-local instructions may narrow
+governance but cannot authorize bypassing a central technical stop condition.
+
 ## CLI lifecycle
 
 ### Bootstrap
