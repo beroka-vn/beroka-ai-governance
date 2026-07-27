@@ -194,6 +194,12 @@ case "$*" in
           escaped-nul-text)
             printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","note":"before\u0000after","tools":{"createJiraIssue":{},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]}}'
             ;;
+          nested-extension-before-tools)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","extension":{"nested":[{"text":"close } open { square ] [ escaped \" quote and \\ backslash"},["}",{"deeper":"{ [ ] }"}]]},"tools":{"createJiraIssue":{},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]}}'
+            ;;
+          malformed-nested-extension-before-tools)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","extension":{"nested":[{"text":"invalid\qescape"}]},"tools":{"createJiraIssue":{}},"authStatus":"oAuth"}]}}'
+            ;;
           healthy-empty-tools)
             printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{},"authStatus":"oAuth"}]}}'
             ;;
@@ -921,6 +927,21 @@ else
   fix_wave_fail 'escaped JSON NUL text did not select Jira inventory'
 fi
 
+printf '%s\n' nested-extension-before-tools \
+  >"$XDG_CONFIG_HOME/fake-codex-health"
+if output=$($CLI preflight "$consumer" \
+  --client codex --operation jira-write --non-interactive 2>&1)
+then
+  fix_wave_contains "$output" 'Capability state: SUPPORTED'
+  fix_wave_contains "$output" 'Result: PASS'
+else
+  fix_wave_fail 'nested extension corrupted Jira inventory extraction'
+fi
+fix_wave_not_contains "$output" 'ATLASSIAN_AUTH_REQUIRED'
+fix_wave_not_contains "$output" 'codex mcp login atlassian'
+fix_wave_not_contains "$output" 'OAuth URL:'
+fix_wave_not_contains "$output" 'createJiraIssue'
+
 printf '%s\n' healthy-empty-tools >"$XDG_CONFIG_HOME/fake-codex-health"
 output=$($CLI doctor "$consumer" --client codex)
 assert_contains "$output" 'Connector: PASS'
@@ -1234,6 +1255,7 @@ for malformed_response in \
   healthy-malformed-envelope-missing-comma \
   healthy-malformed-record-illegal-escape \
   healthy-malformed-record-missing-comma \
+  malformed-nested-extension-before-tools \
   healthy-malformed-envelope-trailing-object \
   healthy-malformed-envelope-trailing-member \
   healthy-malformed-envelope-trailing-member-spaced \

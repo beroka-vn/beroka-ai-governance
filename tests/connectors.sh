@@ -220,7 +220,8 @@ case "$*" in
           semantic-duplicate-result|semantic-duplicate-error|\
           escaped-wrapper-keys|semantic-duplicate-data|\
           semantic-duplicate-name|semantic-duplicate-tools|\
-          semantic-duplicate-auth-status|raw-nul-response|escaped-nul-text)
+          semantic-duplicate-auth-status|raw-nul-response|escaped-nul-text|\
+          nested-extension-before-tools)
             escaped_probes=$(sed -n '1p' \
               "$XDG_CONFIG_HOME/fake-codex-escaped-probes" \
               2>/dev/null || :)
@@ -338,6 +339,12 @@ case "$*" in
             ;;
           escaped-nul-text)
             printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","note":"before\u0000after","tools":{"atlassianUserInfo":{}},"authStatus":"oAuth"}]}}'
+            ;;
+          nested-extension-before-tools)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","extension":{"nested":[{"text":"close } open { square ] [ escaped \" quote and \\ backslash"},["}",{"deeper":"{ [ ] }"}]]},"tools":{"atlassianUserInfo":{}},"authStatus":"oAuth"}]}}'
+            ;;
+          malformed-nested-extension-before-tools)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","extension":{"nested":[{"text":"invalid\qescape"}]},"tools":{"atlassianUserInfo":{}},"authStatus":"oAuth"}]}}'
             ;;
           healthy-custom-tools)
             printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","serverInfo":null,"tools":{"searchJiraIssuesUsingJql":{}},"resources":[],"resourceTemplates":[],"authStatus":"oAuth"}]}}'
@@ -703,6 +710,20 @@ escaped_nul_probes=$(sed -n '1p' \
 [ "$escaped_nul_probes" = 1 ] ||
   fix_wave_fail "escaped-nul-text used ${escaped_nul_probes:-0} probes"
 
+printf '%s\n' nested-extension-before-tools \
+  >"$XDG_CONFIG_HOME/fake-codex-health"
+if output=$($CLI setup-connectors --client codex --non-interactive 2>&1)
+then
+  fix_wave_contains "$output" 'Authentication: PASS'
+  fix_wave_contains "$output" 'Result: PASS'
+else
+  fix_wave_fail 'nested extension corrupted Codex auth extraction'
+fi
+fix_wave_not_contains "$output" 'ATLASSIAN_AUTH_REQUIRED'
+fix_wave_not_contains "$output" 'codex mcp login atlassian'
+fix_wave_not_contains "$output" 'OAuth URL:'
+fix_wave_not_contains "$output" 'atlassianUserInfo'
+
 unset FAKE_CODEX_WAIT_FOR_ESCAPED
 
 for malformed_reauth in \
@@ -951,6 +972,7 @@ for malformed_response in \
   healthy-malformed-envelope-missing-comma \
   healthy-malformed-record-illegal-escape \
   healthy-malformed-record-missing-comma \
+  malformed-nested-extension-before-tools \
   healthy-malformed-envelope-trailing-object \
   healthy-malformed-envelope-trailing-member \
   healthy-malformed-envelope-trailing-member-spaced \
