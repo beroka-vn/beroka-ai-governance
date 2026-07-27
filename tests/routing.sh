@@ -564,6 +564,27 @@ output=$($CLI preflight "$consumer" \
   --client codex --operation jira-write --non-interactive)
 assert_contains "$output" 'Capability state: SUPPORTED'
 
+LF_CODEX_RESPONSE=$(printf '%s\n%s\n' \
+  '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{"metadata":' \
+  '{"enabled":true}},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]}}')
+LF_RELEASE_DIR=$release_dir
+export LF_CODEX_RESPONSE LF_RELEASE_DIR
+lf_capability=$(
+  {
+    sed '$d' "$CLI"
+    printf '%s\n' \
+      'connector_probe() {' \
+      '  CONNECTOR_PROBE_OUTPUT=$LF_CODEX_RESPONSE' \
+      '}' \
+      'RELEASE_DIR=$LF_RELEASE_DIR' \
+      'resolve_provider_capability codex jira-issue-write' \
+      'printf "%s|%s\n" "$CAPABILITY_STATE" "$CAPABILITY_INVENTORY_STATE"'
+  } | sh
+)
+unset LF_CODEX_RESPONSE LF_RELEASE_DIR
+[ "$lf_capability" = 'SUPPORTED|COMPLETE' ] ||
+  fail "valid JSON LF whitespace resolved as $lf_capability"
+
 for invalid_tool_map in \
   healthy-malformed-tool-value \
   healthy-malformed-nested-tool-object \
