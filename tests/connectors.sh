@@ -40,6 +40,17 @@ if [ "${FAKE_CODEX_WAIT_FOR_DECOY:-0}" = 1 ]; then
   /bin/sleep 0.01
   exit 0
 fi
+if [ "${FAKE_CODEX_WAIT_FOR_ESCAPED:-0}" = 1 ]; then
+  wait_loops=0
+  while [ ! -f "$XDG_CONFIG_HOME/fake-codex-escaped-probes" ] &&
+        [ "$wait_loops" -lt 100 ]
+  do
+    /bin/sleep 0.01
+    wait_loops=$((wait_loops + 1))
+  done
+  /bin/sleep 0.01
+  exit 0
+fi
 if [ "${FAKE_CODEX_WAIT_FOR_ERROR:-0}" = 1 ]; then
   wait_loops=0
   while [ ! -f "$XDG_CONFIG_HOME/fake-codex-error-probes" ] &&
@@ -204,6 +215,19 @@ case "$*" in
           exit 0
         health=$(sed -n '1p' "$XDG_CONFIG_HOME/fake-codex-health" 2>/dev/null || :)
         case "$health" in
+          escaped-id-one-result|escaped-result-only|escaped-error-with-result|\
+          escaped-id-conflict-with-result|escaped-result-with-error|\
+          semantic-duplicate-result|semantic-duplicate-error)
+            escaped_probes=$(sed -n '1p' \
+              "$XDG_CONFIG_HOME/fake-codex-escaped-probes" \
+              2>/dev/null || :)
+            escaped_probes=${escaped_probes:-0}
+            escaped_probes=$((escaped_probes + 1))
+            printf '%s\n' "$escaped_probes" \
+              >"$XDG_CONFIG_HOME/fake-codex-escaped-probes"
+            ;;
+        esac
+        case "$health" in
           unknown-then-healthy)
             probes=$(sed -n '1p' \
               "$XDG_CONFIG_HOME/fake-codex-probes" 2>/dev/null || :)
@@ -267,6 +291,27 @@ case "$*" in
             ;;
           duplicate-rpc-error)
             printf '%s\n' '{"id":1,"error":null,"error":{"code":-32603,"message":"failed"}}'
+            ;;
+          escaped-id-one-result)
+            printf '%s\n' '{"\u0069\u0064":1,"result":{"data":[{"name":"atlassian","serverInfo":null,"tools":{"atlassianUserInfo":{}},"resources":[],"resourceTemplates":[],"authStatus":"oAuth"}]}}'
+            ;;
+          escaped-result-only)
+            printf '%s\n' '{"id":1,"\u0072esult":{"data":[{"name":"atlassian","serverInfo":null,"tools":{"atlassianUserInfo":{}},"resources":[],"resourceTemplates":[],"authStatus":"oAuth"}]}}'
+            ;;
+          escaped-error-with-result)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","serverInfo":null,"tools":{"atlassianUserInfo":{}},"resources":[],"resourceTemplates":[],"authStatus":"oAuth"}]},"e\u0072ror":null}'
+            ;;
+          escaped-id-conflict-with-result)
+            printf '%s\n' '{"id":1,"i\u0064":2,"result":{"data":[{"name":"atlassian","serverInfo":null,"tools":{"atlassianUserInfo":{}},"resources":[],"resourceTemplates":[],"authStatus":"oAuth"}]}}'
+            ;;
+          escaped-result-with-error)
+            printf '%s\n' '{"id":1,"\u0072esult":{"data":[{"name":"atlassian","serverInfo":null,"tools":{"atlassianUserInfo":{}},"resources":[],"resourceTemplates":[],"authStatus":"oAuth"}]},"error":null}'
+            ;;
+          semantic-duplicate-result)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","serverInfo":null,"tools":{"atlassianUserInfo":{}},"resources":[],"resourceTemplates":[],"authStatus":"oAuth"}]},"r\u0065sult":{}}'
+            ;;
+          semantic-duplicate-error)
+            printf '%s\n' '{"id":1,"error":null,"e\u0072ror":{"code":-32603,"message":"failed"}}'
             ;;
           healthy-custom-tools)
             printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","serverInfo":null,"tools":{"searchJiraIssuesUsingJql":{}},"resources":[],"resourceTemplates":[],"authStatus":"oAuth"}]}}'
@@ -491,6 +536,64 @@ do
   fix_wave_not_contains "$output" 'codex mcp login atlassian'
   fix_wave_not_contains "$output" 'OAuth URL:'
 done
+
+export FAKE_CODEX_WAIT_FOR_ESCAPED=1
+rm -f "$XDG_CONFIG_HOME/fake-codex-escaped-probes"
+printf '%s\n' escaped-id-one-result \
+  >"$XDG_CONFIG_HOME/fake-codex-health"
+if output=$($CLI setup-connectors --client codex --non-interactive 2>&1)
+then
+  fix_wave_contains "$output" 'Result: PASS'
+else
+  fix_wave_fail 'escaped semantic id=1 did not select the Codex response'
+fi
+escaped_probes=$(sed -n '1p' \
+  "$XDG_CONFIG_HOME/fake-codex-escaped-probes" 2>/dev/null || :)
+[ "$escaped_probes" = 1 ] ||
+  fix_wave_fail "escaped-id-one-result used ${escaped_probes:-0} probes"
+
+rm -f "$XDG_CONFIG_HOME/fake-codex-escaped-probes"
+printf '%s\n' escaped-result-only \
+  >"$XDG_CONFIG_HOME/fake-codex-health"
+if output=$($CLI setup-connectors --client codex --non-interactive 2>&1)
+then
+  fix_wave_contains "$output" 'Result: PASS'
+else
+  fix_wave_fail 'escaped semantic result did not select the Codex response'
+fi
+escaped_probes=$(sed -n '1p' \
+  "$XDG_CONFIG_HOME/fake-codex-escaped-probes" 2>/dev/null || :)
+[ "$escaped_probes" = 1 ] ||
+  fix_wave_fail "escaped-result-only used ${escaped_probes:-0} probes"
+
+for rejected_escaped_rpc in \
+  escaped-error-with-result \
+  escaped-id-conflict-with-result \
+  escaped-result-with-error \
+  semantic-duplicate-result \
+  semantic-duplicate-error
+do
+  rm -f "$XDG_CONFIG_HOME/fake-codex-escaped-probes"
+  printf '%s\n' "$rejected_escaped_rpc" \
+    >"$XDG_CONFIG_HOME/fake-codex-health"
+  if output=$($CLI setup-connectors --client codex --non-interactive 2>&1)
+  then
+    fix_wave_fail "$rejected_escaped_rpc passed Codex setup"
+  else
+    fix_wave_contains "$output" 'Result: CONNECTOR_HEALTH_UNAVAILABLE'
+  fi
+  escaped_probes=$(sed -n '1p' \
+    "$XDG_CONFIG_HOME/fake-codex-escaped-probes" 2>/dev/null || :)
+  [ "$escaped_probes" = 1 ] ||
+    fix_wave_fail \
+      "$rejected_escaped_rpc used ${escaped_probes:-0} probes"
+  fix_wave_not_contains "$output" 'Capability state: SUPPORTED'
+  fix_wave_not_contains "$output" 'ATLASSIAN_AUTH_REQUIRED'
+  fix_wave_not_contains "$output" 'codex mcp login atlassian'
+  fix_wave_not_contains "$output" 'OAuth URL:'
+  fix_wave_not_contains "$output" 'atlassianUserInfo'
+done
+unset FAKE_CODEX_WAIT_FOR_ESCAPED
 
 for malformed_reauth in \
   malformed-reauth-missing-comma \

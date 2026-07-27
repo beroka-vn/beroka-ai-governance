@@ -51,6 +51,13 @@ fix_wave_contains() {
   esac
 }
 
+fix_wave_not_contains() {
+  case "$1" in
+    *"$2"*) fix_wave_fail "did not expect [$2] in [$1]" ;;
+    *) ;;
+  esac
+}
+
 cat >"$FAKE_BIN/sleep" <<'EOF'
 #!/bin/sh
 set -eu
@@ -142,6 +149,27 @@ case "$*" in
             ;;
           duplicate-rpc-error)
             printf '%s\n' '{"id":1,"error":null,"error":{"code":-32603,"message":"failed"}}'
+            ;;
+          escaped-id-one-result)
+            printf '%s\n' '{"\u0069\u0064":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]}}'
+            ;;
+          escaped-result-only)
+            printf '%s\n' '{"id":1,"\u0072esult":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]}}'
+            ;;
+          escaped-error-with-result)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]},"e\u0072ror":null}'
+            ;;
+          escaped-id-conflict-with-result)
+            printf '%s\n' '{"id":1,"i\u0064":2,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]}}'
+            ;;
+          escaped-result-with-error)
+            printf '%s\n' '{"id":1,"\u0072esult":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]},"error":null}'
+            ;;
+          semantic-duplicate-result)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]},"r\u0065sult":{}}'
+            ;;
+          semantic-duplicate-error)
+            printf '%s\n' '{"id":1,"error":null,"e\u0072ror":{"code":-32603,"message":"failed"}}'
             ;;
           healthy-empty-tools)
             printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{},"authStatus":"oAuth"}]}}'
@@ -778,6 +806,51 @@ do
   assert_not_contains "$output" 'ATLASSIAN_AUTH_REQUIRED'
   assert_not_contains "$output" 'codex mcp login atlassian'
   assert_not_contains "$output" 'OAuth URL:'
+done
+
+printf '%s\n' escaped-id-one-result \
+  >"$XDG_CONFIG_HOME/fake-codex-health"
+if output=$($CLI preflight "$consumer" \
+  --client codex --operation jira-write --non-interactive 2>&1)
+then
+  fix_wave_contains "$output" 'Capability state: SUPPORTED'
+  fix_wave_contains "$output" 'Result: PASS'
+else
+  fix_wave_fail 'escaped semantic id=1 did not select Jira inventory'
+fi
+
+printf '%s\n' escaped-result-only \
+  >"$XDG_CONFIG_HOME/fake-codex-health"
+if output=$($CLI preflight "$consumer" \
+  --client codex --operation jira-write --non-interactive 2>&1)
+then
+  fix_wave_contains "$output" 'Capability state: SUPPORTED'
+  fix_wave_contains "$output" 'Result: PASS'
+else
+  fix_wave_fail 'escaped semantic result did not select Jira inventory'
+fi
+
+for rejected_escaped_rpc in \
+  escaped-error-with-result \
+  escaped-id-conflict-with-result \
+  escaped-result-with-error \
+  semantic-duplicate-result \
+  semantic-duplicate-error
+do
+  printf '%s\n' "$rejected_escaped_rpc" \
+    >"$XDG_CONFIG_HOME/fake-codex-health"
+  if output=$($CLI preflight "$consumer" \
+    --client codex --operation jira-write --non-interactive 2>&1)
+  then
+    fix_wave_fail "$rejected_escaped_rpc passed Jira preflight"
+  else
+    fix_wave_contains "$output" 'Result: CONNECTOR_HEALTH_UNAVAILABLE'
+  fi
+  fix_wave_not_contains "$output" 'Capability state: SUPPORTED'
+  fix_wave_not_contains "$output" 'ATLASSIAN_AUTH_REQUIRED'
+  fix_wave_not_contains "$output" 'codex mcp login atlassian'
+  fix_wave_not_contains "$output" 'OAuth URL:'
+  fix_wave_not_contains "$output" 'createJiraIssue'
 done
 
 printf '%s\n' healthy-empty-tools >"$XDG_CONFIG_HOME/fake-codex-health"
