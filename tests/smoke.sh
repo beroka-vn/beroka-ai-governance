@@ -92,6 +92,17 @@ git -C "$source_repo" add .
 git -C "$source_repo" commit -qm 'test: create release'
 git -C "$source_repo" tag -a v1.1.0 -m v1.1.0
 release_commit=$(git -C "$source_repo" rev-parse 'v1.1.0^{commit}')
+printf '%s\n' moved-tag-target >"$source_repo/moved-tag-target"
+git -C "$source_repo" add moved-tag-target
+git -C "$source_repo" commit -qm 'test: create moved-tag target'
+printf '%s\n' v1.2.0 >"$source_repo/VERSION"
+git -C "$source_repo" add VERSION
+git -C "$source_repo" commit -qm 'test: create v1.2.0 release'
+git -C "$source_repo" tag -a v1.2.0 -m v1.2.0
+printf '%s\n' v2.0.0 >"$source_repo/VERSION"
+git -C "$source_repo" add VERSION
+git -C "$source_repo" commit -qm 'test: create v2.0.0 release'
+git -C "$source_repo" tag -a v2.0.0 -m v2.0.0
 git config --global url."file://$source_repo".insteadOf \
   https://github.com/beroka-vn/beroka-ai-governance.git
 
@@ -100,8 +111,34 @@ active_release=$XDG_CONFIG_HOME/beroka-ai-governance/active-release
 [ "$(cat "$active_release")" = "$(printf '%s\n%s' \
   'VERSION=v1.1.0' "COMMIT=$release_commit")" ] ||
   fail 'install omitted the verified active release'
+git -C "$source_repo" tag -fa v1.1.0 -m moved >/dev/null
+if output=$($CLI install v1.1.0 2>&1); then
+  fail 'direct install accepted a moved remote tag'
+fi
+assert_contains "$output" 'Result: VERSION_MISMATCH'
+[ "$(cat "$active_release")" = "$(printf '%s\n%s' \
+  'VERSION=v1.1.0' "COMMIT=$release_commit")" ] ||
+  fail 'moved remote tag changed the active release'
+git -C "$source_repo" tag -fa v1.1.0 "$release_commit" -m v1.1.0 \
+  >/dev/null
 mkdir -p "$XDG_CONFIG_HOME/beroka-ai-governance"
 printf '%s\n' codex >"$XDG_CONFIG_HOME/beroka-ai-governance/clients"
+if output=$($CLI install v1.2.0 2>&1); then
+  fail 'direct install silently upgraded the active release'
+fi
+assert_contains "$output" 'Result: GOVERNANCE_UPGRADE_REQUIRED'
+assert_contains "$output" \
+  'Remediation: beroka-governance bootstrap --client codex --version v1.2.0 --upgrade'
+[ "$(cat "$active_release")" = "$(printf '%s\n%s' \
+  'VERSION=v1.1.0' "COMMIT=$release_commit")" ] ||
+  fail 'direct upgrade attempt changed the active release'
+if output=$($CLI install v2.0.0 2>&1); then
+  fail 'direct install accepted a cross-major release'
+fi
+assert_contains "$output" 'Result: VERSION_MISMATCH'
+[ "$(cat "$active_release")" = "$(printf '%s\n%s' \
+  'VERSION=v1.1.0' "COMMIT=$release_commit")" ] ||
+  fail 'cross-major direct install changed the active release'
 
 known_repo=$TMP_ROOT/routing-consumer
 new_repo "$known_repo"
@@ -212,6 +249,17 @@ assert_contains "$legacy_doctor" \
   'Legacy repository metadata: PRESENT_IGNORED'
 assert_not_contains "$legacy_doctor" 'VERSION_MISMATCH'
 
+dangling_repo=$TMP_ROOT/dangling-legacy
+new_repo "$dangling_repo"
+printf '%s\n' '# dangling legacy' >"$dangling_repo/README.md"
+git -C "$dangling_repo" add README.md
+git -C "$dangling_repo" commit -qm 'test: initialize dangling legacy repository'
+git -C "$dangling_repo" remote add origin \
+  https://github.com/beroka-vn/dangling-legacy.git
+ln -s missing-managed-instruction "$dangling_repo/AGENTS.md"
+assert_contains "$($CLI doctor "$dangling_repo")" \
+  'Legacy repository metadata: PRESENT_IGNORED'
+
 for command in register update rollback unregister; do
   before=$(snapshot_repo_complete "$legacy_repo")
   if output=$($CLI "$command" "$legacy_repo" 2>&1); then
@@ -244,6 +292,9 @@ esac
 exit 1
 EOF
 chmod 755 "$fake_bin/codex" "$fake_bin/gh"
+mkdir -p "$HOME/.codex"
+cp "$source_repo/templates/agent-entrypoints/AGENTS.md" \
+  "$HOME/.codex/AGENTS.md"
 
 for preflight_repo in "$known_repo" "$unknown_repo"; do
   before=$(snapshot_repo_complete "$preflight_repo")
@@ -287,12 +338,16 @@ assert_contains "$output" 'Result: ROUTING_REQUIRED'
 assert_not_contains "$output" 'CONNECTOR_MISSING'
 
 mkdir -p "$HOME/.codex" "$HOME/.claude"
+codex_suffix_expected=$TMP_ROOT/codex-suffix-expected
+printf '%s' 'personal Codex text' >"$codex_suffix_expected"
 {
-  printf '%s\n' 'personal Codex text'
   cat "$source_repo/templates/agent-entrypoints/AGENTS.md"
+  cat "$codex_suffix_expected"
 } >"$HOME/.codex/AGENTS.md"
+whitespace_expected=$TMP_ROOT/whitespace-expected
+printf ' \n\t\n' >"$whitespace_expected"
 {
-  printf '%s\n' 'personal Claude text'
+  cat "$whitespace_expected"
   cat "$source_repo/templates/agent-entrypoints/CLAUDE.md"
 } >"$HOME/.claude/CLAUDE.md"
 printf '%s\n' acknowledged \
@@ -304,9 +359,11 @@ $CLI uninstall --force >/dev/null
 [ "$before" = "$(snapshot_repo_complete "$legacy_repo")" ] ||
   fail 'uninstall changed the application repository'
 assert_contains "$(cat "$HOME/.codex/AGENTS.md")" 'personal Codex text'
-assert_contains "$(cat "$HOME/.claude/CLAUDE.md")" 'personal Claude text'
 assert_not_contains "$(cat "$HOME/.codex/AGENTS.md")" "$START_MARKER"
-assert_not_contains "$(cat "$HOME/.claude/CLAUDE.md")" "$START_MARKER"
+cmp -s "$codex_suffix_expected" "$HOME/.codex/AGENTS.md" ||
+  fail 'uninstall changed a personal suffix without a final newline'
+cmp -s "$whitespace_expected" "$HOME/.claude/CLAUDE.md" ||
+  fail 'uninstall did not preserve whitespace-only personal content'
 [ -f "$XDG_CONFIG_HOME/beroka-ai-governance/personal-sentinel" ] ||
   fail 'uninstall removed unrelated user configuration'
 [ ! -e "$XDG_CONFIG_HOME/beroka-ai-governance/active-release" ] ||

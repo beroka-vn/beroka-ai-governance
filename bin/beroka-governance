@@ -324,13 +324,45 @@ assert_valid_template() {
 }
 
 strip_managed_block() {
-  input=$1 output=$2
-  awk -v start="$START_MARKER" -v end="$END_MARKER" '
-    $0 == start { if (inside) exit 42; inside=1; found++; next }
-    $0 == end { if (!inside) exit 42; inside=0; next }
-    !inside { print }
-    END { if (inside || found > 1) exit 42 }
-  ' "$input" >"$output" || die ENTRYPOINT_DRIFT "Malformed managed block in $input"
+  input=$1 output=$2 managed=${3:-}
+  smb_range=$(LC_ALL=C awk \
+    -v start="$START_MARKER" -v end="$END_MARKER" '
+    $0 == start {
+      if (inside || found) invalid=1
+      inside=1
+      found=1
+      first=NR
+      next
+    }
+    $0 == end {
+      if (!inside) invalid=1
+      inside=0
+      last=NR
+      next
+    }
+    END {
+      if (invalid || inside) exit 42
+      print first + 0, last + 0
+    }
+  ' "$input") || return 1
+  smb_start=${smb_range%% *}
+  smb_end=${smb_range#* }
+
+  if [ "$smb_start" -eq 0 ]; then
+    cp "$input" "$output" || return 1
+    [ -z "$managed" ] || : >"$managed"
+    return 0
+  fi
+
+  if [ -n "$managed" ]; then
+    head -n "$smb_end" "$input" |
+      tail -n +"$smb_start" >"$managed" || return 1
+  fi
+  : >"$output" || return 1
+  if [ "$smb_start" -gt 1 ]; then
+    head -n "$((smb_start - 1))" "$input" >"$output" || return 1
+  fi
+  tail -n +"$((smb_end + 1))" "$input" >>"$output" || return 1
 }
 
 tx_begin() {
@@ -617,6 +649,55 @@ resolve_latest_release() {
   REMOTE_RELEASE_COMMIT=${rlr_selected#*	}
 }
 
+semver_not_older() {
+  awk -v current="${1#v}" -v target="${2#v}" '
+    function canonical(component) {
+      sub(/^0+/, "", component)
+      return component == "" ? "0" : component
+    }
+    BEGIN {
+      split(current, c, ".")
+      split(target, t, ".")
+      for (i = 1; i <= 3; i++) {
+        c[i] = canonical(c[i])
+        t[i] = canonical(t[i])
+        if (length(t[i]) != length(c[i]))
+          exit length(t[i]) > length(c[i]) ? 0 : 1
+        if (t[i] != c[i])
+          exit ("x" t[i]) > ("x" c[i]) ? 0 : 1
+      }
+      exit 0
+    }
+  '
+}
+
+validate_release_transition() {
+  vrt_current=$1 vrt_target=$2 vrt_allow_upgrade=$3
+  vrt_client=$4 vrt_non_interactive=$5
+  [ "$vrt_current" != "$vrt_target" ] || return 0
+
+  vrt_current_major=${vrt_current#v}
+  vrt_current_major=${vrt_current_major%%.*}
+  vrt_target_major=${vrt_target#v}
+  vrt_target_major=${vrt_target_major%%.*}
+  [ "$vrt_current_major" = "$vrt_target_major" ] ||
+    die VERSION_MISMATCH \
+      'Upgrade target has a different major version'
+  semver_not_older "$vrt_current" "$vrt_target" &&
+    ! semver_not_older "$vrt_target" "$vrt_current" ||
+    die VERSION_MISMATCH \
+      'Upgrade target must be newer than the active release'
+  [ "$vrt_allow_upgrade" -eq 0 ] || return 0
+
+  vrt_remediation='Remediation: beroka-governance bootstrap'
+  [ -z "$vrt_client" ] ||
+    vrt_remediation="$vrt_remediation --client $vrt_client"
+  vrt_remediation="$vrt_remediation --version $vrt_target --upgrade"
+  [ "$vrt_non_interactive" -eq 0 ] ||
+    vrt_remediation="$vrt_remediation --non-interactive"
+  die GOVERNANCE_UPGRADE_REQUIRED "$vrt_remediation"
+}
+
 prepare_cli() {
   cp "$RELEASE_DIR/bin/beroka-governance" "$TX_DIR/work/cli" || die GOVERNANCE_NOT_READY 'Cannot stage the user CLI'
   chmod 755 "$TX_DIR/work/cli" || die GOVERNANCE_NOT_READY 'Cannot prepare the user CLI'
@@ -642,13 +723,42 @@ activate_cli() {
 }
 
 cmd_install() {
-  ci_version=$1
+  ci_version=$1 ci_expected_commit=${2:-}
+  ci_allow_upgrade=${3:-0} ci_transition_client=${4:-}
+  ci_non_interactive=${5:-0}
   printf '%s\n' "$ci_version" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$' || die GOVERNANCE_NOT_READY "Invalid version: $ci_version"
-  tx_begin
+  case "$ci_allow_upgrade:$ci_non_interactive" in
+    0:0|0:1|1:0|1:1) ;;
+    *) die GOVERNANCE_NOT_READY 'Invalid release transition options' ;;
+  esac
   assert_safe_user_path "$ACTIVE_RELEASE" 'active release'
-  [ ! -e "$ACTIVE_RELEASE" ] || [ -f "$ACTIVE_RELEASE" ] || die GOVERNANCE_NOT_READY 'Active release is not a regular file'
-  if [ -e "$ACTIVE_RELEASE" ] || [ -L "$ACTIVE_RELEASE" ]; then load_active_release; fi
+  [ ! -e "$ACTIVE_RELEASE" ] || [ -f "$ACTIVE_RELEASE" ] ||
+    die GOVERNANCE_NOT_READY 'Active release is not a regular file'
+  if [ -e "$ACTIVE_RELEASE" ] || [ -L "$ACTIVE_RELEASE" ]; then
+    load_active_release
+    if [ -z "$ci_transition_client" ]; then
+      load_enabled_clients
+      ci_transition_client=${ENABLED_CLIENTS%%,*}
+    fi
+    validate_release_transition "$ACTIVE_VERSION" "$ci_version" \
+      "$ci_allow_upgrade" "$ci_transition_client" "$ci_non_interactive"
+  else
+    [ "$ci_allow_upgrade" -eq 0 ] ||
+      die VERSION_MISMATCH \
+        'Bootstrap --upgrade requires an active release'
+  fi
+  if [ -z "$ci_expected_commit" ]; then
+    remote_release_commit "$ci_version"
+    ci_expected_commit=$REMOTE_RELEASE_COMMIT
+  else
+    printf '%s\n' "$ci_expected_commit" |
+      grep -Eq '^[0-9a-f]{40}$' ||
+      die RELEASE_VERIFICATION_FAILED 'Invalid expected release commit'
+  fi
+  tx_begin
   prepare_release "$ci_version"
+  [ "$RELEASE_COMMIT" = "$ci_expected_commit" ] ||
+    die VERSION_MISMATCH 'Release commit does not match the verified commit'
   prepare_cli
   write_active_release "$TX_DIR/work/active-release" "$ci_version" "$RELEASE_COMMIT"
   tx_snapshot_user_file "$ACTIVE_RELEASE" active-release
@@ -667,9 +777,11 @@ assert_client_files() {
   assert_safe_user_path "$CURSOR_ACK_FILE" 'Cursor acknowledgement'
   [ ! -e "$CONFIG_ROOT" ] || [ -d "$CONFIG_ROOT" ] ||
     die GOVERNANCE_NOT_READY "Config root is not a directory: $CONFIG_ROOT"
-  [ ! -e "$CLIENTS_FILE" ] || { [ -f "$CLIENTS_FILE" ] && [ ! -L "$CLIENTS_FILE" ]; } ||
+  { [ ! -e "$CLIENTS_FILE" ] && [ ! -L "$CLIENTS_FILE" ]; } ||
+    { [ -f "$CLIENTS_FILE" ] && [ ! -L "$CLIENTS_FILE" ]; } ||
     die GOVERNANCE_NOT_READY 'Unsafe client enrollment'
-  [ ! -e "$CURSOR_ACK_FILE" ] || { [ -f "$CURSOR_ACK_FILE" ] && [ ! -L "$CURSOR_ACK_FILE" ]; } ||
+  { [ ! -e "$CURSOR_ACK_FILE" ] && [ ! -L "$CURSOR_ACK_FILE" ]; } ||
+    { [ -f "$CURSOR_ACK_FILE" ] && [ ! -L "$CURSOR_ACK_FILE" ]; } ||
     die GOVERNANCE_NOT_READY 'Unsafe Cursor acknowledgement'
 }
 
@@ -751,6 +863,77 @@ active_instruction_file() {
   esac
 }
 
+cursor_ack_matches() {
+  cam_hash=$1
+  cam_bytes=$((${#cam_hash} + 1))
+  [ -f "$CURSOR_ACK_FILE" ] &&
+    [ ! -L "$CURSOR_ACK_FILE" ] &&
+    [ "$(wc -l <"$CURSOR_ACK_FILE" | tr -d ' ')" -eq 1 ] &&
+    [ "$(wc -c <"$CURSOR_ACK_FILE" | tr -d ' ')" -eq "$cam_bytes" ] &&
+    [ "$(sed -n '1p' "$CURSOR_ACK_FILE")" = "$cam_hash" ]
+}
+
+verify_client_instruction() {
+  verify_instruction_client=$1
+  case "$verify_instruction_client" in
+    codex)
+      verify_instruction_template=$RELEASE_DIR/templates/agent-entrypoints/AGENTS.md
+      ;;
+    claude)
+      verify_instruction_template=$RELEASE_DIR/templates/agent-entrypoints/CLAUDE.md
+      ;;
+    cursor)
+      verify_instruction_template=$RELEASE_DIR/templates/agent-entrypoints/CURSOR-USER-RULE.txt
+      assert_client_files
+      verify_cursor_hash=$(git hash-object --no-filters \
+        "$verify_instruction_template") ||
+        die GOVERNANCE_NOT_READY 'Cannot hash Cursor user rule'
+      cursor_ack_matches "$verify_cursor_hash" ||
+        die CURSOR_USER_RULE_REQUIRED \
+          'Remediation: beroka-governance bootstrap --client cursor'
+      printf '%s\n' 'Instruction: USER_CONFIRMED'
+      return
+      ;;
+    *) usage >&2; exit 2 ;;
+  esac
+
+  assert_valid_template "$verify_instruction_template"
+  verify_instruction_destination=$(
+    active_instruction_file "$verify_instruction_client"
+  ) || die GOVERNANCE_NOT_READY \
+    "No instruction file for $verify_instruction_client"
+  assert_safe_user_path "$verify_instruction_destination" \
+    "$verify_instruction_client instruction"
+  [ -f "$verify_instruction_destination" ] &&
+    [ ! -L "$verify_instruction_destination" ] ||
+    die CLIENT_INSTRUCTION_REQUIRED \
+      "Remediation: beroka-governance bootstrap --client $verify_instruction_client"
+
+  verify_instruction_stage=$(mktemp -d \
+    "${TMPDIR:-/tmp}/beroka-governance-instruction-check.XXXXXX") ||
+    die GOVERNANCE_NOT_READY 'Cannot verify client instruction'
+  : >"$verify_instruction_stage/managed"
+  if ! strip_managed_block "$verify_instruction_destination" \
+    "$verify_instruction_stage/personal" \
+    "$verify_instruction_stage/managed"
+  then
+    rm -rf "$verify_instruction_stage" || :
+    die CLIENT_INSTRUCTION_CONFLICT \
+      "Remediation: repair the managed block, then run: beroka-governance bootstrap --client $verify_instruction_client"
+  fi
+  if [ ! -s "$verify_instruction_stage/managed" ] ||
+    ! cmp -s "$verify_instruction_stage/managed" \
+      "$verify_instruction_template"
+  then
+    rm -rf "$verify_instruction_stage" || :
+    die CLIENT_INSTRUCTION_REQUIRED \
+      "Remediation: beroka-governance bootstrap --client $verify_instruction_client"
+  fi
+  rm -rf "$verify_instruction_stage" ||
+    die GOVERNANCE_NOT_READY 'Cannot finish client instruction verification'
+  printf '%s\n' 'Instruction: INSTALLED'
+}
+
 install_client_instruction() {
   instruction_client=$1 instruction_interactive=$2
   case "$instruction_client" in
@@ -763,10 +946,7 @@ install_client_instruction() {
       assert_client_files
       cursor_rule_hash=$(git hash-object --no-filters "$instruction_template") ||
         die GOVERNANCE_NOT_READY 'Cannot hash Cursor user rule'
-      if [ -f "$CURSOR_ACK_FILE" ] &&
-        [ "$(sed -n '1p' "$CURSOR_ACK_FILE")" = "$cursor_rule_hash" ] &&
-        [ "$(wc -l <"$CURSOR_ACK_FILE" | tr -d ' ')" -eq 1 ]
-      then
+      if cursor_ack_matches "$cursor_rule_hash"; then
         printf '%s\n' 'Instruction: USER_CONFIRMED'
         return
       fi
@@ -798,7 +978,11 @@ install_client_instruction() {
   instruction_stage=$(mktemp "${TMPDIR:-/tmp}/beroka-governance-instruction.XXXXXX") ||
     die GOVERNANCE_NOT_READY "Cannot stage $instruction_client instruction"
   if [ -e "$instruction_destination" ]; then
-    strip_managed_block "$instruction_destination" "$instruction_stage"
+    strip_managed_block "$instruction_destination" "$instruction_stage" || {
+      rm -f "$instruction_stage" || :
+      die CLIENT_INSTRUCTION_CONFLICT \
+        "Remediation: repair the managed block, then run: beroka-governance bootstrap --client $instruction_client"
+    }
   else
     : >"$instruction_stage" || die GOVERNANCE_NOT_READY "Cannot stage $instruction_client instruction"
   fi
@@ -814,7 +998,8 @@ cmd_bootstrap() {
   if [ "$#" -gt 0 ]; then
     case "$1" in --*) ;; *) bs_requested=$1; shift ;; esac
   fi
-  bs_client= bs_version= bs_non_interactive=0 bs_upgrade=0
+  bs_client= bs_version= bs_expected_commit=
+  bs_non_interactive=0 bs_upgrade=0
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --client)
@@ -833,6 +1018,15 @@ cmd_bootstrap() {
           grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$' ||
           { usage >&2; exit 2; }
         bs_version=$2
+        shift 2
+        ;;
+      --expected-commit)
+        [ -z "$bs_expected_commit" ] && [ "$#" -ge 2 ] ||
+          { usage >&2; exit 2; }
+        printf '%s\n' "$2" |
+          grep -Eq '^[0-9a-f]{40}$' ||
+          { usage >&2; exit 2; }
+        bs_expected_commit=$2
         shift 2
         ;;
       --non-interactive)
@@ -865,12 +1059,27 @@ cmd_bootstrap() {
         'Non-interactive bootstrap requires --version vX.Y.Z'
     resolve_latest_release
     bs_version=$RESOLVED_VERSION
+    [ -n "$bs_expected_commit" ] ||
+      bs_expected_commit=$REMOTE_RELEASE_COMMIT
   fi
 
   SUPPRESS_PASS_RESULT=1
-  cmd_install "$bs_version"
+  cmd_install "$bs_version" "$bs_expected_commit" "$bs_upgrade" \
+    "$bs_client" "$bs_non_interactive"
   load_active_release
-  install_client_instruction "$bs_client" "$bs_interactive"
+  bs_selected_instruction_installed=0
+  if [ "$bs_upgrade" -eq 1 ]; then
+    load_enabled_clients
+    for bs_enabled_client in codex claude cursor; do
+      client_list_contains "$ENABLED_CLIENTS" "$bs_enabled_client" ||
+        continue
+      install_client_instruction "$bs_enabled_client" "$bs_interactive"
+      [ "$bs_enabled_client" != "$bs_client" ] ||
+        bs_selected_instruction_installed=1
+    done
+  fi
+  [ "$bs_selected_instruction_installed" -eq 1 ] ||
+    install_client_instruction "$bs_client" "$bs_interactive"
   enable_client "$bs_client"
   printf '%s\n' \
     'Release: PASS' \
@@ -883,6 +1092,11 @@ cmd_bootstrap() {
     cmd_setup_connectors --client "$bs_client" --non-interactive
   fi
 
+  if [ -n "$bs_requested" ]; then
+    cmd_context "$bs_requested"
+  elif git rev-parse --show-toplevel >/dev/null 2>&1; then
+    cmd_context "$PWD"
+  fi
   printf '%s\n' 'Result: PASS'
 }
 
@@ -911,7 +1125,11 @@ cmd_uninstall() {
     }
     [ ! -e "$uninstall_path" ] ||
       strip_managed_block "$uninstall_path" \
-        "$uninstall_stage/$uninstall_name"
+        "$uninstall_stage/$uninstall_name" || {
+          rm -rf "$uninstall_stage" || :
+          die CLIENT_INSTRUCTION_CONFLICT \
+            "Malformed managed block in $uninstall_path"
+        }
   done
 
   for uninstall_spec in \
@@ -922,7 +1140,7 @@ cmd_uninstall() {
     uninstall_name=${uninstall_spec%%	*}
     uninstall_path=${uninstall_spec#*	}
     [ -f "$uninstall_stage/$uninstall_name" ] || continue
-    if grep -q '[^[:space:]]' "$uninstall_stage/$uninstall_name"; then
+    if [ -s "$uninstall_stage/$uninstall_name" ]; then
       apply_user_file "$uninstall_stage/$uninstall_name" \
         "$uninstall_path" "$uninstall_name instruction"
     else
@@ -2805,6 +3023,7 @@ cmd_preflight() {
   load_active_release
   resolve_repository_context "$pf_repo"
   require_enrolled_client "$pf_client"
+  verify_client_instruction "$pf_client"
   if [ "$pf_operation" = github-write ]; then
     github_preflight "$pf_client" "$pf_non_interactive"
     return
@@ -2974,6 +3193,7 @@ cmd_doctor() {
   resolve_repository_context "$requested"
   if [ -n "$doctor_client" ]; then
     require_enrolled_client "$doctor_client"
+    verify_client_instruction "$doctor_client"
     require_client "$doctor_client"
     doctor_state=0
     connector_state "$doctor_client" || doctor_state=$?
@@ -3069,7 +3289,8 @@ legacy_repository_state() {
     AGENTS.md CLAUDE.md \
     .cursor/rules/beroka-governance.mdc
   do
-    [ -e "$lrs_repo/$lrs_path" ] || continue
+    [ -e "$lrs_repo/$lrs_path" ] || [ -L "$lrs_repo/$lrs_path" ] ||
+      continue
     printf '%s\n' PRESENT_IGNORED
     return
   done

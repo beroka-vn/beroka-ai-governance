@@ -53,7 +53,7 @@ mkdir -p "$source_repo/bin" "$target_repo"
 cat >"$source_repo/bin/beroka-governance" <<EOF
 #!/bin/sh
 set -eu
- [ "\$1" = bootstrap ] || exit 64
+[ "\$1" = bootstrap ] || exit 64
 shift
 printf '%s\n' "\$*" >>"$calls"
 case "\$*" in
@@ -136,9 +136,9 @@ output=$(cd "$TEST_ROOT" &&
   sh "$asset" --client codex --non-interactive)
 assert_contains "$output" 'LAUNCHER_NON_INTERACTIVE=PASS'
 grep -Fx -- \
-  '--client codex --version v9.9.9 --non-interactive' \
+  "--client codex --version v9.9.9 --expected-commit $release_commit --non-interactive" \
   "$calls" >/dev/null ||
-  fail 'launcher passed an application repository to bootstrap'
+  fail 'launcher omitted the verified release commit'
 
 for launcher_case in clean dirty detached ambiguous-remote; do
   case "$launcher_case" in
@@ -155,9 +155,9 @@ for launcher_case in clean dirty detached ambiguous-remote; do
     sh "$asset" --client codex --non-interactive)
   assert_contains "$output" 'LAUNCHER_NON_INTERACTIVE=PASS'
   grep -Fx -- \
-    '--client codex --version v9.9.9 --non-interactive' \
+    "--client codex --version v9.9.9 --expected-commit $release_commit --non-interactive" \
     "$calls" >/dev/null ||
-    fail "launcher passed an application repository to bootstrap ($launcher_case)"
+    fail "launcher omitted the verified release commit ($launcher_case)"
   [ "$before" = "$(snapshot_repo "$target_repo")" ] ||
     fail "launcher changed the application repository ($launcher_case)"
 done
@@ -223,18 +223,19 @@ git -C "$source_repo" branch -D v9.9.9 >/dev/null
 output=$(cd "$target_repo" &&
   sh "$asset" --client codex --non-interactive)
 assert_contains "$output" 'LAUNCHER_NON_INTERACTIVE=PASS'
-grep -Fx -- "--client codex --version v9.9.9 --non-interactive" \
+grep -Fx -- \
+  "--client codex --version v9.9.9 --expected-commit $release_commit --non-interactive" \
   "$calls" >/dev/null ||
-  fail 'launcher omitted explicit non-interactive decisions'
+  fail 'launcher omitted verified non-interactive decisions'
 
 : >"$calls"
 output=$(cd "$target_repo" &&
   sh "$asset" --client codex --upgrade --non-interactive)
 assert_contains "$output" 'LAUNCHER_NON_INTERACTIVE=PASS'
 grep -Fx -- \
-  "--client codex --version v9.9.9 --upgrade --non-interactive" \
+  "--client codex --version v9.9.9 --expected-commit $release_commit --upgrade --non-interactive" \
   "$calls" >/dev/null ||
-  fail 'launcher omitted explicit upgrade selection'
+  fail 'launcher omitted verified upgrade selection'
 
 : >"$calls"
 output=$(cd "$target_repo" &&
@@ -242,8 +243,10 @@ output=$(cd "$target_repo" &&
     "sh -c 'sh -s -- --client codex <\"$asset\"'" \
     /dev/null 2>&1)
 assert_contains "$output" 'LAUNCHER_INTERACTIVE=PASS'
-grep -Fx -- "--client codex --version v9.9.9" "$calls" >/dev/null ||
-  fail 'interactive launcher omitted the verified release decision'
+grep -Fx -- \
+  "--client codex --version v9.9.9 --expected-commit $release_commit" \
+  "$calls" >/dev/null ||
+  fail 'interactive launcher omitted the verified release commit'
 
 jq_root=$TEST_ROOT/jq-dependency
 jq_bin=$jq_root/bin

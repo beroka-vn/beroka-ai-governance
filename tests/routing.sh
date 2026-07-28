@@ -699,6 +699,14 @@ printf '%s\n' \
   >"$XDG_CONFIG_HOME/beroka-ai-governance/active-release"
 printf '%s\n' codex,claude,cursor \
   >"$XDG_CONFIG_HOME/beroka-ai-governance/clients"
+mkdir -p "$HOME/.codex" "$HOME/.claude"
+cp "$release_dir/templates/agent-entrypoints/AGENTS.md" \
+  "$HOME/.codex/AGENTS.md"
+cp "$release_dir/templates/agent-entrypoints/CLAUDE.md" \
+  "$HOME/.claude/CLAUDE.md"
+git hash-object --no-filters \
+  "$release_dir/templates/agent-entrypoints/CURSOR-USER-RULE.txt" \
+  >"$XDG_CONFIG_HOME/beroka-ai-governance/cursor-user-rule.sha256"
 
 consumer=$TEST_ROOT/consumer
 new_repo "$consumer"

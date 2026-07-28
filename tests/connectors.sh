@@ -1371,6 +1371,12 @@ printf '%s\n' \
   >"$XDG_CONFIG_HOME/beroka-ai-governance/active-release"
 printf '%s\n' codex,cursor \
   >"$XDG_CONFIG_HOME/beroka-ai-governance/clients"
+mkdir -p "$HOME/.codex"
+cp "$RELEASE_DIR/templates/agent-entrypoints/AGENTS.md" \
+  "$HOME/.codex/AGENTS.md"
+git hash-object --no-filters \
+  "$RELEASE_DIR/templates/agent-entrypoints/CURSOR-USER-RULE.txt" \
+  >"$XDG_CONFIG_HOME/beroka-ai-governance/cursor-user-rule.sha256"
 
 git -C "$CONSUMER" init -q
 git -C "$CONSUMER" config user.name 'Beroka Test'

@@ -149,7 +149,8 @@ ensure_jq
 cli=$bootstrap_root/repo/bin/beroka-governance
 set -- bootstrap \
   --client "$client" \
-  --version "$RELEASE_VERSION"
+  --version "$RELEASE_VERSION" \
+  --expected-commit "$RELEASE_COMMIT"
 [ "$upgrade" -eq 0 ] || set -- "$@" --upgrade
 [ "$non_interactive" -eq 0 ] || set -- "$@" --non-interactive
 if [ "$non_interactive" -eq 0 ]; then
