@@ -179,6 +179,7 @@ printf '%s\n' \
   '#!/bin/sh' \
   'for last_arg do :; done' \
   'if [ "${FAIL_ACTIVE_RELEASE_PATH:-}" = "$last_arg" ]; then exit 1; fi' \
+  'if [ "${FAIL_CLI_PATH:-}" = "$last_arg" ]; then exit 1; fi' \
   'exec "$SYSTEM_MV" "$@"' >"$fail_active_mv_dir/mv"
 chmod 755 "$fail_active_mv_dir/mv"
 SYSTEM_MV=$(command -v mv)
@@ -192,6 +193,16 @@ assert_contains "$active_failure_output" 'Result: GOVERNANCE_NOT_READY'
 [ "$(cat "$active_file")" = "$(printf '%s\n%s' \
   'VERSION=v1.0.0' "COMMIT=$v1_0_commit")" ] ||
   fail 'failed activation did not restore the active release'
+if cli_failure_output=$(PATH=$fail_active_mv_dir:$PATH \
+  FAIL_CLI_PATH=$BEROKA_GOV_BIN_DIR/beroka-governance \
+  $CLI install v1.1.0 2>&1)
+then
+  fail 'install ignored a CLI activation failure'
+fi
+assert_contains "$cli_failure_output" 'Result: GOVERNANCE_NOT_READY'
+[ "$(cat "$active_file")" = "$(printf '%s\n%s' \
+  'VERSION=v1.0.0' "COMMIT=$v1_0_commit")" ] ||
+  fail 'failed CLI activation did not restore the active release'
 rm -f "$active_file" "$BEROKA_GOV_BIN_DIR/beroka-governance"
 
 make_consumer_fixture
