@@ -1348,8 +1348,6 @@ printf '%s\n' \
   >"$RELEASE_SOURCE/templates/agent-entrypoints/AGENTS.md"
 cp "$RELEASE_SOURCE/templates/agent-entrypoints/AGENTS.md" \
   "$RELEASE_SOURCE/templates/agent-entrypoints/CLAUDE.md"
-printf '%s\n' 'Managed Cursor test content.' \
-  >"$RELEASE_SOURCE/templates/agent-entrypoints/team-dev-ai-workflow.mdc"
 printf '%s\n' 'Managed Cursor user rule test content.' \
   >"$RELEASE_SOURCE/templates/agent-entrypoints/CURSOR-USER-RULE.txt"
 for release_file in ai-agent-assignment github-issue jira-confluence pull-request; do
@@ -1366,6 +1364,13 @@ git clone -q "$RELEASE_SOURCE" "$RELEASE_DIR"
 git -C "$RELEASE_DIR" remote set-url origin \
   https://github.com/beroka-vn/beroka-ai-governance.git
 git -C "$RELEASE_DIR" checkout -q "$RELEASE_VERSION"
+mkdir -p "$XDG_CONFIG_HOME/beroka-ai-governance"
+printf '%s\n' \
+  "VERSION=$RELEASE_VERSION" \
+  "COMMIT=$RELEASE_COMMIT" \
+  >"$XDG_CONFIG_HOME/beroka-ai-governance/active-release"
+printf '%s\n' codex,cursor \
+  >"$XDG_CONFIG_HOME/beroka-ai-governance/clients"
 
 git -C "$CONSUMER" init -q
 git -C "$CONSUMER" config user.name 'Beroka Test'
@@ -1375,14 +1380,6 @@ git -C "$CONSUMER" add README.md
 git -C "$CONSUMER" commit -qm 'test consumer'
 git -C "$CONSUMER" remote add origin \
   https://github.com/beroka-vn/consumer.git
-cp "$RELEASE_SOURCE/templates/agent-entrypoints/AGENTS.md" "$CONSUMER/AGENTS.md"
-printf '%s\n' \
-  'SOURCE=beroka-vn/beroka-ai-governance' \
-  'REPOSITORY=beroka-vn/consumer' \
-  "VERSION=$RELEASE_VERSION" \
-  "COMMIT=$RELEASE_COMMIT" \
-  'CLIENTS=codex' \
-  >"$CONSUMER/.beroka-governance.lock"
 
 printf '%s\n' auth-required >"$XDG_CONFIG_HOME/fake-codex-health"
 : >"$CALLS"
@@ -1437,14 +1434,6 @@ assert_not_contains "$(cat "$CALLS")" 'codex mcp login atlassian'
 [ "$(grep -Fc 'codex app-server --stdio' "$CALLS")" -eq 1 ] ||
   fail 'connector-aware Doctor repeated its health probe'
 
-mkdir -p "$CONSUMER/.cursor/rules"
-cp \
-  "$RELEASE_SOURCE/templates/agent-entrypoints/team-dev-ai-workflow.mdc" \
-  "$CONSUMER/.cursor/rules/beroka-governance.mdc"
-cursor_lock_temp=$(mktemp "$CONSUMER/.beroka-governance.lock.XXXXXX")
-sed 's/^CLIENTS=codex$/CLIENTS=codex,cursor/' \
-  "$CONSUMER/.beroka-governance.lock" >"$cursor_lock_temp"
-mv "$cursor_lock_temp" "$CONSUMER/.beroka-governance.lock"
 printf '%s\n' ready-tools-failed >"$XDG_CONFIG_HOME/fake-cursor-health"
 if output=$($CLI doctor "$CONSUMER" --client cursor 2>&1)
 then

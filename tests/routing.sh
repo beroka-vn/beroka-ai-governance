@@ -691,6 +691,14 @@ release_dir=$XDG_DATA_HOME/beroka-ai-governance/releases/v1.1.0
 mkdir -p "$(dirname -- "$release_dir")"
 git -c advice.detachedHead=false clone -q --depth 1 --branch v1.1.0 \
   https://github.com/beroka-vn/beroka-ai-governance.git "$release_dir"
+release_commit=$(git -C "$release_dir" rev-parse HEAD)
+mkdir -p "$XDG_CONFIG_HOME/beroka-ai-governance"
+printf '%s\n' \
+  'VERSION=v1.1.0' \
+  "COMMIT=$release_commit" \
+  >"$XDG_CONFIG_HOME/beroka-ai-governance/active-release"
+printf '%s\n' codex,claude,cursor \
+  >"$XDG_CONFIG_HOME/beroka-ai-governance/clients"
 
 consumer=$TEST_ROOT/consumer
 new_repo "$consumer"
@@ -698,14 +706,6 @@ git -C "$consumer" remote add upstream \
   https://github.com/beroka-vn/routing-consumer.git
 git -C "$consumer" fetch -q upstream trunk
 git -C "$consumer" switch -qc trunk FETCH_HEAD
-$CLI register "$consumer" --version v1.1.0 --client codex
-git -C "$consumer" add .
-git -C "$consumer" commit -qm 'test: register governance'
-cp "$consumer/.beroka-governance.lock" "$remote_work/.beroka-governance.lock"
-cp "$consumer/AGENTS.md" "$remote_work/AGENTS.md"
-git -C "$remote_work" add .beroka-governance.lock AGENTS.md
-git -C "$remote_work" commit -qm 'test: register application'
-git -C "$remote_work" push -q origin trunk
 
 before=$(snapshot_repo "$consumer")
 output=$($CLI context "$consumer")
@@ -723,7 +723,6 @@ git -C "$unknown_repo" add README.md
 git -C "$unknown_repo" commit -qm 'test: initialize unknown application'
 git -C "$unknown_repo" remote add origin \
   https://github.com/beroka-vn/unknown-repo.git
-$CLI register "$unknown_repo" --version v1.1.0 --client codex
 unknown_output=$($CLI context "$unknown_repo")
 assert_contains "$unknown_output" 'Routing: ROUTING_REQUIRED'
 assert_contains "$unknown_output" 'Dependency state: NO_DEPENDENCY_DECLARED'
@@ -815,13 +814,10 @@ pin_test_release() {
   git -c advice.detachedHead=false clone -q --depth 1 --branch "$ptr_version" \
     https://github.com/beroka-vn/beroka-ai-governance.git "$ptr_release"
   ptr_commit=$(git -C "$ptr_release" rev-parse HEAD)
-  ptr_lock_temp=$(mktemp "$consumer/.beroka-governance.lock.XXXXXX")
-  sed \
-    "s/^VERSION=.*/VERSION=$ptr_version/;s/^COMMIT=.*/COMMIT=$ptr_commit/" \
-    "$consumer/.beroka-governance.lock" >"$ptr_lock_temp"
-  mv "$ptr_lock_temp" "$consumer/.beroka-governance.lock"
-  git -C "$consumer" add .beroka-governance.lock
-  git -C "$consumer" commit -qm "test: pin $ptr_version release"
+  printf '%s\n' \
+    "VERSION=$ptr_version" \
+    "COMMIT=$ptr_commit" \
+    >"$XDG_CONFIG_HOME/beroka-ai-governance/active-release"
 }
 
 PUBLISH_SERIAL=0
