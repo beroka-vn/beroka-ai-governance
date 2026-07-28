@@ -12,5 +12,5 @@ the next governed action. Run a fresh operation-specific preflight immediately
 before every external write. Never rely on governance details preserved only
 in conversation history.
 
-Repository instructions may narrow governance but must not broaden authority
-or bypass a central stop condition.
+Repository-specific instructions may narrow central governance. They must not
+broaden authority or bypass a central stop condition.

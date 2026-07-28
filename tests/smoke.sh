@@ -68,6 +68,14 @@ make_release_fixture() {
   printf 'PULL REQUEST TEMPLATE v1.0.0\n' >"$source_repo/templates/pull-request.md"
   cp "$ROOT/templates/agent-entrypoints/AGENTS.md" "$source_repo/templates/agent-entrypoints/AGENTS.md"
   cp "$ROOT/templates/agent-entrypoints/CLAUDE.md" "$source_repo/templates/agent-entrypoints/CLAUDE.md"
+  cp "$ROOT/templates/agent-entrypoints/CURSOR-USER-RULE.txt" "$source_repo/templates/agent-entrypoints/CURSOR-USER-RULE.txt"
+  cursor_body=$(cat "$source_repo/templates/agent-entrypoints/CURSOR-USER-RULE.txt")
+  shared_body=$(sed \
+    -e '/^<!-- BEROKA-GOVERNANCE:START -->$/d' \
+    -e '/^<!-- BEROKA-GOVERNANCE:END -->$/d' \
+    "$source_repo/templates/agent-entrypoints/AGENTS.md")
+  [ "$cursor_body" = "$shared_body" ] ||
+    fail 'Cursor User Rule does not match the shared governance body'
   cp "$ROOT/templates/agent-entrypoints/team-dev-ai-workflow.mdc" "$source_repo/templates/agent-entrypoints/team-dev-ai-workflow.mdc"
   git -C "$source_repo" add .
   git -C "$source_repo" commit -qm 'test: create v1 fixture'
@@ -213,7 +221,17 @@ assert_contains "$doctor_output" 'Version: v1.0.0'
 
 context_output=$($CLI context "$consumer")
 assert_contains "$context_output" 'PINNED ENTRYPOINT v1.0.0'
-rehydration_policy='After context compaction, a session resume, or a new chat, rerun
+user_rehydration_policy='After context compaction, session resume, or a new chat, rerun context before
+the next governed action. Run a fresh operation-specific preflight immediately
+before every external write. Never rely on governance details preserved only
+in conversation history.'
+for rehydration_output in \
+  "$(cat "$consumer/AGENTS.md")" \
+  "$(cat "$consumer/CLAUDE.md")"
+do
+  assert_contains "$rehydration_output" "$user_rehydration_policy"
+done
+legacy_rehydration_policy='After context compaction, a session resume, or a new chat, rerun
 `beroka-governance context "$PWD"` before the next governed action. Never rely
 on governance details preserved only in a conversation summary. In-progress
 source work need not be discarded, but governance must be rehydrated before the
@@ -221,12 +239,10 @@ next planning, implementation, or external action. Run a fresh
 operation-specific preflight immediately before every external write; never
 reuse a result from before compaction.'
 for rehydration_output in \
-  "$(cat "$consumer/AGENTS.md")" \
-  "$(cat "$consumer/CLAUDE.md")" \
   "$(cat "$consumer/.cursor/rules/beroka-governance.mdc")" \
   "$context_output"
 do
-  assert_contains "$rehydration_output" "$rehydration_policy"
+  assert_contains "$rehydration_output" "$legacy_rehydration_policy"
 done
 case "$context_output" in
   *'Routing:'*) fail 'legacy Context resolved routing' ;;

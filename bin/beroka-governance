@@ -670,7 +670,8 @@ validate_release_checkout() {
   for vrc_required in \
     VERSION bin/beroka-governance runtime/entrypoint.md governance.md handbook.md workflow.md \
     templates/agent-entrypoints/AGENTS.md templates/agent-entrypoints/CLAUDE.md \
-    templates/agent-entrypoints/CURSOR-USER-RULE.txt templates/ai-agent-assignment.md \
+    templates/agent-entrypoints/CURSOR-USER-RULE.txt \
+    templates/agent-entrypoints/team-dev-ai-workflow.mdc templates/ai-agent-assignment.md \
     templates/github-issue.md templates/jira-confluence.md templates/pull-request.md
   do
     assert_release_file "$vrc_checkout" "$vrc_required"
