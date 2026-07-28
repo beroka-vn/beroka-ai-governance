@@ -45,6 +45,13 @@ The release launcher accepts one new flag:
 bootstrap.sh --client codex|claude|cursor [--upgrade] [--non-interactive]
 ```
 
+The verified package CLI accepts the corresponding internal bootstrap flag:
+
+```text
+beroka-governance bootstrap REPO --client codex|claude|cursor \
+  --version vX.Y.Z [--upgrade] [--non-interactive]
+```
+
 First-time installation continues to omit `--upgrade`. An existing registered
 repository uses:
 
@@ -109,26 +116,25 @@ The launcher keeps its current trust boundary:
 1. Resolve the current Git root and canonical GitHub remote.
 2. Clone the embedded annotated release.
 3. Verify tag type, peeled commit, and checked-out commit.
-4. Only after verification, when `--upgrade` is present, invoke the verified
-   new CLI:
+4. Invoke the verified CLI bootstrap flow once with the selected client,
+   embedded version, interaction mode, and `--upgrade` when explicitly
+   requested.
+5. CLI bootstrap snapshots managed repository state before an upgrade,
+   delegates the version change to the existing transactional `update` path,
+   registers the selected client additively, then compares the final state to
+   the pre-upgrade snapshot.
 
-   ```bash
-   beroka-governance update "$repo" --to "$RELEASE_VERSION"
-   ```
-
-5. Invoke the existing verified bootstrap flow with the selected client,
-   embedded version, and interaction mode.
-
-The second bootstrap call preserves existing clients and adds the selected
-client only when needed. It also prints the existing repository-review result,
-configures only the selected connector, and runs Doctor.
+This single bootstrap call preserves existing clients and adds the selected
+client only when needed. It reports `Repository pull request: REQUIRED` when
+the upgrade changed the tracked lock or managed entrypoints, configures only
+the selected connector, and runs Doctor.
 
 ## Failure behavior
 
 - Without `--upgrade`, a mismatched existing pin still returns
   `VERSION_MISMATCH`.
-- A missing or invalid registration stops during `update`; bootstrap and
-  connector setup do not run.
+- A missing or invalid registration stops before an upgrade; connector setup
+  does not run.
 - A failed update uses the existing transaction behavior and does not continue.
 - Authentication failure after a successful update keeps the reviewed
   repository changes and returns the client-specific OAuth remediation.
@@ -145,8 +151,11 @@ required. Connector-only changes remain local and do not create an empty PR.
 
 1. Launcher parsing rejects duplicate `--upgrade`.
 2. Without `--upgrade`, the launcher invokes only the existing bootstrap call.
-3. With `--upgrade`, the verified new CLI receives `update` before `bootstrap`.
-4. If `update` fails, bootstrap is not invoked.
+3. With `--upgrade`, the launcher passes the flag to the verified CLI
+   bootstrap call.
+4. CLI bootstrap snapshots before the transactional update, stops on update
+   failure, and reports that a repository PR is required after a successful
+   version change.
 5. `--upgrade` rejects a target older than the current pin.
 6. Quick start reuses healthy GitHub authentication and starts `gh` browser
    OAuth only when authentication is missing.
