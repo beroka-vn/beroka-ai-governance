@@ -30,15 +30,17 @@ has_repository_governance_mutation() {
       install = text ~ /(governance[[:space:]]+(install|upgrade|bootstrap)|(install|upgrade|bootstrap)[[:space:]]+governance)/
       target = text ~ /application[[:space:]]+(repository|repo)/ ||
         (text ~ /application/ && text ~ /(pull request|(^|[[:space:]])pr([^[:alpha:]]|$))/)
-      action = text ~ /pin/ || text ~ /diff/ ||
-        text ~ /git[[:space:]]+(add|commit|push)/ ||
-        text ~ /(^|[[:space:]])(add|commit|push)([^[:alpha:]]|$)/ ||
-        text ~ /(add|write|create|commit).*\.beroka-governance\.lock/ ||
-        text ~ /(open|create).*(pull request|[[:space:]]pr([^[:alpha:]]|$))/
-      denial = text ~ /(does not|do not|never|ignore|ignores|ignored|without).*(pin|diff|add|commit|push|\.beroka-governance\.lock|pull request|[[:space:]]pr([^[:alpha:]]|$))/
-      if (install && target && action && !denial) {
-        found = 1
-        exit
+      clauses = split(text, clause, /[.;:]/)
+      for (i = 1; i <= clauses; i++) {
+        action = clause[i] ~ /(^|[[:space:]])(pin|diff|add|commit|push)([^[:alpha:]]|$)/ ||
+          clause[i] ~ /git[[:space:]]+(add|commit|push)/ ||
+          clause[i] ~ /(add|write|create|commit).*\.beroka-governance\.lock/ ||
+          clause[i] ~ /(open|create).*(pull request|[[:space:]]pr([^[:alpha:]]|$))/
+        denial = clause[i] ~ /(does not|do not|never|ignore|ignores|ignored|without).*(pin|diff|add|commit|push|\.beroka-governance\.lock|pull request|[[:space:]]pr([^[:alpha:]]|$))/
+        if (install && target && action && !denial) {
+          found = 1
+          exit
+        }
       }
     }
     END { exit(found ? 0 : 1) }
@@ -152,6 +154,17 @@ printf '%s\n' \
 if has_repository_governance_mutation "$guidance_fixture"; then
   fail 'repository governance check rejected ordinary application workflow'
 fi
+printf '%s\n' \
+  'Application repository behavior differs during governance installation.' \
+  >"$guidance_fixture"
+if has_repository_governance_mutation "$guidance_fixture"; then
+  fail 'repository governance check rejected non-action wording'
+fi
+printf '%s\n' \
+  'During governance upgrade, do not delete legacy files; add and commit the governance lock in the application repository.' \
+  >"$guidance_fixture"
+has_repository_governance_mutation "$guidance_fixture" ||
+  fail 'repository governance check accepted mixed denial and mutation guidance'
 rm -f "$guidance_fixture"
 trap - EXIT HUP INT TERM
 
