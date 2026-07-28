@@ -74,138 +74,48 @@ require_text PACKAGE-DESIGN.md '15-second total deadline'
   fail 'missing release launcher template'
 
 interactive_launcher=$(cat <<'EOF'
-(
-  set -eu
-  client=codex
-
-  dependency_error() {
-    printf '%s\n' 'Result: DEPENDENCY_MISSING' "$1" >&2
-    exit 1
-  }
-  run_as_root() {
-    if [ "$(id -u)" -eq 0 ]; then
-      "$@"
-    elif command -v sudo >/dev/null 2>&1; then
-      sudo "$@"
-    else
-      dependency_error "Install:$missing"
-    fi
-  }
-
-  client_command=$client
-  [ "$client" != cursor ] || client_command=cursor-agent
-  command -v "$client_command" >/dev/null 2>&1 ||
-    dependency_error "Install $client_command, then rerun this command"
-
-  missing=
-  for dependency in gh jq; do
-    command -v "$dependency" >/dev/null 2>&1 ||
-      missing="$missing $dependency"
-  done
-  if [ -n "$missing" ]; then
-    [ -t 0 ] && [ -t 1 ] ||
-      dependency_error "Install:$missing"
-    installer=
-    for candidate in apt-get dnf brew; do
-      if command -v "$candidate" >/dev/null 2>&1; then
-        installer=$candidate
-        break
-      fi
-    done
-    [ -n "$installer" ] || dependency_error "Install:$missing"
-    printf 'Missing dependencies:%s\n' "$missing"
-    printf 'Install with %s (may request sudo)? [y/N] ' "$installer"
-    IFS= read -r answer || answer=
-    case "$answer" in
-      y|Y|yes|YES) ;;
-      *) dependency_error "Install:$missing" ;;
-    esac
-    case "$installer" in
-      apt-get)
-        run_as_root apt-get update &&
-          run_as_root apt-get install -y $missing ||
-          dependency_error "Install:$missing"
-        ;;
-      dnf)
-        run_as_root dnf install -y $missing ||
-          dependency_error "Install:$missing"
-        ;;
-      brew)
-        brew install $missing || dependency_error "Install:$missing"
-        ;;
-    esac
-  fi
-
-  for dependency in gh jq; do
-    command -v "$dependency" >/dev/null 2>&1 ||
-      dependency_error "Install: $dependency"
-  done
-
-  if ! gh auth status --hostname github.com >/dev/null 2>&1; then
-    [ -t 0 ] && [ -t 1 ] || {
-      printf '%s\n' \
-        'Result: GITHUB_AUTH_REQUIRED' \
-        'Remediation: gh auth login --hostname github.com --web' >&2
-      exit 1
-    }
-    printf 'GitHub authentication required. Start browser OAuth? [y/N] '
-    IFS= read -r answer || answer=
-    case "$answer" in
-      y|Y|yes|YES)
-        gh auth login --hostname github.com --web
-        ;;
-      *)
-        printf '%s\n' \
-          'Result: GITHUB_AUTH_REQUIRED' \
-          'Remediation: gh auth login --hostname github.com --web' >&2
-        exit 1
-        ;;
-    esac
-  fi
-
-  bootstrap_file=$(mktemp "${TMPDIR:-/tmp}/beroka-bootstrap.XXXXXX")
-  trap 'rm -f "$bootstrap_file"' EXIT HUP INT TERM
+bash -e -o pipefail -c '
+  gh auth status --hostname github.com >/dev/null 2>&1 ||
+    gh auth login --hostname github.com --web
   gh auth setup-git --hostname github.com
   gh release download \
     --repo beroka-vn/beroka-ai-governance \
     --pattern bootstrap.sh \
-    --clobber \
-    --output "$bootstrap_file"
-  sh "$bootstrap_file" --client "$client"
+    --output - |
+    sh -s -- --client codex
+'
+EOF
 )
+
+upgrade_launcher=$(cat <<'EOF'
+bash -e -o pipefail -c '
+  gh auth status --hostname github.com >/dev/null 2>&1 ||
+    gh auth login --hostname github.com --web
+  gh auth setup-git --hostname github.com
+  gh release download \
+    --repo beroka-vn/beroka-ai-governance \
+    --pattern bootstrap.sh \
+    --output - |
+    sh -s -- --client codex --upgrade
+'
 EOF
 )
 
 noninteractive_launcher=$(cat <<'EOF'
-(
-  set -eu
-  client=codex
-  client_command=$client
-  [ "$client" != cursor ] || client_command=cursor-agent
-  for dependency in "$client_command" gh jq; do
-    command -v "$dependency" >/dev/null 2>&1 || {
-      printf '%s\n' \
-        'Result: DEPENDENCY_MISSING' \
-        "Remediation: install $dependency" >&2
-      exit 1
-    }
-  done
+bash -e -o pipefail -c '
   gh auth status --hostname github.com >/dev/null 2>&1 || {
-    printf '%s\n' \
-      'Result: GITHUB_AUTH_REQUIRED' \
-      'Remediation: gh auth login --hostname github.com --web' >&2
-    exit 1
+    printf "%s\n" \
+      "Result: GITHUB_AUTH_REQUIRED" \
+      "Remediation: gh auth login --hostname github.com --web" >&2
+      exit 1
   }
-  bootstrap_file=$(mktemp "${TMPDIR:-/tmp}/beroka-bootstrap.XXXXXX")
-  trap 'rm -f "$bootstrap_file"' EXIT HUP INT TERM
   gh auth setup-git --hostname github.com
   gh release download \
     --repo beroka-vn/beroka-ai-governance \
     --pattern bootstrap.sh \
-    --clobber \
-    --output "$bootstrap_file"
-  sh "$bootstrap_file" --client "$client" --non-interactive
-)
+    --output - |
+    sh -s -- --client codex --non-interactive
+'
 EOF
 )
 section_fixture=$(mktemp "$ROOT/tests/.release-section.XXXXXX")
@@ -229,51 +139,73 @@ mkdir "$behavior_root/bin"
 cat >"$behavior_root/bin/gh" <<'EOF'
 #!/bin/sh
 set -eu
+printf 'gh %s\n' "$*" >>"$GH_CALLS"
 case "$1:$2" in
   auth:status)
     [ "${GH_AUTH_STATE:-healthy}" = healthy ]
     ;;
+  auth:login)
+    ;;
   auth:setup-git)
-    printf '%s\n' 'auth setup-git' >>"$GH_CALLS"
     ;;
   release:download)
-    printf '%s\n' 'release download' >>"$GH_CALLS"
-    exit 23
+    [ "${GH_DOWNLOAD_FAIL:-0}" -eq 0 ] || exit 23
+    printf '%s\n' '#!/bin/sh' 'exit 0'
     ;;
   *)
     exit 64
     ;;
 esac
 EOF
-cat >"$behavior_root/bin/jq" <<'EOF'
-#!/bin/sh
-exit 0
-EOF
-cat >"$behavior_root/bin/codex" <<'EOF'
-#!/bin/sh
-exit 0
-EOF
 cat >"$behavior_root/bin/sh" <<'EOF'
 #!/bin/sh
 set -eu
+cat >/dev/null
+printf 'sh %s\n' "$*" >>"$GH_CALLS"
 : >"$INNER_SH_CALLED"
 EOF
-chmod +x "$behavior_root/bin/gh" "$behavior_root/bin/jq" \
-  "$behavior_root/bin/codex" "$behavior_root/bin/sh"
+chmod +x "$behavior_root/bin/gh" "$behavior_root/bin/sh"
 first_code_block_after_heading README.md '## Quick start' \
   >"$behavior_root/quick-start.sh"
 : >"$behavior_root/gh-calls"
-if PATH="$behavior_root/bin:$PATH" \
+if PATH="$behavior_root/bin:$PATH" GH_DOWNLOAD_FAIL=1 \
   GH_CALLS="$behavior_root/gh-calls" \
   INNER_SH_CALLED="$behavior_root/inner-sh-called" \
   /bin/sh "$behavior_root/quick-start.sh"; then
   fail 'README Quick start succeeds when gh release download fails'
 fi
-[ "$(cat "$behavior_root/gh-calls")" = "$(printf '%s\n%s' \
-  'auth setup-git' 'release download')" ] ||
+case "$(cat "$behavior_root/gh-calls")" in
+  *'gh auth status --hostname github.com'*\
+*'gh auth setup-git --hostname github.com'*\
+*'gh release download --repo beroka-vn/beroka-ai-governance --pattern bootstrap.sh --output -'*) ;;
+  *)
   fail 'README Quick start does not set up Git auth before release download'
-[ ! -e "$behavior_root/inner-sh-called" ] ||
-  fail 'README Quick start invokes the bootstrap shell after download failure'
+    ;;
+esac
+rm -f "$behavior_root/inner-sh-called"
+
+: >"$behavior_root/gh-calls"
+GH_AUTH_STATE=required \
+  PATH="$behavior_root/bin:$PATH" \
+  GH_CALLS="$behavior_root/gh-calls" \
+  INNER_SH_CALLED="$behavior_root/inner-sh-called" \
+  /bin/sh "$behavior_root/quick-start.sh"
+case "$(cat "$behavior_root/gh-calls")" in
+  *'gh auth login --hostname github.com --web'*\
+*'sh -s -- --client codex'*) ;;
+  *) fail 'README Quick start did not authenticate and install' ;;
+esac
+
+first_code_block_after_heading README.md '### Upgrade' \
+  >"$behavior_root/upgrade.sh"
+: >"$behavior_root/gh-calls"
+PATH="$behavior_root/bin:$PATH" \
+  GH_CALLS="$behavior_root/gh-calls" \
+  INNER_SH_CALLED="$behavior_root/inner-sh-called" \
+  /bin/sh "$behavior_root/upgrade.sh"
+grep -F 'sh -s -- --client codex --upgrade' \
+  "$behavior_root/gh-calls" >/dev/null ||
+  fail 'README Upgrade omitted explicit --upgrade'
 
 first_code_block_after_heading README.md '### Automation / CI' \
   >"$behavior_root/automation.sh"
@@ -289,193 +221,10 @@ fi
 assert_contains "$output" 'Result: GITHUB_AUTH_REQUIRED'
 assert_contains "$output" \
   'Remediation: gh auth login --hostname github.com --web'
-[ ! -s "$behavior_root/gh-calls" ] ||
+[ "$(cat "$behavior_root/gh-calls")" = \
+  'gh auth status --hostname github.com' ] ||
   fail 'Automation / CI launcher continued after missing authentication'
 rm -rf "$behavior_root"
-trap - EXIT HUP INT TERM
-
-overwrite_root=$(mktemp -d \
-  "${TMPDIR:-/tmp}/beroka-release-overwrite-test.XXXXXX")
-trap 'rm -rf "$overwrite_root"' EXIT HUP INT TERM
-mkdir "$overwrite_root/bin"
-cat >"$overwrite_root/bin/gh" <<'EOF'
-#!/bin/sh
-set -eu
-case "$1:$2" in
-  auth:status)
-    ;;
-  auth:setup-git)
-    ;;
-  release:download)
-    shift 2
-    clobber=0
-    output=
-    while [ "$#" -gt 0 ]; do
-      case "$1" in
-        --clobber)
-          clobber=1
-          shift
-          ;;
-        --output)
-          output=$2
-          shift 2
-          ;;
-        *)
-          shift
-          ;;
-      esac
-    done
-    [ -n "$output" ] && [ -e "$output" ] || exit 65
-    [ "$clobber" -eq 1 ] || exit 17
-    printf '%s\n' '#!/bin/sh' 'exit 0' >"$output"
-    ;;
-  *)
-    exit 64
-    ;;
-esac
-EOF
-cat >"$overwrite_root/bin/jq" <<'EOF'
-#!/bin/sh
-exit 0
-EOF
-cat >"$overwrite_root/bin/codex" <<'EOF'
-#!/bin/sh
-exit 0
-EOF
-cat >"$overwrite_root/bin/sh" <<'EOF'
-#!/bin/sh
-set -eu
-: >"$INNER_SH_CALLED"
-EOF
-chmod +x "$overwrite_root/bin/gh" "$overwrite_root/bin/jq" \
-  "$overwrite_root/bin/codex" "$overwrite_root/bin/sh"
-first_code_block_after_heading README.md '## Quick start' \
-  >"$overwrite_root/quick-start.sh"
-if ! PATH="$overwrite_root/bin:$PATH" \
-  INNER_SH_CALLED="$overwrite_root/inner-sh-called" \
-  /bin/sh "$overwrite_root/quick-start.sh"; then
-  fail 'README Quick start cannot replace its secure temporary file'
-fi
-[ -e "$overwrite_root/inner-sh-called" ] ||
-  fail 'README Quick start did not invoke the downloaded bootstrap'
-rm -rf "$overwrite_root"
-trap - EXIT HUP INT TERM
-
-dependency_root=$(mktemp -d \
-  "${TMPDIR:-/tmp}/beroka-release-dependency-test.XXXXXX")
-trap 'rm -rf "$dependency_root"' EXIT HUP INT TERM
-mkdir "$dependency_root/bin"
-ln -s /usr/bin/mktemp "$dependency_root/bin/mktemp"
-ln -s /bin/rm "$dependency_root/bin/rm"
-cat >"$dependency_root/bin/codex" <<'EOF'
-#!/bin/sh
-exit 0
-EOF
-cat >"$dependency_root/bin/id" <<'EOF'
-#!/bin/sh
-printf '%s\n' 0
-EOF
-cat >"$dependency_root/bin/apt-get" <<'EOF'
-#!/bin/sh
-set -eu
-printf 'apt-get %s\n' "$*" >>"$INSTALL_CALLS"
-case "$1" in
-  update) ;;
-  install)
-    /bin/cp "$READY_BIN/gh" "$ACTIVE_BIN/gh"
-    /bin/cp "$READY_BIN/jq" "$ACTIVE_BIN/jq"
-    /bin/chmod +x "$ACTIVE_BIN/gh" "$ACTIVE_BIN/jq"
-    ;;
-  *) exit 64 ;;
-esac
-EOF
-cat >"$dependency_root/bin/sh" <<'EOF'
-#!/bin/sh
-printf 'sh %s\n' "$*" >>"$INSTALL_CALLS"
-EOF
-mkdir "$dependency_root/ready"
-cat >"$dependency_root/ready/gh" <<'EOF'
-#!/bin/sh
-set -eu
-printf 'gh %s\n' "$*" >>"$INSTALL_CALLS"
-case "$1:$2" in
-  auth:status)
-    [ -e "$AUTH_MARKER" ]
-    ;;
-  auth:login)
-    : >"$AUTH_MARKER"
-    ;;
-  auth:setup-git)
-    ;;
-  release:download)
-    shift 2
-    while [ "$#" -gt 0 ]; do
-      case "$1" in
-        --output)
-          output=$2
-          shift 2
-          ;;
-        *) shift ;;
-      esac
-    done
-    printf '%s\n' '#!/bin/sh' >"$output"
-    ;;
-  *) exit 64 ;;
-esac
-EOF
-cat >"$dependency_root/ready/jq" <<'EOF'
-#!/bin/sh
-exit 0
-EOF
-chmod +x \
-  "$dependency_root/bin/apt-get" \
-  "$dependency_root/bin/codex" \
-  "$dependency_root/bin/id" \
-  "$dependency_root/bin/sh" \
-  "$dependency_root/ready/gh" \
-  "$dependency_root/ready/jq"
-first_code_block_after_heading README.md '## Quick start' \
-  >"$dependency_root/quick-start.sh"
-first_code_block_after_heading README.md '### Automation / CI' \
-  >"$dependency_root/automation.sh"
-: >"$dependency_root/install-calls"
-if output=$(PATH="$dependency_root/bin" \
-  INSTALL_CALLS="$dependency_root/install-calls" \
-  /bin/sh "$dependency_root/automation.sh" 2>&1)
-then
-  fail 'Automation / CI launcher installed or accepted missing dependencies'
-fi
-assert_contains "$output" 'Result: DEPENDENCY_MISSING'
-assert_contains "$output" 'Remediation: install gh'
-[ ! -s "$dependency_root/install-calls" ] ||
-  fail 'Automation / CI launcher attempted dependency installation'
-output=$(printf 'y\ny\n' | \
-  PATH="$dependency_root/bin" \
-  INSTALL_CALLS="$dependency_root/install-calls" \
-  READY_BIN="$dependency_root/ready" \
-  ACTIVE_BIN="$dependency_root/bin" \
-  AUTH_MARKER="$dependency_root/authenticated" \
-  /usr/bin/script -qec \
-    "/bin/sh $dependency_root/quick-start.sh" /dev/null 2>&1)
-assert_contains "$output" 'Missing dependencies: gh jq'
-assert_contains "$output" \
-  'GitHub authentication required. Start browser OAuth?'
-require_call=$(cat "$dependency_root/install-calls")
-case "$require_call" in
-  *'apt-get update'*'apt-get install -y gh jq'*\
-'gh auth login --hostname github.com --web'*\
-'gh auth setup-git --hostname github.com'*\
-'gh release download'*\
-'sh '*"--client codex"*) ;;
-  *) fail "interactive installer flow is incomplete: [$require_call]" ;;
-esac
-case "$require_call" in
-  *--non-interactive*)
-    fail 'interactive Quick start invokes non-interactive bootstrap'
-    ;;
-  *) ;;
-esac
-rm -rf "$dependency_root"
 trap - EXIT HUP INT TERM
 
 require_text PACKAGE-DESIGN.md \
@@ -493,6 +242,16 @@ require_text PACKAGE-DESIGN.md 'checked-out HEAD each equal the embedded commit'
   PACKAGE-DESIGN.md '### Release launcher')" = "$interactive_launcher" ] ||
   fail 'PACKAGE-DESIGN Release launcher does not begin with the exact interactive launcher'
 
+[ "$(first_code_block_after_heading README.md '### Upgrade')" = \
+  "$upgrade_launcher" ] ||
+  fail 'README Upgrade does not use the exact upgrade launcher'
+[ "$(first_code_block_after_heading handbook.md '### Upgrade')" = \
+  "$upgrade_launcher" ] ||
+  fail 'handbook Upgrade does not use the exact upgrade launcher'
+[ "$(first_code_block_after_heading PACKAGE-DESIGN.md '### Upgrade')" = \
+  "$upgrade_launcher" ] ||
+  fail 'PACKAGE-DESIGN Upgrade does not use the exact upgrade launcher'
+
 [ "$(first_code_block_after_heading README.md '### Automation / CI')" = \
   "$noninteractive_launcher" ] ||
   fail 'README Automation / CI launcher is not fail-closed'
@@ -506,11 +265,11 @@ require_text PACKAGE-DESIGN.md 'checked-out HEAD each equal the embedded commit'
 reject_text PACKAGE-DESIGN.md 'It never pipes network output directly to a shell.'
 
 for file in README.md handbook.md PACKAGE-DESIGN.md; do
+  require_text "$file" 'bash -e -o pipefail -c'
   require_text "$file" 'gh auth login --hostname github.com --web'
   require_text "$file" 'gh auth setup-git --hostname github.com'
   require_text "$file" 'client-owned GitHub OAuth'
   require_text "$file" 'private HTTPS clone'
-  reject_text "$file" '--output - |'
   reject_text "$file" 'curl | sh'
   reject_text "$file" 'releases/latest/download/bootstrap.sh'
   reject_text "$file" 'latest URL'
