@@ -16,9 +16,7 @@ CLIENTS_FILE=$CONFIG_ROOT/clients
 CURSOR_ACK_FILE=$CONFIG_ROOT/cursor-user-rule.sha256
 TX_DIR= TX_REPO= TX_COMMITTED=0 TX_RELEASE_NEW=0 TX_RELEASE_TARGET= TX_RELEASE_STAGE= TX_RELEASE_OWNED=0
 TX_CLI_PATH= TX_CLI_SNAPSHOT=0 TX_ACTIVE_RELEASE_SNAPSHOT=0 TX_REGISTRY_SNAPSHOT=0 TX_REGISTRY_ACTION=none
-ROUTING_FILE=.beroka-governance.conf
-ROUTING_STATE= ROUTING_BASELINE_PRESENT=0 ROUTING_BASELINE_COMMIT=
-ROUTING_BASELINE_FILE= ROUTING_TEMP_DIR=
+ROUTING_STATE= REPOSITORY_SLUG= CATALOG_RECORD=
 ROUTE_SCHEMA_VERSION= ROUTE_PROFILE= ROUTE_JIRA_PROJECT_KEY=
 ROUTE_JIRA_BOARD_ID= ROUTE_CONFLUENCE_SPACE_KEY=
 ROUTE_CONFLUENCE_ROOT_CONTENT_ID= ROUTE_CONFLUENCE_ROOT_CONTENT_TYPE=
@@ -36,7 +34,6 @@ SUPPRESS_PASS_RESULT=0
 die() {
   code=$1
   shift
-  [ -z "$ROUTING_TEMP_DIR" ] || routing_cleanup
   printf '%s\n' "Result: $code" >&2
   if [ "$#" -gt 0 ]; then printf '%s\n' "$*" >&2; fi
   exit 1
@@ -158,6 +155,23 @@ normalize_github_url() {
     https://github.com/*) ngu_slug=${ngu_url#https://github.com/} ;;
     git@github.com:*) ngu_slug=${ngu_url#git@github.com:} ;;
     ssh://git@github.com/*) ngu_slug=${ngu_url#ssh://git@github.com/} ;;
+    git@*:*|ssh://git@*/*)
+      case "$ngu_url" in
+        git@*)
+          ngu_host=${ngu_url#git@}
+          ngu_host=${ngu_host%%:*}
+          ngu_slug=${ngu_url#*:}
+          ;;
+        ssh://git@*)
+          ngu_host=${ngu_url#ssh://git@}
+          ngu_host=${ngu_host%%/*}
+          ngu_slug=${ngu_url#ssh://git@*/}
+          ;;
+      esac
+      ssh -G "$ngu_host" 2>/dev/null |
+        awk '$1 == "hostname" && $2 == "github.com" { found++ } END { exit found != 1 }' ||
+        return 1
+      ;;
     *) return 1 ;;
   esac
   while [ "${ngu_slug%/}" != "$ngu_slug" ]; do ngu_slug=${ngu_slug%/}; done
@@ -198,131 +212,35 @@ resolve_canonical_remote() {
     die REMOTE_MISMATCH 'Cannot resolve exactly one canonical GitHub remote'
 }
 
-routing_cleanup() {
-  rc_temp=$ROUTING_TEMP_DIR
-  ROUTING_TEMP_DIR=
-  [ -z "$rc_temp" ] || rm -rf "$rc_temp"
-  trap - EXIT HUP INT TERM
-}
-
-fetch_routing_baseline() {
-  ROUTING_BASELINE_PRESENT=0 ROUTING_BASELINE_COMMIT= ROUTING_BASELINE_FILE=
-  rfb_advertised=$(git ls-remote --symref "$CANONICAL_REMOTE_URL" HEAD 2>/dev/null) || return 1
-  rfb_ref=$(printf '%s\n' "$rfb_advertised" |
-    awk '$1 == "ref:" && $3 == "HEAD" { print $2; exit }')
-  rfb_commit=$(printf '%s\n' "$rfb_advertised" |
-    awk '$2 == "HEAD" && $1 ~ /^[0-9a-f]{40}$/ { print $1; exit }')
-  case "$rfb_ref:$rfb_commit" in
-    refs/heads/*:[0-9a-f][0-9a-f]*) ;;
+catalog_record_for_slug() {
+  crs_slug=$1
+  printf '%s\n' "$crs_slug" |
+    grep -Eq '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' || return 1
+  CATALOG_RECORD=$RELEASE_DIR/runtime/repositories/$crs_slug.conf
+  case "$CATALOG_RECORD" in
+    "$RELEASE_DIR/runtime/repositories/"*) ;;
     *) return 1 ;;
   esac
-
-  ROUTING_TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/beroka-routing-fetch.XXXXXX") || return 1
-  trap 'routing_cleanup' EXIT
-  trap 'routing_cleanup; exit 1' HUP INT TERM
-  git -C "$ROUTING_TEMP_DIR" init -q --bare || {
-    routing_cleanup
-    return 1
-  }
-  git -C "$ROUTING_TEMP_DIR" fetch -q --depth 1 \
-    "$CANONICAL_REMOTE_URL" "$rfb_ref" || {
-    routing_cleanup
-    return 1
-  }
-  ROUTING_BASELINE_COMMIT=$(git -C "$ROUTING_TEMP_DIR" rev-parse FETCH_HEAD 2>/dev/null) || {
-    routing_cleanup
-    return 1
-  }
-  [ "$ROUTING_BASELINE_COMMIT" = "$rfb_commit" ] || {
-    routing_cleanup
-    return 1
-  }
-
-  ROUTING_BASELINE_FILE=$ROUTING_TEMP_DIR/baseline.conf
-  if git -C "$ROUTING_TEMP_DIR" cat-file -e \
-    "$ROUTING_BASELINE_COMMIT:$ROUTING_FILE" 2>/dev/null
-  then
-    rfb_mode=$(git -C "$ROUTING_TEMP_DIR" ls-tree \
-      "$ROUTING_BASELINE_COMMIT" -- "$ROUTING_FILE" |
-      awk '{ print $1; exit }')
-    case "$rfb_mode" in
-      100644|100755) ;;
-      *) routing_cleanup; return 2 ;;
-    esac
-    git -C "$ROUTING_TEMP_DIR" show \
-      "$ROUTING_BASELINE_COMMIT:$ROUTING_FILE" \
-      >"$ROUTING_BASELINE_FILE" || {
-      routing_cleanup
-      return 1
-    }
-    ROUTING_BASELINE_PRESENT=1
-  else
-    : >"$ROUTING_BASELINE_FILE"
-  fi
 }
 
-local_routing_present() {
-  git -C "$REPO" cat-file -e "HEAD:$ROUTING_FILE" 2>/dev/null ||
-    git -C "$REPO" ls-files --error-unmatch "$ROUTING_FILE" >/dev/null 2>&1 ||
-    [ -e "$REPO/$ROUTING_FILE" ] || [ -L "$REPO/$ROUTING_FILE" ]
-}
-
-local_routing_matches_baseline() {
-  [ ! -L "$REPO/$ROUTING_FILE" ] && [ -f "$REPO/$ROUTING_FILE" ] || return 1
-  lrm_baseline=$(git -C "$ROUTING_TEMP_DIR" ls-tree \
-    "$ROUTING_BASELINE_COMMIT" -- "$ROUTING_FILE")
-  lrm_head=$(git -C "$REPO" ls-tree HEAD -- "$ROUTING_FILE")
-  lrm_index=$(git -C "$REPO" ls-files -s -- "$ROUTING_FILE")
-  [ -n "$lrm_baseline" ] && [ -n "$lrm_head" ] && [ -n "$lrm_index" ] ||
-    return 1
-  lrm_mode=$(printf '%s\n' "$lrm_baseline" | awk '{ print $1 }')
-  lrm_blob=$(printf '%s\n' "$lrm_baseline" | awk '{ print $3 }')
-  [ "$(printf '%s\n' "$lrm_head" | awk '{ print $1, $3 }')" = "$lrm_mode $lrm_blob" ] ||
-    return 1
-  [ "$(printf '%s\n' "$lrm_index" | awk '{ print $1, $2 }')" = "$lrm_mode $lrm_blob" ] ||
-    return 1
-  case "$lrm_mode" in
-    100644) [ ! -x "$REPO/$ROUTING_FILE" ] || return 1 ;;
-    100755) [ -x "$REPO/$ROUTING_FILE" ] || return 1 ;;
-    *) return 1 ;;
-  esac
-  cmp -s "$REPO/$ROUTING_FILE" "$ROUTING_BASELINE_FILE"
-}
-
-resolve_routing() {
-  ROUTING_STATE=
-  rr_fetch=0
-  fetch_routing_baseline || rr_fetch=$?
-  case "$rr_fetch" in
-    0) ;;
-    2) ROUTING_STATE=ROUTING_INVALID; return 0 ;;
-    *) ROUTING_STATE=ROUTING_VERIFICATION_REQUIRED; return 0 ;;
-  esac
-  if [ "$ROUTING_BASELINE_PRESENT" -eq 0 ]; then
-    if local_routing_present; then
-      ROUTING_STATE=ROUTING_CHANGE_PENDING
-    else
-      ROUTING_STATE=ROUTING_REQUIRED
-    fi
-  elif local_routing_matches_baseline; then
+resolve_repository_context() {
+  REPO=$(canonical_repo "$1")
+  resolve_canonical_remote "$REPO"
+  REPOSITORY_SLUG=$(normalize_github_url "$CANONICAL_REMOTE_URL") ||
+    die REMOTE_MISMATCH 'Canonical remote is not GitHub'
+  catalog_record_for_slug "$REPOSITORY_SLUG" ||
+    die REMOTE_MISMATCH 'Invalid canonical repository slug'
+  if [ -f "$CATALOG_RECORD" ]; then
+    parse_routing "$CATALOG_RECORD" "$REPOSITORY_SLUG" ||
+      die ROUTING_INVALID
     ROUTING_STATE=ROUTING_ACTIVE
   else
-    ROUTING_STATE=ROUTING_CHANGE_PENDING
-  fi
-  if [ "$ROUTING_BASELINE_PRESENT" -eq 1 ] &&
-     ! parse_routing "$ROUTING_BASELINE_FILE"
-  then
-    ROUTING_STATE=ROUTING_INVALID
-    return 0
-  fi
-  if [ "$ROUTING_STATE" = ROUTING_CHANGE_PENDING ] &&
-     [ -e "$REPO/$ROUTING_FILE" ]
-  then
-    if (parse_routing "$REPO/$ROUTING_FILE"); then
-      printf '%s\n' 'Local routing validation: PASS'
-    else
-      printf '%s\n' 'Local routing validation: INVALID'
-    fi
+    clear_routing_values
+    ROUTE_PROFILE=standalone
+    ROUTE_INTEGRATION_PROFILE=none
+    ROUTE_CROSS_REPO_POLICY=explicit-only
+    DEPENDENCY_STATE=NO_DEPENDENCY_DECLARED
+    ROUTING_STATE=ROUTING_REQUIRED
   fi
 }
 
@@ -336,7 +254,9 @@ clear_routing_values() {
 }
 
 parse_routing() {
-  pr_file=$1
+  pr_file=$1 pr_slug=$2
+  printf '%s\n' "$pr_slug" |
+    grep -Eq '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' || return 1
   clear_routing_values
   [ ! -L "$pr_file" ] && [ -f "$pr_file" ] || return 1
   pr_parsed=$(
@@ -404,7 +324,7 @@ EOF
     return 1
   if [ "$ROUTE_INTEGRATION_PROFILE" = beroka-be-fe ]; then
     awk -F '\t' \
-      -v repository="$LOCK_REPOSITORY" \
+      -v repository="$pr_slug" \
       -v profile="$ROUTE_PROFILE" '
         $0 !~ /^#/ && $1 == repository && $2 == profile { found=1 }
         END { exit !found }
@@ -692,6 +612,7 @@ validate_release_checkout() {
     atlassian_compatibility_schema \
       "$vrc_checkout/runtime/compatibility/atlassian.tsv" >/dev/null ||
       die VERSION_MISMATCH 'Unsupported Atlassian compatibility schema'
+    validate_catalog_records "$vrc_checkout/runtime/repositories"
   fi
   [ "$(sed -n '1p' "$vrc_checkout/VERSION" 2>/dev/null)" = "$vrc_version" ] || die VERSION_MISMATCH 'Installed VERSION does not match requested version'
   [ "$(git -C "$vrc_checkout" cat-file -t "$vrc_version" 2>/dev/null)" = tag ] || die VERSION_MISMATCH 'Installed tag is not annotated'
@@ -700,6 +621,37 @@ validate_release_checkout() {
   assert_detached_release "$vrc_checkout"
   vrc_status=$(git -C "$vrc_checkout" status --porcelain --untracked-files=all 2>/dev/null) || die VERSION_MISMATCH 'Cannot inspect installed release status'
   [ -z "$vrc_status" ] || die VERSION_MISMATCH 'Installed release contains local modifications'
+}
+
+validate_catalog_records() {
+  vcr_root=$1
+  [ ! -L "$vcr_root" ] && [ -d "$vcr_root" ] ||
+    die VERSION_MISMATCH 'Repository catalog is not a regular directory'
+  if find "$vcr_root" -type l -print | grep -q .; then
+    die VERSION_MISMATCH 'Repository catalog contains a symlink'
+  fi
+  vcr_files=$(find "$vcr_root" -type f -name '*.conf' -print | LC_ALL=C sort)
+  [ -n "$vcr_files" ] || return 0
+  printf '%s\n' "$vcr_files" |
+    awk -v root="$vcr_root/" '
+      index($0, root) != 1 { exit 1 }
+      {
+        slug=substr($0, length(root) + 1)
+        sub(/\.conf$/, "", slug)
+        if (slug !~ /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/ || seen[slug]++) exit 1
+      }
+    ' >/dev/null || die VERSION_MISMATCH 'Invalid repository catalog path'
+  vcr_saved_release=$RELEASE_DIR
+  RELEASE_DIR=${vcr_root%/runtime/repositories}
+  while IFS= read -r vcr_file; do
+    vcr_slug=${vcr_file#"$vcr_root/"}
+    vcr_slug=${vcr_slug%.conf}
+    parse_routing "$vcr_file" "$vcr_slug" ||
+      die VERSION_MISMATCH 'Invalid repository catalog record'
+  done <<EOF
+$vcr_files
+EOF
+  RELEASE_DIR=$vcr_saved_release
 }
 
 release_for_version() {
@@ -3246,7 +3198,7 @@ print_preflight_result() {
   ppr_client=$1 ppr_operation=$2
   printf '%s\n' \
     "Client: $ppr_client" \
-    "Routing baseline commit: $ROUTING_BASELINE_COMMIT" \
+    'Routing source: central catalog' \
     "Profile: $ROUTE_PROFILE" \
     "Integration profile: $ROUTE_INTEGRATION_PROFILE" \
     "Cross-repository policy: $ROUTE_CROSS_REPO_POLICY" \
@@ -3316,25 +3268,18 @@ cmd_preflight() {
     [ "$(sed -n '1p' "$RELEASE_DIR/runtime/routing-schema")" = 1 ] ||
     die GOVERNANCE_NOT_READY \
       'Update the repository to a release with runtime/routing-schema=1 before preflight'
-  resolve_routing
+  resolve_repository_context "$REPO"
   case "$ROUTING_STATE" in
     ROUTING_ACTIVE) ;;
-    ROUTING_REQUIRED) routing_cleanup; die ROUTING_REQUIRED ;;
-    ROUTING_CHANGE_PENDING) routing_cleanup; die ROUTING_CHANGE_PENDING ;;
-    ROUTING_INVALID) routing_cleanup; die ROUTING_INVALID ;;
-    *) routing_cleanup; die ROUTING_VERIFICATION_REQUIRED ;;
+    ROUTING_REQUIRED) die ROUTING_REQUIRED ;;
+    *) die ROUTING_INVALID ;;
   esac
-  parse_routing "$ROUTING_BASELINE_FILE" || {
-    routing_cleanup
-    die ROUTING_INVALID
-  }
   require_operation_routing "$pf_operation"
 
   require_client "$pf_client"
   pf_connector=0
   connector_state "$pf_client" || pf_connector=$?
   [ "$pf_connector" -eq 0 ] || {
-    routing_cleanup
     die CONNECTOR_MISSING \
       "Missing compatible Atlassian connector for $pf_client"
   }
@@ -3355,25 +3300,22 @@ cmd_preflight() {
       case "$pf_answer" in
         y|Y|yes|YES)
           run_oauth "$pf_client" || {
-            routing_cleanup
             auth_required "$pf_client"
           }
           pf_health=0
           connector_health "$pf_client" || pf_health=$?
           case "$pf_health" in
             0) ;;
-            1) routing_cleanup; auth_required "$pf_client" ;;
-            *) routing_cleanup; connector_health_unavailable "$pf_client" ;;
+            1) auth_required "$pf_client" ;;
+            *) connector_health_unavailable "$pf_client" ;;
           esac
           ;;
-        *) routing_cleanup; auth_required "$pf_client" ;;
+        *) auth_required "$pf_client" ;;
       esac
     else
-      routing_cleanup
       auth_required "$pf_client"
     fi
   elif [ "$pf_health" -ne 0 ]; then
-    routing_cleanup
     connector_health_unavailable "$pf_client"
   fi
 
@@ -3386,12 +3328,10 @@ cmd_preflight() {
         "Capability state: $CAPABILITY_STATE" \
         "Capability evidence: $CAPABILITY_EVIDENCE_SOURCE" \
         "Runtime inventory: $CAPABILITY_INVENTORY_STATE"
-      routing_cleanup
       die CONNECTOR_CAPABILITY_REQUIRED
     fi
   fi
   print_preflight_result "$pf_client" "$pf_operation"
-  routing_cleanup
 }
 
 cmd_setup_connectors() {
@@ -3519,24 +3459,22 @@ cmd_context() {
   verify_registration "$1"
   cat "$RELEASE_DIR/runtime/entrypoint.md" || die GOVERNANCE_NOT_READY 'Cannot read runtime entrypoint'
   [ -e "$RELEASE_DIR/runtime/routing-schema" ] || return 0
-  resolve_routing
+  resolve_repository_context "$REPO"
   printf '%s\n' \
     "Routing: $ROUTING_STATE" \
-    "Routing baseline commit: ${ROUTING_BASELINE_COMMIT:-UNVERIFIED}"
+    'Routing source: central catalog'
   render_routing_context
   case "$ROUTING_STATE" in
     ROUTING_ACTIVE) printf '%s\n' 'External routing-dependent writes: PREFLIGHT_REQUIRED' ;;
     *) printf '%s\n' 'External routing-dependent writes: BLOCKED' ;;
   esac
-  routing_cleanup
 }
 
 render_routing_context() {
   cat "$RELEASE_DIR/runtime/rules/general.md" ||
     die GOVERNANCE_NOT_READY 'Cannot read general runtime rules'
-  [ "$ROUTING_BASELINE_PRESENT" -eq 1 ] || return 0
   case "$ROUTING_STATE" in
-    ROUTING_ACTIVE|ROUTING_CHANGE_PENDING) ;;
+    ROUTING_ACTIVE|ROUTING_REQUIRED) ;;
     *) return 0 ;;
   esac
   printf '%s\n' \
