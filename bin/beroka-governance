@@ -11,8 +11,9 @@ ATLASSIAN_MCP_URL=https://mcp.atlassian.com/v1/mcp/authv2
 START_MARKER='<!-- BEROKA-GOVERNANCE:START -->'
 END_MARKER='<!-- BEROKA-GOVERNANCE:END -->'
 REGISTRY=$CONFIG_ROOT/registered-repos
+ACTIVE_RELEASE=$CONFIG_ROOT/active-release
 TX_DIR= TX_REPO= TX_COMMITTED=0 TX_RELEASE_NEW=0 TX_RELEASE_TARGET= TX_RELEASE_STAGE= TX_RELEASE_OWNED=0
-TX_CLI_PATH= TX_CLI_SNAPSHOT=0 TX_REGISTRY_SNAPSHOT=0 TX_REGISTRY_ACTION=none
+TX_CLI_PATH= TX_CLI_SNAPSHOT=0 TX_ACTIVE_RELEASE_SNAPSHOT=0 TX_REGISTRY_SNAPSHOT=0 TX_REGISTRY_ACTION=none
 ROUTING_FILE=.beroka-governance.conf
 ROUTING_STATE= ROUTING_BASELINE_PRESENT=0 ROUTING_BASELINE_COMMIT=
 ROUTING_BASELINE_FILE= ROUTING_TEMP_DIR=
@@ -455,7 +456,7 @@ tx_begin() {
   TX_REPO=$1
   TX_DIR=$(mktemp -d "${TMPDIR:-/tmp}/beroka-governance-tx.XXXXXX") || die GOVERNANCE_NOT_READY 'Cannot create transaction directory'
   TX_COMMITTED=0 TX_RELEASE_NEW=0 TX_RELEASE_TARGET= TX_RELEASE_STAGE= TX_RELEASE_OWNED=0
-  TX_CLI_PATH= TX_CLI_SNAPSHOT=0 TX_REGISTRY_SNAPSHOT=0 TX_REGISTRY_ACTION=none
+  TX_CLI_PATH= TX_CLI_SNAPSHOT=0 TX_ACTIVE_RELEASE_SNAPSHOT=0 TX_REGISTRY_SNAPSHOT=0 TX_REGISTRY_ACTION=none
   trap 'tx_abort' EXIT
   trap 'tx_abort; exit 1' HUP INT TERM
   mkdir -p "$TX_DIR/staged" "$TX_DIR/backup" "$TX_DIR/work" || die GOVERNANCE_NOT_READY 'Cannot initialize transaction directory'
@@ -527,6 +528,7 @@ tx_abort() {
   set +e
   if [ "$TX_COMMITTED" -eq 0 ]; then
     if [ "$TX_REGISTRY_SNAPSHOT" -eq 1 ]; then tx_restore_user_file "$REGISTRY" registry; fi
+    if [ "$TX_ACTIVE_RELEASE_SNAPSHOT" -eq 1 ]; then tx_restore_user_file "$ACTIVE_RELEASE" active-release; fi
     if [ -f "$TX_DIR/originals" ]; then
       while IFS="$(printf '\t')" read -r state relative; do
         case "$state" in
@@ -584,6 +586,38 @@ apply_user_file() {
     rm -f "$auf_temp" || :
     die GOVERNANCE_NOT_READY "Cannot replace $auf_label"
   fi
+}
+
+write_active_release() {
+  war_file=$1 war_version=$2 war_commit=$3
+  printf '%s\n' \
+    "VERSION=$war_version" \
+    "COMMIT=$war_commit" >"$war_file" ||
+    die GOVERNANCE_NOT_READY 'Cannot stage active release'
+}
+
+load_active_release() {
+  assert_safe_user_path "$ACTIVE_RELEASE" 'active release'
+  [ -f "$ACTIVE_RELEASE" ] ||
+    die GOVERNANCE_NOT_READY 'No active governance release is installed'
+  ar_values=$(awk -F= '
+    $1 == "VERSION" && $2 ~ /^v[0-9]+\.[0-9]+\.[0-9]+$/ && !version++ {
+      value=$2
+    }
+    $1 == "COMMIT" && $2 ~ /^[0-9a-f]{40}$/ && !commit++ {
+      hash=$2
+    }
+    END {
+      if (NR != 2 || version != 1 || commit != 1) exit 1
+      print value "\t" hash
+    }
+  ' "$ACTIVE_RELEASE") ||
+    die VERSION_MISMATCH 'Invalid active release record'
+  ACTIVE_VERSION=${ar_values%%	*}
+  ACTIVE_COMMIT=${ar_values#*	}
+  release_for_version "$ACTIVE_VERSION"
+  [ "$RELEASE_COMMIT" = "$ACTIVE_COMMIT" ] ||
+    die VERSION_MISMATCH 'Active release commit does not match installed tag'
 }
 
 assert_detached_release() {
@@ -767,10 +801,17 @@ cmd_install() {
   ci_version=$1
   printf '%s\n' "$ci_version" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$' || die GOVERNANCE_NOT_READY "Invalid version: $ci_version"
   tx_begin ''
+  assert_safe_user_path "$ACTIVE_RELEASE" 'active release'
+  [ ! -e "$ACTIVE_RELEASE" ] || [ -f "$ACTIVE_RELEASE" ] || die GOVERNANCE_NOT_READY 'Active release is not a regular file'
+  if [ -e "$ACTIVE_RELEASE" ] || [ -L "$ACTIVE_RELEASE" ]; then load_active_release; fi
   prepare_release "$ci_version"
   prepare_cli
+  write_active_release "$TX_DIR/work/active-release" "$ci_version" "$RELEASE_COMMIT"
+  tx_snapshot_user_file "$ACTIVE_RELEASE" active-release
+  TX_ACTIVE_RELEASE_SNAPSHOT=1
   activate_release
   activate_cli
+  apply_user_file "$TX_DIR/work/active-release" "$ACTIVE_RELEASE" active-release
   tx_commit
   printf '%s\n' "Installed: $ci_version"
   pass_result

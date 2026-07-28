@@ -72,6 +72,7 @@ make_release_fixture() {
   git -C "$source_repo" add .
   git -C "$source_repo" commit -qm 'test: create v1 fixture'
   git -C "$source_repo" tag -a v1.0.0 -m 'v1.0.0'
+  v1_0_commit=$(git -C "$source_repo" rev-parse 'v1.0.0^{commit}')
   printf 'v1.1.0\n' >"$source_repo/VERSION"
   rm -rf "$source_repo/runtime"
   cp -R "$ROOT/runtime" "$source_repo/runtime"
@@ -157,6 +158,42 @@ make_consumer_fixture() {
 }
 
 make_release_fixture
+
+active_file=$XDG_CONFIG_HOME/beroka-ai-governance/active-release
+$CLI install v1.0.0 >/dev/null
+[ "$(cat "$active_file")" = "$(printf '%s\n%s' \
+  'VERSION=v1.0.0' "COMMIT=$v1_0_commit")" ] ||
+  fail 'install omitted the verified active release'
+
+printf '%s\n' 'VERSION=v1.0.0' \
+  'COMMIT=0000000000000000000000000000000000000000' >"$active_file"
+if output=$($CLI install v1.0.0 2>&1); then
+  fail 'install accepted a forged active release commit'
+fi
+assert_contains "$output" 'Result: VERSION_MISMATCH'
+
+printf '%s\n%s\n' 'VERSION=v1.0.0' "COMMIT=$v1_0_commit" >"$active_file"
+fail_active_mv_dir=$TMP_ROOT/fail-active-mv
+mkdir -p "$fail_active_mv_dir"
+printf '%s\n' \
+  '#!/bin/sh' \
+  'for last_arg do :; done' \
+  'if [ "${FAIL_ACTIVE_RELEASE_PATH:-}" = "$last_arg" ]; then exit 1; fi' \
+  'exec "$SYSTEM_MV" "$@"' >"$fail_active_mv_dir/mv"
+chmod 755 "$fail_active_mv_dir/mv"
+SYSTEM_MV=$(command -v mv)
+export SYSTEM_MV
+if active_failure_output=$(PATH=$fail_active_mv_dir:$PATH \
+  FAIL_ACTIVE_RELEASE_PATH=$active_file $CLI install v1.1.0 2>&1)
+then
+  fail 'install ignored an active-release activation failure'
+fi
+assert_contains "$active_failure_output" 'Result: GOVERNANCE_NOT_READY'
+[ "$(cat "$active_file")" = "$(printf '%s\n%s' \
+  'VERSION=v1.0.0' "COMMIT=$v1_0_commit")" ] ||
+  fail 'failed activation did not restore the active release'
+rm -f "$active_file" "$BEROKA_GOV_BIN_DIR/beroka-governance"
+
 make_consumer_fixture
 
 doctor_output=$($CLI doctor "$consumer")
