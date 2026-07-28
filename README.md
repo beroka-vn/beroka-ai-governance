@@ -147,8 +147,8 @@ the required repository action before connector/OAuth checks:
   do not create an empty governance PR.
 
 Existing registrations keep their lock; bootstrap never silently upgrades them.
-`v1.0.1` is the current supported corrective release. `v1.0.0` remains
-immutable but is superseded for onboarding; every tag published after it is
+`v1.0.2` is the current supported capability release. `v1.0.0` and `v1.0.1`
+remain immutable but are superseded for onboarding; every published tag is
 immutable.
 
 ### Automation / CI
