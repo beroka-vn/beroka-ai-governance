@@ -21,6 +21,25 @@ reject_text() {
   fi
 }
 
+has_repository_governance_mutation() {
+  file=$1
+  grep -F '.beroka-governance.lock' "$file" >/dev/null && return 0
+  awk '
+    BEGIN { RS = "" }
+    {
+      text = tolower($0)
+      if (text ~ /governance/ &&
+          (text ~ /application (repository|repo)/ ||
+           (text ~ /application/ && text ~ /(pull request|(^|[[:space:]])pr([^[:alpha:]]|$))/)) &&
+          text ~ /(pin|diff|git[[:space:]]+(add|commit|push)|(^|[[:space:]])(add|commit|push)([^[:alpha:]]|$)|pull request|(^|[[:space:]])pr([^[:alpha:]]|$))/) {
+        found = 1
+        exit
+      }
+    }
+    END { exit(found ? 0 : 1) }
+  ' "$file"
+}
+
 require_text governance.md 'Backend Capability Registry'
 require_text governance.md 'Shared — Market — API'
 require_text governance.md 'globally unique'
@@ -94,7 +113,25 @@ for file in README.md handbook.md PACKAGE-DESIGN.md governance.md workflow.md; d
   reject_text "$file" 'update /path/to/repo'
   reject_text "$file" 'rollback /path/to/repo'
   reject_text "$file" 'unregister /path/to/repo'
+  if has_repository_governance_mutation "$ROOT/$file"; then
+    fail "repository governance mutation guidance in $file"
+  fi
 done
+
+guidance_fixture=$(mktemp "$ROOT/tests/.repository-governance-guidance.XXXXXX")
+trap 'rm -f "$guidance_fixture"' EXIT HUP INT TERM
+printf '%s\n' \
+  'For governance installation, add .beroka-governance.lock to the application repository.' \
+  >"$guidance_fixture"
+has_repository_governance_mutation "$guidance_fixture" ||
+  fail 'repository governance check accepted a lock instruction'
+printf '%s\n' \
+  'For governance installation, add the files, commit them, and open an application governance PR.' \
+  >"$guidance_fixture"
+has_repository_governance_mutation "$guidance_fixture" ||
+  fail 'repository governance check accepted an alternate mutation instruction'
+rm -f "$guidance_fixture"
+trap - EXIT HUP INT TERM
 
 require_text governance.md \
   'CLI hard-enforces installation, release integrity, catalog routing, connector, authentication, and operation preflight.'
