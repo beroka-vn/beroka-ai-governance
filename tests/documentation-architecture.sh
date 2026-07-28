@@ -23,15 +23,20 @@ reject_text() {
 
 has_repository_governance_mutation() {
   file=$1
-  grep -F '.beroka-governance.lock' "$file" >/dev/null && return 0
   awk '
     BEGIN { RS = "" }
     {
       text = tolower($0)
-      if (text ~ /governance/ &&
-          (text ~ /application (repository|repo)/ ||
-           (text ~ /application/ && text ~ /(pull request|(^|[[:space:]])pr([^[:alpha:]]|$))/)) &&
-          text ~ /(pin|diff|git[[:space:]]+(add|commit|push)|(^|[[:space:]])(add|commit|push)([^[:alpha:]]|$)|pull request|(^|[[:space:]])pr([^[:alpha:]]|$))/) {
+      install = text ~ /(governance[[:space:]]+(install|upgrade|bootstrap)|(install|upgrade|bootstrap)[[:space:]]+governance)/
+      target = text ~ /application[[:space:]]+(repository|repo)/ ||
+        (text ~ /application/ && text ~ /(pull request|(^|[[:space:]])pr([^[:alpha:]]|$))/)
+      action = text ~ /pin/ || text ~ /diff/ ||
+        text ~ /git[[:space:]]+(add|commit|push)/ ||
+        text ~ /(^|[[:space:]])(add|commit|push)([^[:alpha:]]|$)/ ||
+        text ~ /(add|write|create|commit).*\.beroka-governance\.lock/ ||
+        text ~ /(open|create).*(pull request|[[:space:]]pr([^[:alpha:]]|$))/
+      denial = text ~ /(does not|do not|never|ignore|ignores|ignored|without).*(pin|diff|add|commit|push|\.beroka-governance\.lock|pull request|[[:space:]]pr([^[:alpha:]]|$))/
+      if (install && target && action && !denial) {
         found = 1
         exit
       }
@@ -130,6 +135,23 @@ printf '%s\n' \
   >"$guidance_fixture"
 has_repository_governance_mutation "$guidance_fixture" ||
   fail 'repository governance check accepted an alternate mutation instruction'
+printf '%s\n' \
+  'For governance upgrade, pin governance in the application repository, review the diff, git add and commit it, git push it, and open an application governance PR.' \
+  >"$guidance_fixture"
+has_repository_governance_mutation "$guidance_fixture" ||
+  fail 'repository governance check accepted upgrade mutation guidance'
+printf '%s\n' \
+  'During governance upgrade, the CLI ignores legacy .beroka-governance.lock and does not add, commit, or push application repository files.' \
+  >"$guidance_fixture"
+if has_repository_governance_mutation "$guidance_fixture"; then
+  fail 'repository governance check rejected legacy migration guidance'
+fi
+printf '%s\n' \
+  'Governance directs normal application workflow: commit application changes and open a PR.' \
+  >"$guidance_fixture"
+if has_repository_governance_mutation "$guidance_fixture"; then
+  fail 'repository governance check rejected ordinary application workflow'
+fi
 rm -f "$guidance_fixture"
 trap - EXIT HUP INT TERM
 
