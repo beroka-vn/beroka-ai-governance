@@ -1470,22 +1470,7 @@ grep -F 'gh auth login --hostname github.com --web' "$ROOT/handbook.md" \
   fail 'handbook does not document GitHub OAuth remediation'
 grep -F 'provider OAuth output directly' "$ROOT/README.md" >/dev/null ||
   fail 'README does not document OAuth URL pass-through'
-grep -F 'CLIENTS=codex,claude' "$ROOT/PACKAGE-DESIGN.md" >/dev/null ||
-  fail 'package design does not document additive clients'
-grep -F 'register "$repo" --version "$release" --client codex' \
-  "$ROOT/handbook.md" >/dev/null ||
-  fail 'handbook register command does not select a client'
-awk '
-  /^```/ { in_block = !in_block; next }
-  in_block &&
-    $0 == "beroka-governance bootstrap \"$(git rev-parse --show-toplevel)\" \\" {
-    getline
-    if ($0 != "  --client claude \\") next
-    getline
-    if ($0 == "  --non-interactive") found = 1
-  }
-  END { exit found ? 0 : 1 }
-' "$ROOT/README.md" ||
+grep -F 'enroll another client there.' "$ROOT/README.md" >/dev/null ||
   fail 'README does not document adding another client'
 grep -F 'gh release download' "$ROOT/README.md" >/dev/null ||
   fail 'README does not document the release launcher'

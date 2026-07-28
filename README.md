@@ -35,6 +35,12 @@ settings database.
 Run setup for one client on each execution environment, then repeat it only
 when you want to enroll another client there.
 
+Bootstrap runs `setup-connectors` for the selected client. If authentication
+is still pending, rerun
+`beroka-governance setup-connectors --client codex`; interactive login streams
+provider OAuth output directly, while `--non-interactive` returns the exact
+client-owned remediation without opening a browser.
+
 The launcher verifies its embedded annotated tag and commit before it executes
 package code. It installs the active release and selected-client adapter in
 user-owned locations, then renders context when a Git repository is present.
@@ -92,6 +98,12 @@ In a fresh session, run `beroka-governance context "$PWD"` before governed
 planning, implementation, or external actions. Run the operation-specific
 preflight immediately before each external write. Unknown repositories may do
 source-only work but return `ROUTING_REQUIRED` for routing-dependent writes.
+
+```bash
+beroka-governance preflight "$PWD" \
+  --client codex \
+  --operation jira-write
+```
 
 The active release resolves the canonical GitHub origin against the Central
 repository catalog. Catalog additions or routing changes require an explicitly

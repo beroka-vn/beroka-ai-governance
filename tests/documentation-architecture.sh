@@ -119,6 +119,7 @@ require_text templates/ai-agent-assignment.md \
 require_text templates/ai-agent-assignment.md \
   '<Module> — Capability Index'
 require_text README.md 'Backend Capability Registry'
+require_text README.md 'setup-connectors'
 require_text handbook.md 'globally unique Folder'
 reject_text templates/jira-confluence.md 'The Hub row is canonical'
 

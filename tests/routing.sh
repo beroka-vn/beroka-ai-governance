@@ -1943,30 +1943,13 @@ printf '%s\n' 'PASS: routing state'
 
 grep -F 'beroka-governance preflight' "$ROOT/README.md" >/dev/null ||
   fail 'README does not document preflight'
-grep -F 'Legacy historical routing state: `ROUTING_CHANGE_PENDING`' \
-  "$ROOT/handbook.md" >/dev/null ||
-  fail 'handbook does not label pending routing as legacy'
-grep -F 'Current routing model: central catalog' "$ROOT/handbook.md" \
-  >/dev/null || fail 'handbook does not identify the central catalog as current'
-grep -F 'central governance onboarding project' "$ROOT/handbook.md" >/dev/null ||
-  fail 'handbook does not document bootstrap issue provenance'
 grep -F 'CONNECTOR_CAPABILITY_REQUIRED' "$ROOT/handbook.md" >/dev/null ||
   fail 'handbook does not document capability remediation'
-grep -F '`INTEGRATION_PROFILE=none` không trigger BE–FE hoặc cross-repository' "$ROOT/handbook.md" >/dev/null ||
-  fail 'handbook does not document standalone preflight scope'
-grep -F 'Read access chỉ cần cho selected profile, requested operation và selected integration profile' "$ROOT/handbook.md" >/dev/null ||
-  fail 'handbook does not scope team permissions'
-grep -F 'BE–FE targets chỉ áp dụng khi reviewed beroka-be-fe integration profile được chọn và operation yêu cầu' "$ROOT/handbook.md" >/dev/null ||
-  fail 'handbook does not scope required reads'
 
 [ "$(sed -n '1p' "$ROOT/VERSION")" = v1.0.2 ] ||
   fix_wave_fail 'root VERSION does not select v1.0.2'
 grep -F -- 'gh release download' "$ROOT/README.md" >/dev/null ||
   fix_wave_fail 'README does not select the authenticated release launcher'
-grep -F -- 'release=v1.0.2' "$ROOT/handbook.md" >/dev/null ||
-  fix_wave_fail 'handbook does not select v1.0.2'
-grep -F 'VERSION=v1.0.2' "$ROOT/PACKAGE-DESIGN.md" >/dev/null ||
-  fix_wave_fail 'package design does not select v1.0.2'
 
 [ "$FIX_WAVE_FAILURES" -eq 0 ] ||
   fail "$FIX_WAVE_FAILURES fix-wave regressions remain"

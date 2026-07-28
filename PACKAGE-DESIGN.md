@@ -98,6 +98,9 @@ At a new session, resume, or compaction, run `beroka-governance context "$PWD"` 
 
 Connector health uses a 15-second total deadline. Missing, expired, or invalid Atlassian authentication returns `ATLASSIAN_AUTH_REQUIRED` with selected-client remediation. `CONNECTOR_HEALTH_UNAVAILABLE` is not authentication success or `PASS`. Interactive provider output stays attached to the terminal.
 
+Bootstrap invokes `setup-connectors` for its selected client. The selected
+client's connector inspection requires `jq` for every selected client.
+
 schema-1 compatibility remains for earlier releases. `provider-owned evidence` is the capability baseline; `cross-client adapters` normalize only the inventory returned by Codex, Claude Code, or Cursor. Workflow rules are instruction-driven and are not hard CLI enforcement.
 
 Before a Jira create, resolve exact metadata and search the intended record. Create once, then read back the key; an indeterminate result is `CREATION_STATUS_UNKNOWN` and is never retried automatically. Confluence writes also read back content and parent. Folder routing remains blocked without isolated pilot evidence.

@@ -109,9 +109,15 @@ CLI hard-enforces installation, release integrity, catalog routing, connector, a
 
 ## Connector health và capability evidence
 
-Chạy connector setup chỉ sau khi selected client đã được cài. Mỗi invocation configures exactly one client. Missing/expired authentication trả `ATLASSIAN_AUTH_REQUIRED` với remediation chính xác; interactive OAuth output đi trực tiếp tới terminal và governance không parse, log, hay store output đó.
+Chạy `beroka-governance setup-connectors --client codex` chỉ sau khi selected
+client đã được cài. Mỗi invocation configures exactly one client.
+Missing/expired authentication trả `ATLASSIAN_AUTH_REQUIRED`; với Codex,
+remediation là `codex mcp login atlassian`. Interactive OAuth output đi trực
+tiếp tới terminal và governance không parse, log, hay store output đó.
 
 Connector health có 15-second total deadline. Nếu chưa có classifiable record, trả `CONNECTOR_HEALTH_UNAVAILABLE`; unknown không được xem là `PASS`.
+Capability được request nhưng không có provider-owned evidence trả
+`CONNECTOR_CAPABILITY_REQUIRED`.
 
 schema-1 compatibility remains for existing releases. `provider-owned evidence` là baseline cho capability decision; `cross-client adapters` chỉ normalize inventory của Codex, Claude Code, và Cursor. Workflow rules are instruction-driven, không phải hard CLI enforcement.
 
