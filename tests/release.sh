@@ -39,24 +39,17 @@ reject_text() {
   fi
 }
 
-[ "$(cat "$ROOT/VERSION")" = v1.0.2 ] ||
-  fail 'VERSION is not v1.0.2'
+[ "$(cat "$ROOT/VERSION")" = v1.0.0 ] ||
+  fail 'VERSION is not v1.0.0'
 
-require_text README.md '`v1.0.2` is the current supported capability release.'
-require_text README.md '`v1.0.0` and `v1.0.1`'
-require_text README.md 'remain immutable but are superseded for onboarding;'
-reject_text README.md 'establishes `v1.0.0` as the first supported release'
+require_text README.md '`v1.0.0` is the current supported capability release.'
+reject_text README.md '`v1.0.0` and `v1.0.1`'
 require_text handbook.md \
-  '`v1.0.2` là capability release được hỗ trợ hiện tại.'
-require_text handbook.md '`v1.0.0` và `v1.0.1` vẫn immutable'
-require_text handbook.md 'thay thế cho onboarding'
-reject_text handbook.md 'thiết lập `v1.0.0` là release được hỗ trợ đầu tiên'
+  '`v1.0.0` là capability release được hỗ trợ hiện tại.'
+reject_text handbook.md '`v1.0.0` và `v1.0.1`'
 require_text PACKAGE-DESIGN.md \
-  '`v1.0.2` is the current supported capability release.'
-require_text PACKAGE-DESIGN.md '`v1.0.0` and `v1.0.1`'
-require_text PACKAGE-DESIGN.md 'remain immutable but are superseded for onboarding.'
-reject_text PACKAGE-DESIGN.md \
-  'establishes `v1.0.0` as the first supported team release'
+  '`v1.0.0` is the current supported capability release.'
+reject_text PACKAGE-DESIGN.md '`v1.0.0` and `v1.0.1`'
 require_text README.md 'Backend and Frontend repositories'
 require_text handbook.md 'Chuyển quyết định cho developer'
 require_text README.md 'gh release download'

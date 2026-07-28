@@ -36,7 +36,7 @@ Legacy tracked files không bị CLI parse, sửa, hay xóa. Repository owner c�
 
 - Có POSIX shell, `gh`, selected AI client và `jq`. Native Windows PowerShell không thuộc V1; dùng WSL trên Windows.
 - `gh` phải authenticate để download private release. Không yêu cầu, in, sao chép, ghi log hoặc lưu token.
-- `v1.0.2` là capability release được hỗ trợ hiện tại. `v1.0.0` và `v1.0.1` vẫn immutable nhưng đã thay thế cho onboarding.
+- `v1.0.0` là capability release được hỗ trợ hiện tại.
 
 ### Bootstrap và install
 

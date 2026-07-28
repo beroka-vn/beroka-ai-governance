@@ -51,7 +51,8 @@ user-owned locations, then renders context when a Git repository is present.
 
 Tracked legacy governance files remain until a repository owner explicitly
 authorizes a separate cleanup. The new CLI ignores them for release selection
-and routing. `v1.0.2` is the current supported capability release. `v1.0.0` and `v1.0.1` remain immutable but are superseded for onboarding; every published tag is immutable.
+and routing. `v1.0.0` is the current supported capability release. Every
+published tag is immutable.
 
 ### Upgrade
 

@@ -21,7 +21,8 @@ Legacy tracked governance files are neither parsed nor changed. They remain unti
 ~/.config/beroka-ai-governance/clients
 ```
 
-The active release record and client enrollment are the source of installation state. No credential is stored there. `v1.0.2` is the current supported capability release. `v1.0.0` and `v1.0.1` remain immutable but are superseded for onboarding.
+The active release record and client enrollment are the source of installation
+state. No credential is stored there. `v1.0.0` is the current supported capability release.
 
 The release catalog is keyed by normalized canonical GitHub slug. Its reviewed record supplies profile, Jira project and board, Confluence root, integration profile, and cross-repository policy. An unknown origin is standalone with `ROUTING_REQUIRED`: source-only work may continue, but routing-dependent writes remain blocked. Catalog changes require an explicitly authorized governance-repository task.
 
