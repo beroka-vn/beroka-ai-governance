@@ -6,135 +6,39 @@ to Confluence.
 
 ## Quick start
 
-From the Git root of the repository to register, paste this command. Set
-`client` to exactly one of `codex`, `claude`, or `cursor`. The selected AI
-client must already be installed; the command offers to install missing `gh`
-and `jq`, completes client-owned GitHub OAuth when needed, then installs
-governance and configures the selected Atlassian connector:
+Install the selected AI client and `gh` once per workstation. From the Git root
+of the repository to register, run the command below. Healthy client-owned
+GitHub OAuth is reused; when authentication is missing, `gh` starts its browser
+OAuth flow and keeps the credentials in its own store.
 
 ```bash
-(
-  set -eu
-  client=codex
-
-  dependency_error() {
-    printf '%s\n' 'Result: DEPENDENCY_MISSING' "$1" >&2
-    exit 1
-  }
-  run_as_root() {
-    if [ "$(id -u)" -eq 0 ]; then
-      "$@"
-    elif command -v sudo >/dev/null 2>&1; then
-      sudo "$@"
-    else
-      dependency_error "Install:$missing"
-    fi
-  }
-
-  client_command=$client
-  [ "$client" != cursor ] || client_command=cursor-agent
-  command -v "$client_command" >/dev/null 2>&1 ||
-    dependency_error "Install $client_command, then rerun this command"
-
-  missing=
-  for dependency in gh jq; do
-    command -v "$dependency" >/dev/null 2>&1 ||
-      missing="$missing $dependency"
-  done
-  if [ -n "$missing" ]; then
-    [ -t 0 ] && [ -t 1 ] ||
-      dependency_error "Install:$missing"
-    installer=
-    for candidate in apt-get dnf brew; do
-      if command -v "$candidate" >/dev/null 2>&1; then
-        installer=$candidate
-        break
-      fi
-    done
-    [ -n "$installer" ] || dependency_error "Install:$missing"
-    printf 'Missing dependencies:%s\n' "$missing"
-    printf 'Install with %s (may request sudo)? [y/N] ' "$installer"
-    IFS= read -r answer || answer=
-    case "$answer" in
-      y|Y|yes|YES) ;;
-      *) dependency_error "Install:$missing" ;;
-    esac
-    case "$installer" in
-      apt-get)
-        run_as_root apt-get update &&
-          run_as_root apt-get install -y $missing ||
-          dependency_error "Install:$missing"
-        ;;
-      dnf)
-        run_as_root dnf install -y $missing ||
-          dependency_error "Install:$missing"
-        ;;
-      brew)
-        brew install $missing || dependency_error "Install:$missing"
-        ;;
-    esac
-  fi
-
-  for dependency in gh jq; do
-    command -v "$dependency" >/dev/null 2>&1 ||
-      dependency_error "Install: $dependency"
-  done
-
-  if ! gh auth status --hostname github.com >/dev/null 2>&1; then
-    [ -t 0 ] && [ -t 1 ] || {
-      printf '%s\n' \
-        'Result: GITHUB_AUTH_REQUIRED' \
-        'Remediation: gh auth login --hostname github.com --web' >&2
-      exit 1
-    }
-    printf 'GitHub authentication required. Start browser OAuth? [y/N] '
-    IFS= read -r answer || answer=
-    case "$answer" in
-      y|Y|yes|YES)
-        gh auth login --hostname github.com --web
-        ;;
-      *)
-        printf '%s\n' \
-          'Result: GITHUB_AUTH_REQUIRED' \
-          'Remediation: gh auth login --hostname github.com --web' >&2
-        exit 1
-        ;;
-    esac
-  fi
-
-  bootstrap_file=$(mktemp "${TMPDIR:-/tmp}/beroka-bootstrap.XXXXXX")
-  trap 'rm -f "$bootstrap_file"' EXIT HUP INT TERM
+bash -e -o pipefail -c '
+  gh auth status --hostname github.com >/dev/null 2>&1 ||
+    gh auth login --hostname github.com --web
   gh auth setup-git --hostname github.com
   gh release download \
     --repo beroka-vn/beroka-ai-governance \
     --pattern bootstrap.sh \
-    --clobber \
-    --output "$bootstrap_file"
-  sh "$bootstrap_file" --client "$client"
-)
-```
-
-The dependency prompt is the only path that invokes `apt-get`, `dnf`, `brew`,
-or `sudo`; declining returns `DEPENDENCY_MISSING`. Governance does not install
-the selected AI client. If GitHub OAuth is declined or cannot start, run:
-
-```bash
-gh auth login --hostname github.com --web
+    --output - |
+    sh -s -- --client codex
+'
 ```
 
 `gh auth setup-git --hostname github.com` configures Git to reuse
 client-owned GitHub OAuth for the launcher's private HTTPS clone.
 No token is requested, printed, copied, logged, or stored.
 
-Set `client` to `codex`, `claude`, or `cursor`. One client is mandatory.
+Replace `codex` with `claude` or `cursor`. One client is mandatory.
 Run setup once for one client on each execution environment, then repeat it
 for every additional client there. All enabled clients load the same pinned
 governance release. Changing a model inside the same client needs no setup.
 
-Interactive mode asks before opening GitHub or Atlassian OAuth in the browser.
-When authentication remains incomplete, installation and repository
-registration remain in place and the command returns the exact remediation.
-Governance never accepts or stores a developer API token.
+After release verification, interactive bootstrap offers to install missing
+`jq` with `apt-get`, `dnf`, or `brew`. Declining returns
+`DEPENDENCY_MISSING`. Governance does not install the selected AI client.
+Atlassian OAuth remains selected-client-owned and starts only through that
+client's supported flow. Governance never accepts or stores a developer API
+token.
 
 The launcher verifies its embedded annotated tag and commit before it executes
 package code. Bootstrap installs and pins that release, registers the current
@@ -151,41 +55,48 @@ Existing registrations keep their lock; bootstrap never silently upgrades them.
 remain immutable but are superseded for onboarding; every published tag is
 immutable.
 
+### Upgrade
+
+When a newer same-major release is published, use the same command with the
+explicit `--upgrade` flag. It preserves enabled clients and reports the
+managed-file diff that needs repository review:
+
+```bash
+bash -e -o pipefail -c '
+  gh auth status --hostname github.com >/dev/null 2>&1 ||
+    gh auth login --hostname github.com --web
+  gh auth setup-git --hostname github.com
+  gh release download \
+    --repo beroka-vn/beroka-ai-governance \
+    --pattern bootstrap.sh \
+    --output - |
+    sh -s -- --client codex --upgrade
+'
+```
+
+`update` never downgrades. Use the explicit `rollback` command for an older
+same-major pin.
+
 ### Automation / CI
 
 Automation never installs packages or opens a browser. Preinstall the selected
 client, `gh`, and `jq`, authenticate `gh`, then use:
 
 ```bash
-(
-  set -eu
-  client=codex
-  client_command=$client
-  [ "$client" != cursor ] || client_command=cursor-agent
-  for dependency in "$client_command" gh jq; do
-    command -v "$dependency" >/dev/null 2>&1 || {
-      printf '%s\n' \
-        'Result: DEPENDENCY_MISSING' \
-        "Remediation: install $dependency" >&2
-      exit 1
-    }
-  done
+bash -e -o pipefail -c '
   gh auth status --hostname github.com >/dev/null 2>&1 || {
-    printf '%s\n' \
-      'Result: GITHUB_AUTH_REQUIRED' \
-      'Remediation: gh auth login --hostname github.com --web' >&2
-    exit 1
+    printf "%s\n" \
+      "Result: GITHUB_AUTH_REQUIRED" \
+      "Remediation: gh auth login --hostname github.com --web" >&2
+      exit 1
   }
-  bootstrap_file=$(mktemp "${TMPDIR:-/tmp}/beroka-bootstrap.XXXXXX")
-  trap 'rm -f "$bootstrap_file"' EXIT HUP INT TERM
   gh auth setup-git --hostname github.com
   gh release download \
     --repo beroka-vn/beroka-ai-governance \
     --pattern bootstrap.sh \
-    --clobber \
-    --output "$bootstrap_file"
-  sh "$bootstrap_file" --client "$client" --non-interactive
-)
+    --output - |
+    sh -s -- --client codex --non-interactive
+'
 ```
 
 Client setup is additive: each bootstrap adds only its selected client's

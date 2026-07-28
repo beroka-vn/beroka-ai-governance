@@ -217,6 +217,20 @@ fi
 assert_contains "$output" 'Usage:'
 
 if output=$($CLI bootstrap "$repo" --client codex \
+  --version v1.1.0 --upgrade --upgrade --non-interactive 2>&1)
+then
+  fail 'bootstrap accepted duplicate upgrade selection'
+fi
+assert_contains "$output" 'Usage:'
+
+if output=$($CLI bootstrap "$repo" --client codex \
+  --version v1.1.0 --upgrade --non-interactive 2>&1)
+then
+  fail 'bootstrap upgrade accepted an unregistered repository'
+fi
+assert_contains "$output" 'Result: GOVERNANCE_NOT_READY'
+
+if output=$($CLI bootstrap "$repo" --client codex \
   --api-token should-not-appear 2>&1)
 then
   fail 'bootstrap accepted a developer API token'
@@ -277,6 +291,26 @@ then
   fail 'bootstrap silently changed a pinned version'
 fi
 assert_contains "$output" 'Result: VERSION_MISMATCH'
+
+upgrade_repo=$TEST_ROOT/upgrade-application
+new_repo "$upgrade_repo" bootstrap-upgrade-application
+$CLI bootstrap "$upgrade_repo" --client codex \
+  --version v1.1.0 --non-interactive >/dev/null
+git -C "$upgrade_repo" add .beroka-governance.lock AGENTS.md
+git -C "$upgrade_repo" commit -qm 'test: commit v1.1 bootstrap'
+upgrade_output=$($CLI bootstrap "$upgrade_repo" --client codex \
+  --version v1.2.0 --upgrade --non-interactive)
+assert_contains "$upgrade_output" 'Version: v1.2.0'
+assert_contains "$upgrade_output" 'Repository pull request: REQUIRED'
+assert_contains "$(cat "$upgrade_repo/.beroka-governance.lock")" \
+  'VERSION=v1.2.0'
+git -C "$upgrade_repo" add .beroka-governance.lock AGENTS.md
+git -C "$upgrade_repo" commit -qm 'test: commit v1.2 bootstrap'
+same_version_output=$($CLI bootstrap "$upgrade_repo" --client codex \
+  --version v1.2.0 --upgrade --non-interactive)
+assert_contains "$same_version_output" \
+  'Repository pull request: NOT_REQUIRED'
+assert_one_result "$same_version_output"
 
 cp "$DISABLED_BIN/claude" "$FAKE_BIN/claude"
 chmod 755 "$FAKE_BIN/claude"

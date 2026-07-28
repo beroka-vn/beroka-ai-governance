@@ -43,9 +43,9 @@ WSL là target environments; native Windows PowerShell không thuộc V1.
 
 ### Điều kiện trước khi cài
 
-- Có Git, POSIX shell và selected AI client. Interactive Quick start hỏi trước
-  khi cài `gh`/`jq` còn thiếu và trước khi chạy GitHub OAuth; package không
-  chứa credentials.
+- Có Git, POSIX shell, selected AI client và `gh`. `gh` là prerequisite vì
+  governance release private phải được download bằng GitHub authentication.
+  Package không chứa credentials.
 - `$HOME/.local/bin` phải có trong `PATH` sau khi `install` để gọi
   `beroka-governance`.
 - Dùng một annotated SemVer tag đã được review và publish. `v1.0.2` là
@@ -61,124 +61,35 @@ WSL là target environments; native Windows PowerShell không thuộc V1.
 
 ### Bootstrap và install
 
-Từ Git root của repository cần đăng ký, paste command dưới đây và đặt `client`
-thành đúng một trong `codex`, `claude`, hoặc `cursor`. Selected AI client phải
-được cài sẵn. Command hỏi trước khi cài `gh`/`jq`, chạy GitHub OAuth khi cần,
-sau đó cài governance và cấu hình Atlassian connector:
+Từ Git root của repository cần đăng ký, chạy command dưới đây. Healthy
+client-owned GitHub OAuth được dùng lại; nếu thiếu authentication, `gh` mới
+chạy browser OAuth:
 
 ```bash
-(
-  set -eu
-  client=codex
-
-  dependency_error() {
-    printf '%s\n' 'Result: DEPENDENCY_MISSING' "$1" >&2
-    exit 1
-  }
-  run_as_root() {
-    if [ "$(id -u)" -eq 0 ]; then
-      "$@"
-    elif command -v sudo >/dev/null 2>&1; then
-      sudo "$@"
-    else
-      dependency_error "Install:$missing"
-    fi
-  }
-
-  client_command=$client
-  [ "$client" != cursor ] || client_command=cursor-agent
-  command -v "$client_command" >/dev/null 2>&1 ||
-    dependency_error "Install $client_command, then rerun this command"
-
-  missing=
-  for dependency in gh jq; do
-    command -v "$dependency" >/dev/null 2>&1 ||
-      missing="$missing $dependency"
-  done
-  if [ -n "$missing" ]; then
-    [ -t 0 ] && [ -t 1 ] ||
-      dependency_error "Install:$missing"
-    installer=
-    for candidate in apt-get dnf brew; do
-      if command -v "$candidate" >/dev/null 2>&1; then
-        installer=$candidate
-        break
-      fi
-    done
-    [ -n "$installer" ] || dependency_error "Install:$missing"
-    printf 'Missing dependencies:%s\n' "$missing"
-    printf 'Install with %s (may request sudo)? [y/N] ' "$installer"
-    IFS= read -r answer || answer=
-    case "$answer" in
-      y|Y|yes|YES) ;;
-      *) dependency_error "Install:$missing" ;;
-    esac
-    case "$installer" in
-      apt-get)
-        run_as_root apt-get update &&
-          run_as_root apt-get install -y $missing ||
-          dependency_error "Install:$missing"
-        ;;
-      dnf)
-        run_as_root dnf install -y $missing ||
-          dependency_error "Install:$missing"
-        ;;
-      brew)
-        brew install $missing || dependency_error "Install:$missing"
-        ;;
-    esac
-  fi
-
-  for dependency in gh jq; do
-    command -v "$dependency" >/dev/null 2>&1 ||
-      dependency_error "Install: $dependency"
-  done
-
-  if ! gh auth status --hostname github.com >/dev/null 2>&1; then
-    [ -t 0 ] && [ -t 1 ] || {
-      printf '%s\n' \
-        'Result: GITHUB_AUTH_REQUIRED' \
-        'Remediation: gh auth login --hostname github.com --web' >&2
-      exit 1
-    }
-    printf 'GitHub authentication required. Start browser OAuth? [y/N] '
-    IFS= read -r answer || answer=
-    case "$answer" in
-      y|Y|yes|YES)
-        gh auth login --hostname github.com --web
-        ;;
-      *)
-        printf '%s\n' \
-          'Result: GITHUB_AUTH_REQUIRED' \
-          'Remediation: gh auth login --hostname github.com --web' >&2
-        exit 1
-        ;;
-    esac
-  fi
-
-  bootstrap_file=$(mktemp "${TMPDIR:-/tmp}/beroka-bootstrap.XXXXXX")
-  trap 'rm -f "$bootstrap_file"' EXIT HUP INT TERM
+bash -e -o pipefail -c '
+  gh auth status --hostname github.com >/dev/null 2>&1 ||
+    gh auth login --hostname github.com --web
   gh auth setup-git --hostname github.com
   gh release download \
     --repo beroka-vn/beroka-ai-governance \
     --pattern bootstrap.sh \
-    --clobber \
-    --output "$bootstrap_file"
-  sh "$bootstrap_file" --client "$client"
-)
+    --output - |
+    sh -s -- --client codex
+'
 ```
 
-Chỉ dependency prompt mới được gọi `apt-get`, `dnf`, `brew`, hoặc `sudo`.
-Nếu developer từ chối, command trả `DEPENDENCY_MISSING`. Governance không tự
-cài AI client đã chọn.
+Sau khi verify release, interactive bootstrap hỏi trước khi cài `jq` còn thiếu
+bằng `apt-get`, `dnf`, hoặc `brew`. Nếu developer từ chối, command trả
+`DEPENDENCY_MISSING`. Governance không tự cài AI client đã chọn.
 
 `gh auth setup-git --hostname github.com` cấu hình Git để dùng lại
 client-owned GitHub OAuth cho private HTTPS clone của launcher.
 Không yêu cầu, in, sao chép, ghi log hoặc lưu token.
 
-Interactive command hỏi trước khi mở browser cho GitHub hoặc Atlassian OAuth.
-Nếu OAuth vẫn thiếu hoặc invalid, installation và registration được giữ
-nguyên và command trả exact remediation của selected client.
+GitHub browser OAuth chỉ chạy khi `gh auth status` cho biết authentication đang
+thiếu. Atlassian OAuth vẫn do selected client sở hữu. Nếu OAuth vẫn thiếu hoặc
+invalid, installation và registration được giữ nguyên và command trả exact
+remediation của selected client.
 
 Thay `codex` bằng `claude` hoặc `cursor`; `--client` là bắt buộc và mỗi lần
 chạy chỉ chọn đúng một client. Lặp lại setup một lần cho mỗi client trên mỗi
@@ -207,41 +118,47 @@ A client started from a VS Code Remote SSH terminal runs on the remote host.
 Repository entrypoints are shared through Git, while the CLI, connector, and
 OAuth setup are local to that remote execution environment.
 
+### Upgrade
+
+Khi có same-major release mới, chạy cùng command với explicit `--upgrade`.
+Command bảo toàn enabled clients và báo managed-file diff cần review:
+
+```bash
+bash -e -o pipefail -c '
+  gh auth status --hostname github.com >/dev/null 2>&1 ||
+    gh auth login --hostname github.com --web
+  gh auth setup-git --hostname github.com
+  gh release download \
+    --repo beroka-vn/beroka-ai-governance \
+    --pattern bootstrap.sh \
+    --output - |
+    sh -s -- --client codex --upgrade
+'
+```
+
+`update` không downgrade; muốn quay về older same-major pin phải dùng
+`rollback`.
+
 ### Automation / CI
 
 Automation không cài package và không mở browser. Cài sẵn selected client,
 `gh`, `jq`, authenticate `gh`, rồi chạy:
 
 ```bash
-(
-  set -eu
-  client=codex
-  client_command=$client
-  [ "$client" != cursor ] || client_command=cursor-agent
-  for dependency in "$client_command" gh jq; do
-    command -v "$dependency" >/dev/null 2>&1 || {
-      printf '%s\n' \
-        'Result: DEPENDENCY_MISSING' \
-        "Remediation: install $dependency" >&2
-      exit 1
-    }
-  done
+bash -e -o pipefail -c '
   gh auth status --hostname github.com >/dev/null 2>&1 || {
-    printf '%s\n' \
-      'Result: GITHUB_AUTH_REQUIRED' \
-      'Remediation: gh auth login --hostname github.com --web' >&2
-    exit 1
+    printf "%s\n" \
+      "Result: GITHUB_AUTH_REQUIRED" \
+      "Remediation: gh auth login --hostname github.com --web" >&2
+      exit 1
   }
-  bootstrap_file=$(mktemp "${TMPDIR:-/tmp}/beroka-bootstrap.XXXXXX")
-  trap 'rm -f "$bootstrap_file"' EXIT HUP INT TERM
   gh auth setup-git --hostname github.com
   gh release download \
     --repo beroka-vn/beroka-ai-governance \
     --pattern bootstrap.sh \
-    --clobber \
-    --output "$bootstrap_file"
-  sh "$bootstrap_file" --client "$client" --non-interactive
-)
+    --output - |
+    sh -s -- --client codex --non-interactive
+'
 ```
 
 ### Thiếu context hoặc lựa chọn chưa rõ

@@ -682,6 +682,13 @@ $CLI update "$repin_dry_repo" --to v1.1.0
   'CLIENTS=codex' ] || fail 'update did not preserve canonical CLIENTS'
 git -C "$repin_dry_repo" add .
 git -C "$repin_dry_repo" commit -qm 'test: commit Codex-only update'
+if downgrade_output=$($CLI update "$repin_dry_repo" \
+  --to v1.0.0 2>&1)
+then
+  fail 'update accepted an older target'
+fi
+assert_contains "$downgrade_output" 'Result: VERSION_MISMATCH'
+assert_contains "$downgrade_output" 'use rollback'
 rollback_dry_output=$($CLI rollback "$repin_dry_repo" --to v1.0.0 --dry-run)
 assert_contains "$rollback_dry_output" \
   "WRITE $repin_dry_repo/.beroka-governance.lock"
