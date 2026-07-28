@@ -26,10 +26,17 @@ has_repository_governance_mutation() {
   awk '
     BEGIN { RS = "" }
     {
+      carry_install = 0
+      carry_target = 0
       sentences = split(tolower($0) " ", sentence, /[.!?][[:space:]]+/)
       for (s = 1; s <= sentences; s++) {
-        install = 0
-        target = 0
+        install = carry_install
+        target = carry_target
+        carry_install = 0
+        carry_target = 0
+        sentence_install = 0
+        sentence_target = 0
+        denied = 0
         clauses = split(sentence[s], clause, /[;:]/)
         for (i = 1; i <= clauses; i++) {
           clause_install = clause[i] ~ /(governance[[:space:]]+(install|upgrade|bootstrap)|(install|upgrade|bootstrap)[[:space:]]+governance)/
@@ -43,14 +50,21 @@ has_repository_governance_mutation() {
           if (denial) {
             install = 0
             target = 0
+            denied = 1
             continue
           }
+          sentence_install = sentence_install || clause_install
+          sentence_target = sentence_target || clause_target
           install = install || clause_install
           target = target || clause_target
           if (install && target && action) {
             found = 1
             exit
           }
+        }
+        if (!denied) {
+          carry_install = sentence_install
+          carry_target = sentence_target
         }
       }
     }
@@ -170,6 +184,11 @@ printf '%s\n' \
   >"$guidance_fixture"
 has_repository_governance_mutation "$guidance_fixture" ||
   fail 'repository governance check accepted contextual mutation guidance'
+printf '%s\n' \
+  'Governance installation applies to the application repository. Add the governance files and commit them.' \
+  >"$guidance_fixture"
+has_repository_governance_mutation "$guidance_fixture" ||
+  fail 'repository governance check accepted two-sentence mutation guidance'
 printf '%s\n' \
   'Governance installation never changes application repositories. Commit application code through the normal PR workflow.' \
   >"$guidance_fixture"
