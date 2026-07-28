@@ -38,6 +38,10 @@ snapshot_repo() {
     git -C "$sr_repo" ls-files -s
     git -C "$sr_repo" diff --binary
     git -C "$sr_repo" diff --cached --binary
+    git -C "$sr_repo" rev-parse --verify HEAD
+    git -C "$sr_repo" symbolic-ref -q HEAD || printf '%s\n' DETACHED
+    git -C "$sr_repo" show-ref --head
+    git -C "$sr_repo" config --local --list
   }
 }
 
@@ -81,6 +85,13 @@ git -C "$target_repo" add README.md
 git -C "$target_repo" commit -qm 'test: target'
 git -C "$target_repo" remote add origin \
   https://github.com/beroka-vn/target.git
+
+before=$(snapshot_repo "$target_repo")
+git -C "$target_repo" remote add snapshot-probe \
+  https://github.com/beroka-vn/snapshot-probe.git
+[ "$before" != "$(snapshot_repo "$target_repo")" ] ||
+  fail 'repository snapshot omitted remote configuration'
+git -C "$target_repo" remote remove snapshot-probe
 
 git config --global \
   url."file://$source_repo".insteadOf \
