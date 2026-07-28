@@ -1350,6 +1350,8 @@ cp "$RELEASE_SOURCE/templates/agent-entrypoints/AGENTS.md" \
   "$RELEASE_SOURCE/templates/agent-entrypoints/CLAUDE.md"
 printf '%s\n' 'Managed Cursor test content.' \
   >"$RELEASE_SOURCE/templates/agent-entrypoints/team-dev-ai-workflow.mdc"
+printf '%s\n' 'Managed Cursor user rule test content.' \
+  >"$RELEASE_SOURCE/templates/agent-entrypoints/CURSOR-USER-RULE.txt"
 for release_file in ai-agent-assignment github-issue jira-confluence pull-request; do
   printf '%s\n' "# $release_file" >"$RELEASE_SOURCE/templates/$release_file.md"
 done

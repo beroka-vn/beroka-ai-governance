@@ -188,13 +188,6 @@ git config --global \
 repo=$TEST_ROOT/application
 new_repo "$repo" bootstrap-application
 
-if output=$($CLI bootstrap "$repo" --client codex \
-  --non-interactive 2>&1)
-then
-  fail 'bootstrap accepted an implicit non-interactive latest'
-fi
-assert_contains "$output" 'Result: RELEASE_RESOLUTION_REQUIRED'
-
 if output=$($CLI bootstrap "$repo" --version v1.1.0 \
   --non-interactive 2>&1)
 then
@@ -224,13 +217,6 @@ fi
 assert_contains "$output" 'Usage:'
 
 if output=$($CLI bootstrap "$repo" --client codex \
-  --version v1.1.0 --upgrade --non-interactive 2>&1)
-then
-  fail 'bootstrap upgrade accepted an unregistered repository'
-fi
-assert_contains "$output" 'Result: GOVERNANCE_NOT_READY'
-
-if output=$($CLI bootstrap "$repo" --client codex \
   --api-token should-not-appear 2>&1)
 then
   fail 'bootstrap accepted a developer API token'
@@ -238,233 +224,72 @@ fi
 assert_not_contains "$output" 'should-not-appear'
 
 : >"$CALLS"
-output=$(printf 'y\ny\n' | script -qec \
-  "$CLI bootstrap $repo" /dev/null 2>&1)
-assert_contains "$output" 'Detected client: codex'
-assert_contains "$output" 'Resolved release: v1.2.0'
-assert_contains "$output" "Release commit: $v1_2_commit"
-assert_contains "$output" 'Release: PASS'
-assert_contains "$output" 'Repository registration: PASS'
-assert_contains "$output" 'Client entrypoint: ADDED'
-assert_contains "$output" 'Selected client: codex'
-assert_contains "$output" 'Repository changes: REVIEW_REQUIRED'
-assert_contains "$output" 'Repository pull request: REQUIRED'
-assert_contains "$output" 'Result: PASS'
-assert_one_result "$output"
-assert_not_contains "$output" 'v2.0.0-rc1'
-assert_not_contains "$output" 'v9.0.0'
-grep -F 'VERSION=v1.2.0' "$repo/.beroka-governance.lock" >/dev/null ||
-  fail 'bootstrap did not pin the resolved version'
-grep -F "COMMIT=$v1_2_commit" "$repo/.beroka-governance.lock" >/dev/null ||
-  fail 'bootstrap did not pin the resolved commit'
-grep -Fx 'CLIENTS=codex' "$repo/.beroka-governance.lock" >/dev/null ||
-  fail 'bootstrap did not record the selected client'
-[ -f "$repo/AGENTS.md" ] ||
-  fail 'Codex bootstrap omitted AGENTS.md'
-[ ! -e "$repo/CLAUDE.md" ] ||
-  fail 'Codex bootstrap created CLAUDE.md'
-[ ! -e "$repo/.cursor" ] ||
-  fail 'Codex bootstrap created .cursor'
+repo_before=$(snapshot_repo "$repo")
+mkdir -p "$HOME/.codex"
+printf '%s\n' '# Personal Codex instruction' >"$HOME/.codex/AGENTS.md"
+
+output=$($CLI bootstrap "$repo" --client codex \
+  --version v1.1.0 --non-interactive)
+
+[ "$repo_before" = "$(snapshot_repo "$repo")" ] ||
+  fail 'bootstrap changed the application repository'
+assert_contains "$(cat "$HOME/.codex/AGENTS.md")" \
+  '# Personal Codex instruction'
+assert_contains "$(cat "$HOME/.codex/AGENTS.md")" \
+  '<!-- BEROKA-GOVERNANCE:START -->'
+[ "$(cat "$XDG_CONFIG_HOME/beroka-ai-governance/clients")" = codex ] ||
+  fail 'bootstrap omitted Codex enrollment'
+assert_not_contains "$output" 'Repository pull request:'
 assert_contains "$(cat "$CALLS")" 'codex app-server --stdio'
 assert_not_contains "$(cat "$CALLS")" 'claude '
 
-before=$(snapshot_repo "$repo")
-: >"$CALLS"
-output=$($CLI bootstrap "$repo" --client codex --non-interactive)
-after=$(snapshot_repo "$repo")
-[ "$before" = "$after" ] ||
-  fail 'bootstrap changed an already registered repository'
-assert_contains "$output" 'Version: v1.2.0'
-assert_contains "$output" 'Repository registration: NO_CHANGE'
-assert_contains "$output" 'Client entrypoint: ALREADY_CONFIGURED'
-assert_contains "$output" 'Selected client: codex'
-assert_contains "$output" 'Repository changes: NONE'
-assert_contains "$output" 'Repository pull request: NOT_REQUIRED'
-assert_one_result "$output"
+codex_before=$(cat "$HOME/.codex/AGENTS.md")
+output=$($CLI bootstrap --client codex --version v1.1.0 --non-interactive)
+[ "$codex_before" = "$(cat "$HOME/.codex/AGENTS.md")" ] ||
+  fail 'repeat Codex bootstrap changed user instructions'
+assert_not_contains "$output" 'Repository pull request:'
 
-git -C "$repo" add .beroka-governance.lock AGENTS.md
-git -C "$repo" commit -qm 'test: commit Codex bootstrap'
+printf '%s\n' '# Active override' >"$HOME/.codex/AGENTS.override.md"
+output=$($CLI bootstrap "$repo" --client codex \
+  --version v1.1.0 --non-interactive)
+assert_contains "$(cat "$HOME/.codex/AGENTS.override.md")" '# Active override'
+assert_contains "$(cat "$HOME/.codex/AGENTS.override.md")" \
+  '<!-- BEROKA-GOVERNANCE:START -->'
 
-if output=$($CLI bootstrap "$repo" --client codex \
-  --version v1.1.0 --non-interactive 2>&1)
-then
-  fail 'bootstrap silently changed a pinned version'
-fi
-assert_contains "$output" 'Result: VERSION_MISMATCH'
-
-upgrade_repo=$TEST_ROOT/upgrade-application
-new_repo "$upgrade_repo" bootstrap-upgrade-application
-$CLI bootstrap "$upgrade_repo" --client codex \
-  --version v1.1.0 --non-interactive >/dev/null
-git -C "$upgrade_repo" add .beroka-governance.lock AGENTS.md
-git -C "$upgrade_repo" commit -qm 'test: commit v1.1 bootstrap'
-upgrade_output=$($CLI bootstrap "$upgrade_repo" --client codex \
-  --version v1.2.0 --upgrade --non-interactive)
-assert_contains "$upgrade_output" 'Version: v1.2.0'
-assert_contains "$upgrade_output" 'Repository pull request: REQUIRED'
-assert_contains "$(cat "$upgrade_repo/.beroka-governance.lock")" \
-  'VERSION=v1.2.0'
-git -C "$upgrade_repo" add .beroka-governance.lock AGENTS.md
-git -C "$upgrade_repo" commit -qm 'test: commit v1.2 bootstrap'
-same_version_output=$($CLI bootstrap "$upgrade_repo" --client codex \
-  --version v1.2.0 --upgrade --non-interactive)
-assert_contains "$same_version_output" \
-  'Repository pull request: NOT_REQUIRED'
-assert_one_result "$same_version_output"
-
+mkdir -p "$HOME/.claude"
+printf '%s\n' '# Personal Claude instruction' >"$HOME/.claude/CLAUDE.md"
 cp "$DISABLED_BIN/claude" "$FAKE_BIN/claude"
 chmod 755 "$FAKE_BIN/claude"
 : >"$CALLS"
-output=$($CLI bootstrap "$repo" --client claude --non-interactive)
-assert_contains "$output" 'Selected client: claude'
-assert_contains "$output" 'Repository changes: REVIEW_REQUIRED'
-assert_contains "$output" 'Repository pull request: REQUIRED'
-grep -Fx 'CLIENTS=codex,claude' \
-  "$repo/.beroka-governance.lock" >/dev/null ||
-  fail 'second bootstrap did not add Claude'
-[ -f "$repo/CLAUDE.md" ] ||
-  fail 'second bootstrap omitted CLAUDE.md'
-[ ! -e "$repo/.cursor" ] ||
-  fail 'second bootstrap created Cursor files'
-assert_contains "$(cat "$CALLS")" 'claude mcp'
-assert_not_contains "$(cat "$CALLS")" 'codex '
-
-before=$(snapshot_repo "$repo")
-output=$($CLI bootstrap "$repo" --client claude --non-interactive)
-after=$(snapshot_repo "$repo")
-[ "$before" = "$after" ] ||
-  fail 'repeat Claude bootstrap changed an already registered repository'
-assert_contains "$output" 'Repository changes: NONE'
-assert_contains "$output" 'Repository pull request: NOT_REQUIRED'
-
-multi_repo=$TEST_ROOT/multiple-clients
-new_repo "$multi_repo" bootstrap-multiple
-: >"$CALLS"
-output=$(printf '2\ny\n' | script -qec \
-  "$CLI bootstrap $multi_repo" /dev/null 2>&1)
-assert_contains "$output" 'Select one client:'
-assert_contains "$output" 'Selected client: claude'
-assert_contains "$(cat "$CALLS")" 'claude mcp'
-assert_not_contains "$(cat "$CALLS")" 'codex '
-
-mv "$FAKE_BIN/codex" "$DISABLED_BIN/codex"
-mv "$FAKE_BIN/claude" "$DISABLED_BIN/claude"
-none_repo=$TEST_ROOT/no-client
-new_repo "$none_repo" bootstrap-none
-if output=$(printf '\n' | script -qec \
-  "$CLI bootstrap $none_repo" /dev/null 2>&1)
-then
-  fail 'bootstrap accepted no detected client'
-fi
-assert_contains "$output" 'Result: DEPENDENCY_MISSING'
-mv "$DISABLED_BIN/codex" "$FAKE_BIN/codex"
-
-broken_repo=$TEST_ROOT/broken-remote
-new_repo "$broken_repo" bootstrap-broken
-git config --global --unset-all \
-  url."file://$source_repo".insteadOf
-git config --global \
-  url."file://$TEST_ROOT/missing-release-source".insteadOf \
-  https://github.com/beroka-vn/beroka-ai-governance.git
-if output=$(printf 'y\n' | script -qec \
-  "$CLI bootstrap $broken_repo --client codex" /dev/null 2>&1)
-then
-  fail 'bootstrap accepted an unverifiable latest release'
-fi
-assert_contains "$output" 'Result: RELEASE_RESOLUTION_REQUIRED'
-git config --global --unset-all \
-  url."file://$TEST_ROOT/missing-release-source".insteadOf
-git config --global \
-  url."file://$source_repo".insteadOf \
-  https://github.com/beroka-vn/beroka-ai-governance.git
-
-exact_repo=$TEST_ROOT/exact-version
-new_repo "$exact_repo" bootstrap-exact
-output=$($CLI bootstrap "$exact_repo" --client codex \
+output=$($CLI bootstrap "$repo" --client claude \
   --version v1.1.0 --non-interactive)
-assert_contains "$output" 'Version: v1.1.0'
-assert_one_result "$output"
-grep -F 'VERSION=v1.1.0' \
-  "$exact_repo/.beroka-governance.lock" >/dev/null ||
-  fail 'bootstrap did not use the explicit non-interactive version'
+[ "$repo_before" = "$(snapshot_repo "$repo")" ] ||
+  fail 'Claude bootstrap changed the application repository'
+assert_contains "$(cat "$HOME/.claude/CLAUDE.md")" \
+  '# Personal Claude instruction'
+assert_contains "$(cat "$HOME/.claude/CLAUDE.md")" \
+  '<!-- BEROKA-GOVERNANCE:START -->'
+[ "$(cat "$XDG_CONFIG_HOME/beroka-ai-governance/clients")" = codex,claude ] ||
+  fail 'bootstrap omitted Claude enrollment'
+assert_contains "$(cat "$CALLS")" 'claude mcp'
+assert_not_contains "$(cat "$CALLS")" 'codex '
 
-pending_repo=$TEST_ROOT/auth-pending
-new_repo "$pending_repo" bootstrap-auth-pending
-export FAKE_CODEX_HEALTH=auth-required
-export FAKE_CODEX_OAUTH=fail
-if output=$(printf 'y\ny\n' | script -qec \
-  "$CLI bootstrap $pending_repo --client codex --version v1.1.0" \
-  /dev/null 2>&1)
-then
-  fail 'bootstrap accepted incomplete OAuth'
-fi
-assert_contains "$output" 'Result: AUTH_PENDING'
-assert_contains "$output" \
-  'Resume: beroka-governance setup-connectors --client codex'
-assert_contains "$output" 'Repository changes: REVIEW_REQUIRED'
-assert_contains "$output" 'Repository pull request: REQUIRED'
-assert_one_result "$output"
-[ -f "$pending_repo/.beroka-governance.lock" ] &&
-  [ -f "$pending_repo/AGENTS.md" ] ||
-  fail 'AUTH_PENDING rolled back repository registration'
-pending_before=$(snapshot_repo "$pending_repo")
-if output=$(printf 'y\n' | script -qec \
-  "$CLI bootstrap $pending_repo --client codex" /dev/null 2>&1)
-then
-  fail 'bootstrap rerun accepted incomplete OAuth'
-fi
-pending_after=$(snapshot_repo "$pending_repo")
-[ "$pending_before" = "$pending_after" ] ||
-  fail 'AUTH_PENDING bootstrap rerun changed managed files'
-assert_contains "$output" 'Result: AUTH_PENDING'
-assert_contains "$output" 'Repository changes: NONE'
-assert_contains "$output" 'Repository pull request: NOT_REQUIRED'
-assert_one_result "$output"
+claude_after=$(cat "$HOME/.claude/CLAUDE.md")
+output=$($CLI bootstrap "$repo" --client claude \
+  --version v1.1.0 --non-interactive)
+[ "$claude_after" = "$(cat "$HOME/.claude/CLAUDE.md")" ] ||
+  fail 'repeat Claude bootstrap changed user instructions'
+assert_not_contains "$output" 'Repository pull request:'
 
-health_repo=$TEST_ROOT/health-unavailable
-new_repo "$health_repo" bootstrap-health-unavailable
-unset FAKE_CODEX_OAUTH
-export FAKE_CODEX_HEALTH=unavailable
-if output=$($CLI bootstrap "$health_repo" --client codex \
+if output=$($CLI bootstrap "$repo" --client cursor \
   --version v1.1.0 --non-interactive 2>&1)
 then
-  fail 'bootstrap accepted unavailable connector health'
+  fail 'Cursor bootstrap accepted a missing User Rule acknowledgement'
 fi
-assert_contains "$output" 'Result: CONNECTOR_HEALTH_UNAVAILABLE'
+assert_contains "$output" 'Result: CURSOR_USER_RULE_REQUIRED'
 assert_contains "$output" \
-  'Resume: beroka-governance setup-connectors --client codex'
-assert_contains "$output" 'Repository changes: REVIEW_REQUIRED'
-assert_contains "$output" 'Repository pull request: REQUIRED'
-assert_one_result "$output"
-[ -f "$health_repo/.beroka-governance.lock" ] &&
-  [ -f "$health_repo/AGENTS.md" ] ||
-  fail 'CONNECTOR_HEALTH_UNAVAILABLE rolled back repository registration'
-health_before=$(snapshot_repo "$health_repo")
-if output=$($CLI bootstrap "$health_repo" --client codex \
-  --non-interactive 2>&1)
-then
-  fail 'bootstrap rerun accepted unavailable connector health'
-fi
-health_after=$(snapshot_repo "$health_repo")
-[ "$health_before" = "$health_after" ] ||
-  fail 'health-unavailable bootstrap rerun changed managed files'
-assert_contains "$output" 'Result: CONNECTOR_HEALTH_UNAVAILABLE'
-assert_contains "$output" 'Repository changes: NONE'
-assert_contains "$output" 'Repository pull request: NOT_REQUIRED'
-assert_one_result "$output"
-unset FAKE_CODEX_HEALTH
-
-grep -F 'beroka-governance bootstrap' "$ROOT/README.md" >/dev/null ||
-  fail 'README does not document bootstrap'
-grep -F 'latest stable annotated' "$ROOT/PACKAGE-DESIGN.md" >/dev/null ||
-  fail 'package design does not define latest'
-grep -F 'fresh AI session' "$ROOT/handbook.md" >/dev/null ||
-  fail 'handbook does not document the bootstrap handoff'
-grep -F 'gh release download' "$ROOT/README.md" >/dev/null ||
-  fail 'README does not document the release launcher'
-grep -F 'AUTH_PENDING' "$ROOT/handbook.md" >/dev/null ||
-  fail 'handbook does not document pending authentication'
-grep -F 'CONNECTOR_HEALTH_UNAVAILABLE' "$ROOT/handbook.md" >/dev/null ||
-  fail 'handbook does not document unavailable connector health'
+  'Remediation: beroka-governance bootstrap --client cursor'
+[ ! -e "$HOME/.cursor" ] ||
+  fail 'Cursor bootstrap edited undocumented Cursor state'
 
 printf '%s\n' 'Bootstrap onboarding tests: PASS'

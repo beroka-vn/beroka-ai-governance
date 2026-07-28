@@ -1,4 +1,3 @@
-<!-- BEROKA-GOVERNANCE:START -->
 ## Beroka AI Governance
 
 This workstation uses verified Beroka governance. In a Git repository, before
@@ -13,6 +12,5 @@ the next governed action. Run a fresh operation-specific preflight immediately
 before every external write. Never rely on governance details preserved only
 in conversation history.
 
-Repository-specific instructions may narrow central governance. They must not
-broaden authority or bypass a central stop condition.
-<!-- BEROKA-GOVERNANCE:END -->
+Repository instructions may narrow governance but must not broaden authority
+or bypass a central stop condition.

@@ -12,6 +12,8 @@ START_MARKER='<!-- BEROKA-GOVERNANCE:START -->'
 END_MARKER='<!-- BEROKA-GOVERNANCE:END -->'
 REGISTRY=$CONFIG_ROOT/registered-repos
 ACTIVE_RELEASE=$CONFIG_ROOT/active-release
+CLIENTS_FILE=$CONFIG_ROOT/clients
+CURSOR_ACK_FILE=$CONFIG_ROOT/cursor-user-rule.sha256
 TX_DIR= TX_REPO= TX_COMMITTED=0 TX_RELEASE_NEW=0 TX_RELEASE_TARGET= TX_RELEASE_STAGE= TX_RELEASE_OWNED=0
 TX_CLI_PATH= TX_CLI_SNAPSHOT=0 TX_ACTIVE_RELEASE_SNAPSHOT=0 TX_REGISTRY_SNAPSHOT=0 TX_REGISTRY_ACTION=none
 ROUTING_FILE=.beroka-governance.conf
@@ -48,7 +50,7 @@ pass_result() {
 usage() {
   printf '%s\n' \
     'Usage:' \
-    '  beroka-governance bootstrap REPO [--client codex|claude|cursor] [--version vX.Y.Z] [--upgrade] [--non-interactive]' \
+    '  beroka-governance bootstrap [REPO] --client codex|claude|cursor [--version vX.Y.Z] [--upgrade] [--non-interactive]' \
     '  beroka-governance install VERSION' \
     '  beroka-governance register REPO --version VERSION --client codex|claude|cursor [--dry-run]' \
     '  beroka-governance update REPO --to VERSION [--dry-run]' \
@@ -668,7 +670,7 @@ validate_release_checkout() {
   for vrc_required in \
     VERSION bin/beroka-governance runtime/entrypoint.md governance.md handbook.md workflow.md \
     templates/agent-entrypoints/AGENTS.md templates/agent-entrypoints/CLAUDE.md \
-    templates/agent-entrypoints/team-dev-ai-workflow.mdc templates/ai-agent-assignment.md \
+    templates/agent-entrypoints/CURSOR-USER-RULE.txt templates/ai-agent-assignment.md \
     templates/github-issue.md templates/jira-confluence.md templates/pull-request.md
   do
     assert_release_file "$vrc_checkout" "$vrc_required"
@@ -817,22 +819,119 @@ cmd_install() {
   pass_result
 }
 
-managed_repo_snapshot() {
-  mrs_repo=$1
-  mrs_paths='AGENTS.md CLAUDE.md .beroka-governance.lock .cursor/rules/beroka-governance.mdc'
-  git -C "$mrs_repo" status --porcelain=v1 -- $mrs_paths
-  git -C "$mrs_repo" ls-files -s -- $mrs_paths
-  for mrs_path in $mrs_paths; do
-    [ ! -f "$mrs_repo/$mrs_path" ] ||
-      printf '%s\t%s\n' "$mrs_path" \
-        "$(git hash-object --no-filters "$mrs_repo/$mrs_path")"
-  done
+assert_client_files() {
+  assert_safe_user_path "$CONFIG_ROOT" config
+  assert_safe_user_path "$CLIENTS_FILE" 'client enrollment'
+  assert_safe_user_path "$CURSOR_ACK_FILE" 'Cursor acknowledgement'
+  [ ! -e "$CONFIG_ROOT" ] || [ -d "$CONFIG_ROOT" ] ||
+    die GOVERNANCE_NOT_READY "Config root is not a directory: $CONFIG_ROOT"
+  [ ! -e "$CLIENTS_FILE" ] || { [ -f "$CLIENTS_FILE" ] && [ ! -L "$CLIENTS_FILE" ]; } ||
+    die GOVERNANCE_NOT_READY 'Unsafe client enrollment'
+  [ ! -e "$CURSOR_ACK_FILE" ] || { [ -f "$CURSOR_ACK_FILE" ] && [ ! -L "$CURSOR_ACK_FILE" ]; } ||
+    die GOVERNANCE_NOT_READY 'Unsafe Cursor acknowledgement'
+}
+
+load_enabled_clients() {
+  ENABLED_CLIENTS=
+  assert_client_files
+  [ ! -e "$CLIENTS_FILE" ] || {
+    ENABLED_CLIENTS=$(sed -n '1p' "$CLIENTS_FILE")
+    validate_clients "$ENABLED_CLIENTS"
+    [ "$(wc -l <"$CLIENTS_FILE" | tr -d ' ')" -eq 1 ] ||
+      die GOVERNANCE_NOT_READY 'Invalid client enrollment'
+  }
+}
+
+enable_client() {
+  enable_selected=$1
+  load_enabled_clients
+  enable_clients=$(canonical_clients "$ENABLED_CLIENTS" "$enable_selected")
+  enable_stage=$(mktemp "${TMPDIR:-/tmp}/beroka-governance-clients.XXXXXX") ||
+    die GOVERNANCE_NOT_READY 'Cannot stage client enrollment'
+  printf '%s\n' "$enable_clients" >"$enable_stage" ||
+    die GOVERNANCE_NOT_READY 'Cannot stage client enrollment'
+  apply_user_file "$enable_stage" "$CLIENTS_FILE" 'client enrollment'
+  rm -f "$enable_stage" || :
+}
+
+active_instruction_file() {
+  case "$1" in
+    codex)
+      codex_home=${CODEX_HOME:-$HOME/.codex}
+      if [ -s "$codex_home/AGENTS.override.md" ]; then
+        printf '%s\n' "$codex_home/AGENTS.override.md"
+      else
+        printf '%s\n' "$codex_home/AGENTS.md"
+      fi
+      ;;
+    claude) printf '%s\n' "$HOME/.claude/CLAUDE.md" ;;
+    cursor) return 1 ;;
+  esac
+}
+
+install_client_instruction() {
+  instruction_client=$1 instruction_interactive=$2
+  case "$instruction_client" in
+    codex) instruction_template=$RELEASE_DIR/templates/agent-entrypoints/AGENTS.md ;;
+    claude) instruction_template=$RELEASE_DIR/templates/agent-entrypoints/CLAUDE.md ;;
+    cursor)
+      instruction_template=$RELEASE_DIR/templates/agent-entrypoints/CURSOR-USER-RULE.txt
+      [ -f "$instruction_template" ] ||
+        die ENTRYPOINT_DRIFT "Missing Cursor user rule in $RELEASE_DIR"
+      assert_client_files
+      cursor_rule_hash=$(git hash-object --no-filters "$instruction_template") ||
+        die GOVERNANCE_NOT_READY 'Cannot hash Cursor user rule'
+      if [ -f "$CURSOR_ACK_FILE" ] &&
+        [ "$(sed -n '1p' "$CURSOR_ACK_FILE")" = "$cursor_rule_hash" ] &&
+        [ "$(wc -l <"$CURSOR_ACK_FILE" | tr -d ' ')" -eq 1 ]
+      then
+        printf '%s\n' 'Instruction: USER_CONFIRMED'
+        return
+      fi
+      [ "$instruction_interactive" -eq 1 ] ||
+        die CURSOR_USER_RULE_REQUIRED \
+          'Remediation: beroka-governance bootstrap --client cursor'
+      cat "$instruction_template" || die GOVERNANCE_NOT_READY 'Cannot print Cursor user rule'
+      printf 'User Rule added in Cursor Settings > Rules? [y/N] '
+      IFS= read -r cursor_answer || cursor_answer=
+      case "$cursor_answer" in y|Y|yes|YES) ;; *) die CURSOR_USER_RULE_REQUIRED 'Cursor User Rule was not confirmed' ;; esac
+      cursor_stage=$(mktemp "${TMPDIR:-/tmp}/beroka-governance-cursor-rule.XXXXXX") ||
+        die GOVERNANCE_NOT_READY 'Cannot stage Cursor acknowledgement'
+      printf '%s\n' "$cursor_rule_hash" >"$cursor_stage" ||
+        die GOVERNANCE_NOT_READY 'Cannot stage Cursor acknowledgement'
+      apply_user_file "$cursor_stage" "$CURSOR_ACK_FILE" 'Cursor acknowledgement'
+      rm -f "$cursor_stage" || :
+      printf '%s\n' 'Instruction: USER_CONFIRMED'
+      return
+      ;;
+    *) usage >&2; exit 2 ;;
+  esac
+
+  assert_valid_template "$instruction_template"
+  instruction_destination=$(active_instruction_file "$instruction_client") ||
+    die GOVERNANCE_NOT_READY "No instruction file for $instruction_client"
+  assert_safe_user_path "$instruction_destination" "$instruction_client instruction"
+  [ ! -e "$instruction_destination" ] || { [ -f "$instruction_destination" ] && [ ! -L "$instruction_destination" ]; } ||
+    die GOVERNANCE_NOT_READY "Unsafe $instruction_client instruction"
+  instruction_stage=$(mktemp "${TMPDIR:-/tmp}/beroka-governance-instruction.XXXXXX") ||
+    die GOVERNANCE_NOT_READY "Cannot stage $instruction_client instruction"
+  if [ -e "$instruction_destination" ]; then
+    strip_managed_block "$instruction_destination" "$instruction_stage"
+  else
+    : >"$instruction_stage" || die GOVERNANCE_NOT_READY "Cannot stage $instruction_client instruction"
+  fi
+  cat "$instruction_stage" "$instruction_template" >"$instruction_stage.merged" ||
+    die GOVERNANCE_NOT_READY "Cannot stage $instruction_client instruction"
+  apply_user_file "$instruction_stage.merged" "$instruction_destination" "$instruction_client instruction"
+  rm -f "$instruction_stage" "$instruction_stage.merged" || :
+  printf '%s\n' 'Instruction: INSTALLED'
 }
 
 cmd_bootstrap() {
-  [ "$#" -ge 1 ] || { usage >&2; exit 2; }
-  bs_requested=$1
-  shift
+  bs_requested=
+  if [ "$#" -gt 0 ]; then
+    case "$1" in --*) ;; *) bs_requested=$1; shift ;; esac
+  fi
   bs_client= bs_version= bs_non_interactive=0 bs_upgrade=0
   while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -878,94 +977,29 @@ cmd_bootstrap() {
     bs_client=$(detect_client)
   fi
 
-  bs_repo=$(canonical_repo "$bs_requested")
-  assert_safe_managed_paths "$bs_repo"
-  [ "$bs_upgrade" -eq 0 ] ||
-    [ -f "$bs_repo/.beroka-governance.lock" ] ||
-    die GOVERNANCE_NOT_READY \
-      'Bootstrap --upgrade requires an existing registration'
-  require_client "$bs_client"
-  bs_before=$(managed_repo_snapshot "$bs_repo")
-  if [ -f "$bs_repo/.beroka-governance.lock" ]; then
-    read_lock "$bs_repo"
-    resolve_canonical_remote "$bs_repo" "$LOCK_REPOSITORY"
-    if [ -n "$bs_version" ] && [ "$bs_version" != "$LOCK_VERSION" ]; then
-      [ "$bs_upgrade" -eq 1 ] ||
-        die VERSION_MISMATCH \
-          "Repository is pinned to $LOCK_VERSION; use --upgrade to change it"
-      SUPPRESS_PASS_RESULT=1
-      cmd_repin update "$bs_repo" --to "$bs_version"
-      read_lock "$bs_repo"
-      resolve_canonical_remote "$bs_repo" "$LOCK_REPOSITORY"
-    fi
-    bs_version=$LOCK_VERSION
-    bs_expected_commit=$LOCK_COMMIT
-  else
-    resolve_canonical_remote "$bs_repo"
-    normalize_github_url "$CANONICAL_REMOTE_URL" >/dev/null ||
-      die REMOTE_MISMATCH \
-        'Canonical remote is not a supported GitHub repository'
-    if [ -z "$bs_version" ]; then
-      [ "$bs_interactive" -eq 1 ] ||
-        die RELEASE_RESOLUTION_REQUIRED \
-          'Non-interactive first registration requires --version vX.Y.Z'
-      resolve_latest_release
-      bs_version=$RESOLVED_VERSION
-    else
-      remote_release_commit "$bs_version"
-    fi
-    bs_expected_commit=$REMOTE_RELEASE_COMMIT
-    if [ "$bs_interactive" -eq 1 ]; then
-      printf '%s\n' \
-        "Resolved release: $bs_version" \
-        "Release commit: $bs_expected_commit"
-      printf 'Install and pin this release? [y/N] '
-      IFS= read -r bs_answer || bs_answer=
-      case "$bs_answer" in
-        y|Y|yes|YES) ;;
-        *) die GOVERNANCE_NOT_READY 'Bootstrap cancelled' ;;
-      esac
-    fi
+  if [ -z "$bs_version" ]; then
+    [ "$bs_interactive" -eq 1 ] ||
+      die RELEASE_RESOLUTION_REQUIRED \
+        'Non-interactive bootstrap requires --version vX.Y.Z'
+    resolve_latest_release
+    bs_version=$RESOLVED_VERSION
   fi
 
   SUPPRESS_PASS_RESULT=1
   cmd_install "$bs_version"
-  [ "$RELEASE_COMMIT" = "$bs_expected_commit" ] ||
-    die VERSION_MISMATCH \
-      'Installed release commit differs from the selected release'
-  cmd_register "$bs_repo" --version "$bs_version" --client "$bs_client"
-  bs_after=$(managed_repo_snapshot "$bs_repo")
-
-  if [ "$bs_before" = "$bs_after" ]; then
-    bs_registration=NO_CHANGE
-    bs_entrypoint=ALREADY_CONFIGURED
-    bs_changes=NONE
-    bs_pull_request=NOT_REQUIRED
-    bs_next='Next: no repository commit or pull request is required'
-  else
-    bs_registration=PASS
-    bs_entrypoint=ADDED
-    bs_changes=REVIEW_REQUIRED
-    bs_pull_request=REQUIRED
-    bs_next='Next: review and commit repository changes, then start a fresh AI session'
-  fi
+  load_active_release
+  install_client_instruction "$bs_client" "$bs_interactive"
+  enable_client "$bs_client"
   printf '%s\n' \
     'Release: PASS' \
-    "Repository registration: $bs_registration" \
-    "Client entrypoint: $bs_entrypoint" \
     "Version: $bs_version" \
-    "Selected client: $bs_client" \
-    "Repository changes: $bs_changes" \
-    "Repository pull request: $bs_pull_request" \
-    "$bs_next"
+    "Selected client: $bs_client"
 
   if [ "$bs_interactive" -eq 1 ]; then
     cmd_setup_connectors --client "$bs_client"
   else
     cmd_setup_connectors --client "$bs_client" --non-interactive
   fi
-  cmd_doctor "$bs_repo"
-  cmd_doctor "$bs_repo" --client "$bs_client"
 
   printf '%s\n' 'Result: PASS'
 }
