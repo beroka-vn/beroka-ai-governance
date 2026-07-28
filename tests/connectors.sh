@@ -20,6 +20,65 @@ export PATH
 cat >"$FAKE_BIN/sleep" <<'EOF'
 #!/bin/sh
 set -eu
+if [ "${FAKE_CODEX_WAIT_FOR_UTF8_SPLIT:-0}" = 1 ]; then
+  split_polls=$(sed -n '1p' "$XDG_CONFIG_HOME/fake-codex-split-polls" 2>/dev/null || :)
+  split_polls=${split_polls:-0}
+  split_polls=$((split_polls + 1))
+  printf '%s\n' "$split_polls" >"$XDG_CONFIG_HOME/fake-codex-split-polls"
+  if [ "$split_polls" -eq 1 ]; then
+    split_marker=$XDG_CONFIG_HOME/fake-codex-split-first
+  else
+    split_marker=$XDG_CONFIG_HOME/fake-codex-split-complete
+  fi
+  split_waits=0
+  while [ ! -f "$split_marker" ] && [ "$split_waits" -lt 100 ]; do
+    /bin/sleep 0.01
+    split_waits=$((split_waits + 1))
+  done
+  exit 0
+fi
+if [ "${FAKE_CODEX_WAIT_FOR_DECOY:-0}" = 1 ]; then
+  decoy_polls=$(sed -n '1p' \
+    "$XDG_CONFIG_HOME/fake-codex-decoy-polls" 2>/dev/null || :)
+  decoy_polls=${decoy_polls:-0}
+  decoy_polls=$((decoy_polls + 1))
+  printf '%s\n' "$decoy_polls" \
+    >"$XDG_CONFIG_HOME/fake-codex-decoy-polls"
+  if [ "$decoy_polls" -eq 1 ]; then
+    decoy_marker=$XDG_CONFIG_HOME/fake-codex-decoy
+  else
+    decoy_marker=$XDG_CONFIG_HOME/fake-codex-actual
+  fi
+  wait_loops=0
+  while [ ! -f "$decoy_marker" ] && [ "$wait_loops" -lt 100 ]; do
+    /bin/sleep 0.01
+    wait_loops=$((wait_loops + 1))
+  done
+  /bin/sleep 0.01
+  exit 0
+fi
+if [ "${FAKE_CODEX_WAIT_FOR_ESCAPED:-0}" = 1 ]; then
+  wait_loops=0
+  while [ ! -f "$XDG_CONFIG_HOME/fake-codex-escaped-probes" ] &&
+        [ "$wait_loops" -lt 100 ]
+  do
+    /bin/sleep 0.01
+    wait_loops=$((wait_loops + 1))
+  done
+  /bin/sleep 0.01
+  exit 0
+fi
+if [ "${FAKE_CODEX_WAIT_FOR_ERROR:-0}" = 1 ]; then
+  wait_loops=0
+  while [ ! -f "$XDG_CONFIG_HOME/fake-codex-error-probes" ] &&
+        [ "$wait_loops" -lt 100 ]
+  do
+    /bin/sleep 0.01
+    wait_loops=$((wait_loops + 1))
+  done
+  /bin/sleep 0.01
+  exit 0
+fi
 if [ -n "${FAKE_CODEX_READY_AFTER:-}" ]; then
   count=$(sed -n '1p' "$XDG_CONFIG_HOME/fake-codex-polls" 2>/dev/null || :)
   count=${count:-0}
@@ -173,6 +232,24 @@ case "$*" in
           exit 0
         health=$(sed -n '1p' "$XDG_CONFIG_HOME/fake-codex-health" 2>/dev/null || :)
         case "$health" in
+          escaped-id-one-result|escaped-result-only|escaped-error-with-result|\
+          escaped-id-conflict-with-result|escaped-result-with-error|\
+          semantic-duplicate-result|semantic-duplicate-error|\
+          escaped-wrapper-keys|semantic-duplicate-data|\
+          semantic-duplicate-name|semantic-duplicate-tools|\
+          semantic-duplicate-auth-status|raw-nul-response|escaped-nul-text|\
+          nested-extension-before-tools|valid-raw-unicode|invalid-utf8-*|\
+          split-utf8-*)
+            escaped_probes=$(sed -n '1p' \
+              "$XDG_CONFIG_HOME/fake-codex-escaped-probes" \
+              2>/dev/null || :)
+            escaped_probes=${escaped_probes:-0}
+            escaped_probes=$((escaped_probes + 1))
+            printf '%s\n' "$escaped_probes" \
+              >"$XDG_CONFIG_HOME/fake-codex-escaped-probes"
+            ;;
+        esac
+        case "$health" in
           unknown-then-healthy)
             probes=$(sed -n '1p' \
               "$XDG_CONFIG_HOME/fake-codex-probes" 2>/dev/null || :)
@@ -194,6 +271,147 @@ case "$*" in
           healthy)
             printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","serverInfo":null,"tools":{"atlassianUserInfo":{}},"resources":[],"resourceTemplates":[],"authStatus":"oAuth"}]}}'
             ;;
+          healthy-rpc-extensions)
+            printf '%s\n' '{"jsonrpc":"2.0","id":1,"trace-id":"abc","key with space":true,"escaped\u002dextension":null,"result":{"data":[{"name":"atlassian","serverInfo":null,"tools":{"atlassianUserInfo":{}},"resources":[],"resourceTemplates":[],"authStatus":"oAuth"}]}}'
+            ;;
+          nested-id-before-healthy|string-id-before-healthy)
+            decoy_requests=$(sed -n '1p' \
+              "$XDG_CONFIG_HOME/fake-codex-decoy-requests" \
+              2>/dev/null || :)
+            decoy_requests=${decoy_requests:-0}
+            decoy_requests=$((decoy_requests + 1))
+            printf '%s\n' "$decoy_requests" \
+              >"$XDG_CONFIG_HOME/fake-codex-decoy-requests"
+            case "$health" in
+              nested-id-before-healthy)
+                printf '%s\n' \
+                  '{"method":"notice","params":{"id":1,"result":{"ignored":true}}}'
+                ;;
+              string-id-before-healthy)
+                printf '%s\n' \
+                  '{"method":"notice","message":"saw \"id\":1 in text"}'
+                ;;
+            esac
+            : >"$XDG_CONFIG_HOME/fake-codex-decoy"
+            /bin/sleep 0.08
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","serverInfo":null,"tools":{"atlassianUserInfo":{}},"resources":[],"resourceTemplates":[],"authStatus":"oAuth"}]}}'
+            : >"$XDG_CONFIG_HOME/fake-codex-actual"
+            ;;
+          nested-id-only)
+            printf '%s\n' \
+              '{"method":"notice","params":{"id":1,"result":{"ignored":true}}}'
+            ;;
+          string-id-only)
+            printf '%s\n' \
+              '{"method":"notice","message":"saw \"id\":1 in text"}'
+            ;;
+          duplicate-rpc-id)
+            printf '%s\n' '{"id":1,"id":1,"result":{"data":[{"name":"atlassian","serverInfo":null,"tools":{"atlassianUserInfo":{}},"resources":[],"resourceTemplates":[],"authStatus":"oAuth"}]}}'
+            ;;
+          duplicate-rpc-result)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","serverInfo":null,"tools":{"atlassianUserInfo":{}},"resources":[],"resourceTemplates":[],"authStatus":"oAuth"}]},"result":{}}'
+            ;;
+          duplicate-rpc-error)
+            printf '%s\n' '{"id":1,"error":null,"error":{"code":-32603,"message":"failed"}}'
+            ;;
+          escaped-id-one-result)
+            printf '%s\n' '{"\u0069\u0064":1,"result":{"data":[{"name":"atlassian","serverInfo":null,"tools":{"atlassianUserInfo":{}},"resources":[],"resourceTemplates":[],"authStatus":"oAuth"}]}}'
+            ;;
+          escaped-result-only)
+            printf '%s\n' '{"id":1,"\u0072esult":{"data":[{"name":"atlassian","serverInfo":null,"tools":{"atlassianUserInfo":{}},"resources":[],"resourceTemplates":[],"authStatus":"oAuth"}]}}'
+            ;;
+          escaped-error-with-result)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","serverInfo":null,"tools":{"atlassianUserInfo":{}},"resources":[],"resourceTemplates":[],"authStatus":"oAuth"}]},"e\u0072ror":null}'
+            ;;
+          escaped-id-conflict-with-result)
+            printf '%s\n' '{"id":1,"i\u0064":2,"result":{"data":[{"name":"atlassian","serverInfo":null,"tools":{"atlassianUserInfo":{}},"resources":[],"resourceTemplates":[],"authStatus":"oAuth"}]}}'
+            ;;
+          escaped-result-with-error)
+            printf '%s\n' '{"id":1,"\u0072esult":{"data":[{"name":"atlassian","serverInfo":null,"tools":{"atlassianUserInfo":{}},"resources":[],"resourceTemplates":[],"authStatus":"oAuth"}]},"error":null}'
+            ;;
+          semantic-duplicate-result)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","serverInfo":null,"tools":{"atlassianUserInfo":{}},"resources":[],"resourceTemplates":[],"authStatus":"oAuth"}]},"r\u0065sult":{}}'
+            ;;
+          semantic-duplicate-error)
+            printf '%s\n' '{"id":1,"error":null,"e\u0072ror":{"code":-32603,"message":"failed"}}'
+            ;;
+          escaped-wrapper-keys)
+            printf '%s\n' '{"id":1,"result":{"d\u0061ta":[{"n\u0061me":"atlassian","serverInfo":null,"t\u006fols":{"atlassianUserInfo":{}},"resources":[],"resourceTemplates":[],"authSt\u0061tus":"oAuth"}]}}'
+            ;;
+          semantic-duplicate-data)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"atlassianUserInfo":{}},"authStatus":"oAuth"}],"d\u0061ta":[]}}'
+            ;;
+          semantic-duplicate-name)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","n\u0061me":"other","tools":{"atlassianUserInfo":{}},"authStatus":"oAuth"}]}}'
+            ;;
+          semantic-duplicate-tools)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"atlassianUserInfo":{}},"t\u006fols":{},"authStatus":"oAuth"}]}}'
+            ;;
+          semantic-duplicate-auth-status)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"atlassianUserInfo":{}},"authStatus":"oAuth","authSt\u0061tus":"notLoggedIn"}]}}'
+            ;;
+          raw-nul-response)
+            printf '%s\000%s\n' \
+              '{"id":1,"result":{"data":[{"name":"atlassian","note":"before' \
+              'after","tools":{"atlassianUserInfo":{}},"authStatus":"oAuth"}]}}'
+            ;;
+          escaped-nul-text)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","note":"before\u0000after","tools":{"atlassianUserInfo":{}},"authStatus":"oAuth"}]}}'
+            ;;
+          nested-extension-before-tools)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","extension":{"nested":[{"text":"close } open { square ] [ escaped \" quote and \\ backslash"},["}",{"deeper":"{ [ ] }"}]]},"tools":{"atlassianUserInfo":{}},"authStatus":"oAuth"}]}}'
+            ;;
+          malformed-nested-extension-before-tools)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","extension":{"nested":[{"text":"invalid\qescape"}]},"tools":{"atlassianUserInfo":{}},"authStatus":"oAuth"}]}}'
+            ;;
+          valid-raw-unicode)
+            printf '%s\302\200\337\277\340\240\200\355\237\277\356\200\200\357\277\277\360\220\200\200\364\217\277\277%s\n' \
+              '{"id":1,"result":{"data":[{"name":"atlassian","note":"ASCII ' \
+              '","tools":{"atlassianUserInfo":{}},"authStatus":"oAuth"}]}}'
+            ;;
+          split-utf8-2)
+            printf '%s\302' '{"id":1,"result":{"data":[{"name":"atlassian","note":"before'
+            : >"$XDG_CONFIG_HOME/fake-codex-split-first"
+            /bin/sleep 0.08
+            printf '\242%s\n' 'after","tools":{"atlassianUserInfo":{}},"authStatus":"oAuth"}]}}'
+            : >"$XDG_CONFIG_HOME/fake-codex-split-complete"
+            ;;
+          split-utf8-3)
+            printf '%s\342' '{"id":1,"result":{"data":[{"name":"atlassian","note":"before'
+            : >"$XDG_CONFIG_HOME/fake-codex-split-first"
+            /bin/sleep 0.08
+            printf '\202\254%s\n' 'after","tools":{"atlassianUserInfo":{}},"authStatus":"oAuth"}]}}'
+            : >"$XDG_CONFIG_HOME/fake-codex-split-complete"
+            ;;
+          split-utf8-4)
+            printf '%s\360' '{"id":1,"result":{"data":[{"name":"atlassian","note":"before'
+            : >"$XDG_CONFIG_HOME/fake-codex-split-first"
+            /bin/sleep 0.08
+            printf '\220\215\210%s\n' 'after","tools":{"atlassianUserInfo":{}},"authStatus":"oAuth"}]}}'
+            : >"$XDG_CONFIG_HOME/fake-codex-split-complete"
+            ;;
+          invalid-utf8-continuation)
+            printf '%s\200%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","note":"before' 'after","tools":{"atlassianUserInfo":{}},"authStatus":"oAuth"}]}}'
+            ;;
+          invalid-utf8-ff-fe)
+            printf '%s\377\376%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","note":"before' 'after","tools":{"atlassianUserInfo":{}},"authStatus":"oAuth"}]}}'
+            ;;
+          invalid-utf8-overlong)
+            printf '%s\300\200%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","note":"before' 'after","tools":{"atlassianUserInfo":{}},"authStatus":"oAuth"}]}}'
+            ;;
+          invalid-utf8-surrogate)
+            printf '%s\355\240\200%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","note":"before' 'after","tools":{"atlassianUserInfo":{}},"authStatus":"oAuth"}]}}'
+            ;;
+          invalid-utf8-too-high)
+            printf '%s\364\220\200\200%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","note":"before' 'after","tools":{"atlassianUserInfo":{}},"authStatus":"oAuth"}]}}'
+            ;;
+          invalid-utf8-truncated)
+            printf '%s\342\202%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","note":"before' 'after","tools":{"atlassianUserInfo":{}},"authStatus":"oAuth"}]}}'
+            ;;
+          invalid-utf8-eof-truncated)
+            printf '%s\342\202' '{"id":1,"result":{"data":[{"name":"atlassian","note":"before'
+            exit 0
+            ;;
           healthy-custom-tools)
             printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","serverInfo":null,"tools":{"searchJiraIssuesUsingJql":{}},"resources":[],"resourceTemplates":[],"authStatus":"oAuth"}]}}'
             ;;
@@ -205,8 +423,100 @@ case "$*" in
           missing)
             printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","serverInfo":null,"tools":{},"resources":[],"resourceTemplates":[],"authStatus":"notLoggedIn"}]}}'
             ;;
-          failed)
+          healthy-empty-tools)
             printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","serverInfo":null,"tools":{},"resources":[],"resourceTemplates":[],"authStatus":"oAuth"}]}}'
+            ;;
+          healthy-array-tools)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","serverInfo":null,"tools":[],"resources":[],"resourceTemplates":[],"authStatus":"oAuth"}]}}'
+            ;;
+          healthy-null-tools)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","serverInfo":null,"tools":null,"resources":[],"resourceTemplates":[],"authStatus":"oAuth"}]}}'
+            ;;
+          healthy-missing-tools)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","serverInfo":null,"resources":[],"resourceTemplates":[],"authStatus":"oAuth"}]}}'
+            ;;
+          healthy-malformed-envelope-missing-comma)
+            printf '%s\n' '{"jsonrpc":"2.0" "id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]}}'
+            ;;
+          healthy-malformed-record-illegal-escape)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","description":"invalid\qescape","tools":{"createJiraIssue":{},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]}}'
+            ;;
+          healthy-malformed-record-missing-comma)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian" "tools":{"createJiraIssue":{},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]}}'
+            ;;
+          healthy-malformed-envelope-trailing-object)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]}} {"trailing":true}'
+            ;;
+          healthy-malformed-envelope-trailing-member)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]}},"extra":{}'
+            ;;
+          healthy-malformed-envelope-trailing-member-spaced)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]}} , "extra" : {}'
+            ;;
+          healthy-malformed-envelope-trailing-member-whitespace)
+            printf '%s \t,\r\t%s\t:\t%s\n' \
+              '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]}}' \
+              '"extra"' '{}'
+            ;;
+          dual-result-error|dual-result-error-null|\
+          dual-result-error-string|dual-result-error-array|\
+          dual-result-error-number|dual-result-error-bool)
+            error_probes=$(sed -n '1p' \
+              "$XDG_CONFIG_HOME/fake-codex-error-probes" 2>/dev/null || :)
+            error_probes=${error_probes:-0}
+            error_probes=$((error_probes + 1))
+            printf '%s\n' "$error_probes" \
+              >"$XDG_CONFIG_HOME/fake-codex-error-probes"
+            case "$health" in
+              *-null) error_value=null ;;
+              *-string) error_value='"failed"' ;;
+              *-array) error_value='["failed"]' ;;
+              *-number) error_value=17 ;;
+              *-bool) error_value=true ;;
+              *) error_value='{"code":-32603,"message":"failed"}' ;;
+            esac
+            printf '%s%s%s\n' \
+              '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]},"error":' \
+              "$error_value" '}'
+            ;;
+          pure-error|pure-error-null|pure-error-string|pure-error-array|\
+          pure-error-number|pure-error-bool)
+            error_probes=$(sed -n '1p' \
+              "$XDG_CONFIG_HOME/fake-codex-error-probes" 2>/dev/null || :)
+            error_probes=${error_probes:-0}
+            error_probes=$((error_probes + 1))
+            printf '%s\n' "$error_probes" \
+              >"$XDG_CONFIG_HOME/fake-codex-error-probes"
+            case "$health" in
+              *-null) error_value=null ;;
+              *-string) error_value='"failed"' ;;
+              *-array) error_value='["failed"]' ;;
+              *-number) error_value=17 ;;
+              *-bool) error_value=true ;;
+              *) error_value='{"code":-32603,"message":"failed"}' ;;
+            esac
+            printf '%s%s%s\n' '{"id":1,"error":' "$error_value" '}'
+            ;;
+          neither-result-nor-error)
+            error_probes=$(sed -n '1p' \
+              "$XDG_CONFIG_HOME/fake-codex-error-probes" 2>/dev/null || :)
+            error_probes=${error_probes:-0}
+            error_probes=$((error_probes + 1))
+            printf '%s\n' "$error_probes" \
+              >"$XDG_CONFIG_HOME/fake-codex-error-probes"
+            printf '%s\n' '{"jsonrpc":"2.0","id":1}'
+            ;;
+          malformed-reauth-missing-comma)
+            printf '%s\n' '{"method":"mcpServer/startupStatus/updated" "params":{"name":"atlassian","failureReason":"reauthenticationRequired"}}'
+            ;;
+          malformed-reauth-illegal-escape)
+            printf '%s\n' '{"method":"mcpServer/startupStatus/updated","params":{"name":"atlassian","failureReason":"reauthenticationRequired","message":"invalid\qescape"}}'
+            ;;
+          malformed-reauth-trailing-member)
+            printf '%s\n' '{"method":"mcpServer/startupStatus/updated","params":{"name":"atlassian","failureReason":"reauthenticationRequired"}},"extra":{}'
+            ;;
+          malformed-reauth-trailing-token)
+            printf '%s\n' '{"method":"mcpServer/startupStatus/updated","params":{"name":"atlassian","failureReason":"reauthenticationRequired"}} true'
             ;;
         esac
         ;;
@@ -258,6 +568,348 @@ output=$($CLI setup-connectors --client codex --non-interactive)
 assert_contains "$output" 'Result: PASS'
 [ "$(sed -n '1p' "$XDG_CONFIG_HOME/fake-codex-probes")" -ge 2 ] ||
   fail 'Codex did not re-probe after an unclassifiable response'
+
+printf '%s\n' healthy-rpc-extensions \
+  >"$XDG_CONFIG_HOME/fake-codex-health"
+if output=$($CLI setup-connectors --client codex --non-interactive 2>&1)
+then
+  fix_wave_contains "$output" 'Result: PASS'
+else
+  fix_wave_fail 'Codex rejected valid JSON-RPC extension keys'
+fi
+
+export FAKE_CODEX_WAIT_FOR_DECOY=1
+for delayed_response in \
+  nested-id-before-healthy \
+  string-id-before-healthy
+do
+  rm -f \
+    "$XDG_CONFIG_HOME/fake-codex-decoy" \
+    "$XDG_CONFIG_HOME/fake-codex-actual" \
+    "$XDG_CONFIG_HOME/fake-codex-decoy-polls" \
+    "$XDG_CONFIG_HOME/fake-codex-decoy-requests"
+  printf '%s\n' "$delayed_response" \
+    >"$XDG_CONFIG_HOME/fake-codex-health"
+  if output=$($CLI setup-connectors --client codex --non-interactive 2>&1)
+  then
+    fix_wave_contains "$output" 'Result: PASS'
+  else
+    fix_wave_fail "$delayed_response masked the actual Codex response"
+  fi
+  decoy_requests=$(sed -n '1p' \
+    "$XDG_CONFIG_HOME/fake-codex-decoy-requests" 2>/dev/null || :)
+  [ "$decoy_requests" = 1 ] ||
+    fix_wave_fail "$delayed_response used ${decoy_requests:-0} probes"
+done
+unset FAKE_CODEX_WAIT_FOR_DECOY
+
+for unrelated_only in nested-id-only string-id-only; do
+  printf '%s\n' "$unrelated_only" \
+    >"$XDG_CONFIG_HOME/fake-codex-health"
+  if output=$($CLI setup-connectors --client codex --non-interactive 2>&1)
+  then
+    fix_wave_fail "$unrelated_only passed Codex setup"
+  else
+    fix_wave_contains "$output" 'Result: CONNECTOR_HEALTH_UNAVAILABLE'
+  fi
+  fix_wave_not_contains "$output" 'Capability state: SUPPORTED'
+  fix_wave_not_contains "$output" 'ATLASSIAN_AUTH_REQUIRED'
+  fix_wave_not_contains "$output" 'codex mcp login atlassian'
+  fix_wave_not_contains "$output" 'OAuth URL:'
+done
+
+for duplicate_rpc_member in \
+  duplicate-rpc-id \
+  duplicate-rpc-result \
+  duplicate-rpc-error
+do
+  printf '%s\n' "$duplicate_rpc_member" \
+    >"$XDG_CONFIG_HOME/fake-codex-health"
+  if output=$($CLI setup-connectors --client codex --non-interactive 2>&1)
+  then
+    fix_wave_fail "$duplicate_rpc_member passed Codex setup"
+  else
+    fix_wave_contains "$output" 'Result: CONNECTOR_HEALTH_UNAVAILABLE'
+  fi
+  fix_wave_not_contains "$output" 'ATLASSIAN_AUTH_REQUIRED'
+  fix_wave_not_contains "$output" 'codex mcp login atlassian'
+  fix_wave_not_contains "$output" 'OAuth URL:'
+done
+
+export FAKE_CODEX_WAIT_FOR_ESCAPED=1
+rm -f "$XDG_CONFIG_HOME/fake-codex-escaped-probes"
+printf '%s\n' escaped-id-one-result \
+  >"$XDG_CONFIG_HOME/fake-codex-health"
+if output=$($CLI setup-connectors --client codex --non-interactive 2>&1)
+then
+  fix_wave_contains "$output" 'Result: PASS'
+else
+  fix_wave_fail 'escaped semantic id=1 did not select the Codex response'
+fi
+escaped_probes=$(sed -n '1p' \
+  "$XDG_CONFIG_HOME/fake-codex-escaped-probes" 2>/dev/null || :)
+[ "$escaped_probes" = 1 ] ||
+  fix_wave_fail "escaped-id-one-result used ${escaped_probes:-0} probes"
+
+rm -f "$XDG_CONFIG_HOME/fake-codex-escaped-probes"
+printf '%s\n' escaped-result-only \
+  >"$XDG_CONFIG_HOME/fake-codex-health"
+if output=$($CLI setup-connectors --client codex --non-interactive 2>&1)
+then
+  fix_wave_contains "$output" 'Result: PASS'
+else
+  fix_wave_fail 'escaped semantic result did not select the Codex response'
+fi
+escaped_probes=$(sed -n '1p' \
+  "$XDG_CONFIG_HOME/fake-codex-escaped-probes" 2>/dev/null || :)
+[ "$escaped_probes" = 1 ] ||
+  fix_wave_fail "escaped-result-only used ${escaped_probes:-0} probes"
+
+for rejected_escaped_rpc in \
+  escaped-error-with-result \
+  escaped-id-conflict-with-result \
+  escaped-result-with-error \
+  semantic-duplicate-result \
+  semantic-duplicate-error
+do
+  rm -f "$XDG_CONFIG_HOME/fake-codex-escaped-probes"
+  printf '%s\n' "$rejected_escaped_rpc" \
+    >"$XDG_CONFIG_HOME/fake-codex-health"
+  if output=$($CLI setup-connectors --client codex --non-interactive 2>&1)
+  then
+    fix_wave_fail "$rejected_escaped_rpc passed Codex setup"
+  else
+    fix_wave_contains "$output" 'Result: CONNECTOR_HEALTH_UNAVAILABLE'
+  fi
+  escaped_probes=$(sed -n '1p' \
+    "$XDG_CONFIG_HOME/fake-codex-escaped-probes" 2>/dev/null || :)
+  [ "$escaped_probes" = 1 ] ||
+    fix_wave_fail \
+      "$rejected_escaped_rpc used ${escaped_probes:-0} probes"
+  fix_wave_not_contains "$output" 'Capability state: SUPPORTED'
+  fix_wave_not_contains "$output" 'ATLASSIAN_AUTH_REQUIRED'
+  fix_wave_not_contains "$output" 'codex mcp login atlassian'
+  fix_wave_not_contains "$output" 'OAuth URL:'
+  fix_wave_not_contains "$output" 'atlassianUserInfo'
+done
+
+rm -f "$XDG_CONFIG_HOME/fake-codex-escaped-probes"
+printf '%s\n' escaped-wrapper-keys \
+  >"$XDG_CONFIG_HOME/fake-codex-health"
+if output=$($CLI setup-connectors --client codex --non-interactive 2>&1)
+then
+  fix_wave_contains "$output" 'Result: PASS'
+else
+  fix_wave_fail 'escaped semantic wrapper keys did not pass Codex setup'
+fi
+wrapper_probes=$(sed -n '1p' \
+  "$XDG_CONFIG_HOME/fake-codex-escaped-probes" 2>/dev/null || :)
+[ "$wrapper_probes" = 1 ] ||
+  fix_wave_fail "escaped-wrapper-keys used ${wrapper_probes:-0} probes"
+
+for rejected_wrapper in \
+  semantic-duplicate-data \
+  semantic-duplicate-name \
+  semantic-duplicate-tools \
+  semantic-duplicate-auth-status
+do
+  rm -f "$XDG_CONFIG_HOME/fake-codex-escaped-probes"
+  printf '%s\n' "$rejected_wrapper" \
+    >"$XDG_CONFIG_HOME/fake-codex-health"
+  if output=$($CLI setup-connectors --client codex --non-interactive 2>&1)
+  then
+    fix_wave_fail "$rejected_wrapper passed Codex setup"
+  else
+    fix_wave_contains "$output" 'Result: CONNECTOR_HEALTH_UNAVAILABLE'
+  fi
+  wrapper_probes=$(sed -n '1p' \
+    "$XDG_CONFIG_HOME/fake-codex-escaped-probes" 2>/dev/null || :)
+  [ "$wrapper_probes" = 1 ] ||
+    fix_wave_fail "$rejected_wrapper used ${wrapper_probes:-0} probes"
+  fix_wave_not_contains "$output" 'Capability state: SUPPORTED'
+  fix_wave_not_contains "$output" 'ATLASSIAN_AUTH_REQUIRED'
+  fix_wave_not_contains "$output" 'codex mcp login atlassian'
+  fix_wave_not_contains "$output" 'OAuth URL:'
+  fix_wave_not_contains "$output" 'atlassianUserInfo'
+done
+
+rm -f "$XDG_CONFIG_HOME/fake-codex-escaped-probes"
+printf '%s\n' raw-nul-response \
+  >"$XDG_CONFIG_HOME/fake-codex-health"
+raw_nul_output=$TEST_ROOT/raw-nul-output
+if $CLI setup-connectors --client codex --non-interactive \
+  >"$raw_nul_output" 2>&1
+then
+  fix_wave_fail 'raw-nul-response passed Codex setup'
+fi
+if LC_ALL=C od -An -v -t u1 "$raw_nul_output" |
+  awk '{
+    for (i=1; i<=NF; i++) if ($i == 0) found=1
+  }
+  END { exit !found }'
+then
+  fix_wave_fail 'raw NUL leaked into Codex setup output'
+fi
+output=$(cat "$raw_nul_output")
+fix_wave_contains "$output" 'Result: CONNECTOR_HEALTH_UNAVAILABLE'
+raw_nul_probes=$(sed -n '1p' \
+  "$XDG_CONFIG_HOME/fake-codex-escaped-probes" 2>/dev/null || :)
+[ "$raw_nul_probes" = 1 ] ||
+  fix_wave_fail "raw-nul-response used ${raw_nul_probes:-0} probes"
+fix_wave_not_contains "$output" 'Capability state: SUPPORTED'
+fix_wave_not_contains "$output" 'ATLASSIAN_AUTH_REQUIRED'
+fix_wave_not_contains "$output" 'codex mcp login atlassian'
+fix_wave_not_contains "$output" 'OAuth URL:'
+fix_wave_not_contains "$output" 'atlassianUserInfo'
+
+rm -f "$XDG_CONFIG_HOME/fake-codex-escaped-probes"
+printf '%s\n' escaped-nul-text \
+  >"$XDG_CONFIG_HOME/fake-codex-health"
+if output=$($CLI setup-connectors --client codex --non-interactive 2>&1)
+then
+  fix_wave_contains "$output" 'Result: PASS'
+else
+  fix_wave_fail 'escaped JSON NUL text did not pass Codex setup'
+fi
+escaped_nul_probes=$(sed -n '1p' \
+  "$XDG_CONFIG_HOME/fake-codex-escaped-probes" 2>/dev/null || :)
+[ "$escaped_nul_probes" = 1 ] ||
+  fix_wave_fail "escaped-nul-text used ${escaped_nul_probes:-0} probes"
+
+printf '%s\n' valid-raw-unicode \
+  >"$XDG_CONFIG_HOME/fake-codex-health"
+if output=$($CLI setup-connectors --client codex --non-interactive 2>&1)
+then
+  fix_wave_contains "$output" 'Result: PASS'
+else
+  fix_wave_fail 'valid raw UTF-8 did not pass Codex setup'
+fi
+
+export FAKE_CODEX_WAIT_FOR_UTF8_SPLIT=1
+for split_utf8 in split-utf8-2 split-utf8-3 split-utf8-4; do
+  rm -f "$XDG_CONFIG_HOME"/fake-codex-split-* \
+    "$XDG_CONFIG_HOME/fake-codex-escaped-probes"
+  printf '%s\n' "$split_utf8" >"$XDG_CONFIG_HOME/fake-codex-health"
+  if output=$($CLI setup-connectors --client codex --non-interactive 2>&1)
+  then
+    fix_wave_contains "$output" 'Result: PASS'
+  else
+    fix_wave_fail "$split_utf8 did not survive split transport"
+  fi
+  split_probes=$(sed -n '1p' "$XDG_CONFIG_HOME/fake-codex-escaped-probes" 2>/dev/null || :)
+  [ "$split_probes" = 1 ] || fix_wave_fail "$split_utf8 used ${split_probes:-0} probes"
+done
+unset FAKE_CODEX_WAIT_FOR_UTF8_SPLIT
+
+for invalid_utf8 in \
+  invalid-utf8-continuation \
+  invalid-utf8-ff-fe \
+  invalid-utf8-overlong \
+  invalid-utf8-surrogate \
+  invalid-utf8-too-high \
+  invalid-utf8-truncated \
+  invalid-utf8-eof-truncated
+do
+  rm -f "$XDG_CONFIG_HOME/fake-codex-escaped-probes"
+  printf '%s\n' "$invalid_utf8" >"$XDG_CONFIG_HOME/fake-codex-health"
+  invalid_utf8_output=$TEST_ROOT/$invalid_utf8-output
+  if $CLI setup-connectors --client codex --non-interactive \
+    >"$invalid_utf8_output" 2>&1
+  then
+    fix_wave_fail "$invalid_utf8 passed Codex setup"
+  fi
+  if LC_ALL=C od -An -v -t u1 "$invalid_utf8_output" |
+    awk '{
+      for (i=1; i<=NF; i++) if ($i == 0 || $i > 127) found=1
+    }
+    END { exit !found }'
+  then
+    fix_wave_fail "$invalid_utf8 leaked raw bytes"
+  fi
+  output=$(cat "$invalid_utf8_output")
+  fix_wave_contains "$output" 'Result: CONNECTOR_HEALTH_UNAVAILABLE'
+  invalid_utf8_probes=$(sed -n '1p' \
+    "$XDG_CONFIG_HOME/fake-codex-escaped-probes" 2>/dev/null || :)
+  [ "$invalid_utf8_probes" = 1 ] ||
+    fix_wave_fail "$invalid_utf8 used ${invalid_utf8_probes:-0} probes"
+  fix_wave_not_contains "$output" 'ATLASSIAN_AUTH_REQUIRED'
+  fix_wave_not_contains "$output" 'codex mcp login atlassian'
+  fix_wave_not_contains "$output" 'OAuth URL:'
+  fix_wave_not_contains "$output" 'atlassianUserInfo'
+done
+
+printf '%s\n' nested-extension-before-tools \
+  >"$XDG_CONFIG_HOME/fake-codex-health"
+if output=$($CLI setup-connectors --client codex --non-interactive 2>&1)
+then
+  fix_wave_contains "$output" 'Authentication: PASS'
+  fix_wave_contains "$output" 'Result: PASS'
+else
+  fix_wave_fail 'nested extension corrupted Codex auth extraction'
+fi
+fix_wave_not_contains "$output" 'ATLASSIAN_AUTH_REQUIRED'
+fix_wave_not_contains "$output" 'codex mcp login atlassian'
+fix_wave_not_contains "$output" 'OAuth URL:'
+fix_wave_not_contains "$output" 'atlassianUserInfo'
+
+unset FAKE_CODEX_WAIT_FOR_ESCAPED
+
+for malformed_reauth in \
+  malformed-reauth-missing-comma \
+  malformed-reauth-illegal-escape \
+  malformed-reauth-trailing-member \
+  malformed-reauth-trailing-token
+do
+  printf '%s\n' "$malformed_reauth" >"$XDG_CONFIG_HOME/fake-codex-health"
+  if output=$($CLI setup-connectors --client codex --non-interactive 2>&1)
+  then
+    fix_wave_fail "$malformed_reauth passed Codex setup"
+  else
+    fix_wave_contains "$output" 'Result: CONNECTOR_HEALTH_UNAVAILABLE'
+  fi
+  fix_wave_not_contains "$output" 'ATLASSIAN_AUTH_REQUIRED'
+  fix_wave_not_contains "$output" 'codex mcp login atlassian'
+  fix_wave_not_contains "$output" 'OAuth URL:'
+  fix_wave_not_contains "$output" 'reauthenticationRequired'
+done
+
+export FAKE_CODEX_WAIT_FOR_ERROR=1
+for terminal_error_response in \
+  pure-error \
+  pure-error-null \
+  pure-error-string \
+  pure-error-array \
+  pure-error-number \
+  pure-error-bool \
+  dual-result-error \
+  dual-result-error-null \
+  dual-result-error-string \
+  dual-result-error-array \
+  dual-result-error-number \
+  dual-result-error-bool \
+  neither-result-nor-error
+do
+  rm -f "$XDG_CONFIG_HOME/fake-codex-error-probes"
+  printf '%s\n' "$terminal_error_response" \
+    >"$XDG_CONFIG_HOME/fake-codex-health"
+  if output=$($CLI setup-connectors --client codex --non-interactive 2>&1)
+  then
+    fix_wave_fail "$terminal_error_response passed Codex setup"
+  else
+    fix_wave_contains "$output" 'Result: CONNECTOR_HEALTH_UNAVAILABLE'
+  fi
+  error_probes=$(sed -n '1p' \
+    "$XDG_CONFIG_HOME/fake-codex-error-probes" 2>/dev/null || :)
+  [ "$error_probes" = 1 ] ||
+    fix_wave_fail \
+      "$terminal_error_response used ${error_probes:-0} probes"
+  fix_wave_not_contains "$output" 'Capability state: SUPPORTED'
+  fix_wave_not_contains "$output" 'ATLASSIAN_AUTH_REQUIRED'
+  fix_wave_not_contains "$output" 'codex mcp login atlassian'
+  fix_wave_not_contains "$output" 'OAuth URL:'
+  fix_wave_not_contains "$output" 'createJiraIssue'
+done
+unset FAKE_CODEX_WAIT_FOR_ERROR
 
 printf '%s\n' ignore-term >"$XDG_CONFIG_HOME/fake-codex-health"
 rm -f "$XDG_CONFIG_HOME/fake-codex-pid"
@@ -423,14 +1075,49 @@ output=$($CLI setup-connectors --client codex --non-interactive)
 fix_wave_contains "$output" 'Authentication: PASS'
 rm -f "$XDG_CONFIG_HOME/fake-codex-endpoint"
 
-printf '%s\n' failed >"$XDG_CONFIG_HOME/fake-codex-health"
-if output=$($CLI setup-connectors --client codex --non-interactive 2>&1)
-then
-  fix_wave_fail 'Codex OAuth with an empty tool inventory passed'
-else
-  fix_wave_contains "$output" 'Provider: atlassian'
-  fix_wave_contains "$output" 'Result: ATLASSIAN_AUTH_REQUIRED'
-fi
+printf '%s\n' healthy-empty-tools >"$XDG_CONFIG_HOME/fake-codex-health"
+output=$($CLI setup-connectors --client codex --non-interactive)
+fix_wave_contains "$output" 'Authentication: PASS'
+fix_wave_contains "$output" 'Result: PASS'
+fix_wave_not_contains "$output" 'ATLASSIAN_AUTH_REQUIRED'
+fix_wave_not_contains "$output" 'codex mcp login atlassian'
+
+for unusable_tool_map in \
+  healthy-array-tools \
+  healthy-null-tools \
+  healthy-missing-tools
+do
+  printf '%s\n' "$unusable_tool_map" >"$XDG_CONFIG_HOME/fake-codex-health"
+  output=$($CLI setup-connectors --client codex --non-interactive)
+  fix_wave_contains "$output" 'Authentication: PASS'
+  fix_wave_contains "$output" 'Result: PASS'
+  fix_wave_not_contains "$output" 'ATLASSIAN_AUTH_REQUIRED'
+  fix_wave_not_contains "$output" 'codex mcp login atlassian'
+  fix_wave_not_contains "$output" 'OAuth URL:'
+done
+
+for malformed_response in \
+  healthy-malformed-envelope-missing-comma \
+  healthy-malformed-record-illegal-escape \
+  healthy-malformed-record-missing-comma \
+  malformed-nested-extension-before-tools \
+  healthy-malformed-envelope-trailing-object \
+  healthy-malformed-envelope-trailing-member \
+  healthy-malformed-envelope-trailing-member-spaced \
+  healthy-malformed-envelope-trailing-member-whitespace
+do
+  printf '%s\n' "$malformed_response" >"$XDG_CONFIG_HOME/fake-codex-health"
+  if output=$($CLI setup-connectors --client codex --non-interactive 2>&1)
+  then
+    fix_wave_fail "$malformed_response passed Codex setup"
+  else
+    fix_wave_contains "$output" 'Result: CONNECTOR_HEALTH_UNAVAILABLE'
+  fi
+  fix_wave_not_contains "$output" 'ATLASSIAN_AUTH_REQUIRED'
+  fix_wave_not_contains "$output" 'codex mcp login atlassian'
+  fix_wave_not_contains "$output" 'OAuth URL:'
+  fix_wave_not_contains "$output" 'createJiraIssue'
+done
 
 : >"$XDG_CONFIG_HOME/fake-claude-configured"
 printf '%s\n' healthy >"$XDG_CONFIG_HOME/fake-claude-health"
@@ -509,7 +1196,15 @@ case "$*" in
     ;;
   'mcp list-tools atlassian')
     case "$(sed -n '1p' "$XDG_CONFIG_HOME/fake-cursor-health" 2>/dev/null || :)" in
-      healthy) printf '%s\n' 'atlassianUserInfo' ;;
+      healthy)
+        printf '%s\n' \
+          '- createJiraIssue (projectKey, issueType, summary)' \
+          '- getAccessibleAtlassianResources ()' \
+          '- getJiraIssue (issueKey)' \
+          '- getJiraIssueTypeMetaWithFields (projectKey, issueType)' \
+          '- getJiraProjectIssueTypesMetadata (projectKey)' \
+          '- searchJiraIssuesUsingJql (cloudId, jql)'
+        ;;
       ready-tools-failed) printf '%s\n' 'Tool inventory failed'; exit 1 ;;
       *) printf '%s\n' 'Authentication required'; exit 1 ;;
     esac
@@ -611,10 +1306,18 @@ assert_not_contains "$(cat "$CALLS")" 'codex '
 assert_not_contains "$(cat "$CALLS")" 'claude '
 
 printf '%s\n' ready-tools-failed >"$XDG_CONFIG_HOME/fake-cursor-health"
-if output=$($CLI setup-connectors --client cursor --non-interactive 2>&1); then
-  fail 'Cursor setup accepted a failed tool inventory'
+if output=$($CLI setup-connectors --client cursor --non-interactive 2>&1)
+then
+  fix_wave_contains "$output" 'Connector: PASS'
+  fix_wave_contains "$output" 'Authentication: PASS'
+  fix_wave_contains "$output" 'Result: PASS'
+else
+  fix_wave_fail 'Cursor setup rejected Ready with unavailable tool inventory'
 fi
-assert_contains "$output" 'Result: CONNECTOR_HEALTH_UNAVAILABLE'
+fix_wave_not_contains "$output" 'ATLASSIAN_AUTH_REQUIRED'
+fix_wave_not_contains "$output" 'cursor-agent mcp login atlassian'
+fix_wave_not_contains "$output" 'OAuth URL:'
+fix_wave_not_contains "$output" 'Tool inventory failed'
 
 printf '%s\n' auth-required >"$XDG_CONFIG_HOME/fake-cursor-health"
 : >"$CALLS"
@@ -698,6 +1401,29 @@ fi
 assert_contains "$output" 'Remediation: codex mcp login atlassian'
 assert_contains "$output" 'Result: ATLASSIAN_AUTH_REQUIRED'
 
+printf '%s\n' healthy-empty-tools >"$XDG_CONFIG_HOME/fake-codex-health"
+output=$($CLI doctor "$CONSUMER" --client codex)
+assert_contains "$output" 'Connector: PASS'
+assert_contains "$output" 'Authentication: PASS'
+assert_contains "$output" 'Result: PASS'
+assert_not_contains "$output" 'ATLASSIAN_AUTH_REQUIRED'
+assert_not_contains "$output" 'codex mcp login atlassian'
+
+for unusable_tool_map in \
+  healthy-array-tools \
+  healthy-null-tools \
+  healthy-missing-tools
+do
+  printf '%s\n' "$unusable_tool_map" >"$XDG_CONFIG_HOME/fake-codex-health"
+  output=$($CLI doctor "$CONSUMER" --client codex)
+  assert_contains "$output" 'Connector: PASS'
+  assert_contains "$output" 'Authentication: PASS'
+  assert_contains "$output" 'Result: PASS'
+  assert_not_contains "$output" 'ATLASSIAN_AUTH_REQUIRED'
+  assert_not_contains "$output" 'codex mcp login atlassian'
+  assert_not_contains "$output" 'OAuth URL:'
+done
+
 printf '%s\n' healthy >"$XDG_CONFIG_HOME/fake-codex-health"
 : >"$CALLS"
 output=$($CLI doctor "$CONSUMER" --client codex)
@@ -708,6 +1434,28 @@ assert_not_contains "$output" 'atlassianUserInfo'
 assert_not_contains "$(cat "$CALLS")" 'codex mcp login atlassian'
 [ "$(grep -Fc 'codex app-server --stdio' "$CALLS")" -eq 1 ] ||
   fail 'connector-aware Doctor repeated its health probe'
+
+mkdir -p "$CONSUMER/.cursor/rules"
+cp \
+  "$RELEASE_SOURCE/templates/agent-entrypoints/team-dev-ai-workflow.mdc" \
+  "$CONSUMER/.cursor/rules/beroka-governance.mdc"
+cursor_lock_temp=$(mktemp "$CONSUMER/.beroka-governance.lock.XXXXXX")
+sed 's/^CLIENTS=codex$/CLIENTS=codex,cursor/' \
+  "$CONSUMER/.beroka-governance.lock" >"$cursor_lock_temp"
+mv "$cursor_lock_temp" "$CONSUMER/.beroka-governance.lock"
+printf '%s\n' ready-tools-failed >"$XDG_CONFIG_HOME/fake-cursor-health"
+if output=$($CLI doctor "$CONSUMER" --client cursor 2>&1)
+then
+  fix_wave_contains "$output" 'Connector: PASS'
+  fix_wave_contains "$output" 'Authentication: PASS'
+  fix_wave_contains "$output" 'Result: PASS'
+else
+  fix_wave_fail 'Cursor Doctor rejected Ready with unavailable tool inventory'
+fi
+fix_wave_not_contains "$output" 'ATLASSIAN_AUTH_REQUIRED'
+fix_wave_not_contains "$output" 'cursor-agent mcp login atlassian'
+fix_wave_not_contains "$output" 'OAuth URL:'
+fix_wave_not_contains "$output" 'Tool inventory failed'
 
 mv "$FAKE_BIN/codex" "$FAKE_BIN/codex.disabled"
 if output=$($CLI doctor "$CONSUMER" --client codex 2>&1); then

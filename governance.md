@@ -239,6 +239,14 @@ Never guess or create labels that duplicate native Issue/PR states.
   confirmation.
 - If Jira cannot be read, report access failure; never invent an Epic list from
   memory or chat.
+- Before Jira creation, resolve exact project create metadata and search for the
+  intended existing record. Create once, then read back the returned key and
+  validate project, issue type, summary, and required linkage.
+- If create status is indeterminate, return `CREATION_STATUS_UNKNOWN`; never retry automatically
+  or create a second record.
+- Confluence creation uses exact trusted space/root routing and reads back the
+  created content and parent. Folder routing remains blocked without isolated
+  pilot evidence.
 
 ## Cross-project counterpart discovery
 

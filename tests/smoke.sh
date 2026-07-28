@@ -77,9 +77,30 @@ make_release_fixture() {
   cp -R "$ROOT/runtime" "$source_repo/runtime"
   printf 'PINNED ENTRYPOINT v1.1.0\n' >"$source_repo/runtime/entrypoint.md"
   printf 'GOVERNANCE v1.1.0\n' >"$source_repo/governance.md"
+  printf '%s\n' \
+    '# schema=1' \
+    '# client\tversion\tendpoint\ttoolset\ttested_on\tcapability\tstate' \
+    >"$source_repo/runtime/compatibility/atlassian.tsv"
   git -C "$source_repo" add .
-  git -C "$source_repo" commit -qm 'test: create v1.1 fixture'
+  git -C "$source_repo" commit -qm 'test: preserve schema-1 release'
   git -C "$source_repo" tag -a v1.1.0 -m 'v1.1.0'
+  printf 'v1.1.1\n' >"$source_repo/VERSION"
+  printf '%s\n' \
+    '# schema=2' \
+    '# endpoint\trequired_tools\ttested_on\tcapability\tevidence\tstate' \
+    >"$source_repo/runtime/compatibility/atlassian.tsv"
+  git -C "$source_repo" add VERSION runtime/compatibility/atlassian.tsv
+  git -C "$source_repo" commit -qm 'test: add schema-2 release'
+  git -C "$source_repo" tag -a v1.1.1 -m 'v1.1.1'
+  printf 'v1.1.2\n' >"$source_repo/VERSION"
+  compatibility_temp=$(mktemp \
+    "$source_repo/runtime/compatibility/atlassian.tsv.XXXXXX")
+  sed '1s/schema=2/schema=3/' \
+    "$source_repo/runtime/compatibility/atlassian.tsv" >"$compatibility_temp"
+  mv "$compatibility_temp" "$source_repo/runtime/compatibility/atlassian.tsv"
+  git -C "$source_repo" add VERSION runtime/compatibility/atlassian.tsv
+  git -C "$source_repo" commit -qm 'test: reject unsupported schema release'
+  git -C "$source_repo" tag -a v1.1.2 -m 'v1.1.2'
   rm -f "$source_repo/bin/beroka-governance"
   printf 'v1.2.0\n' >"$source_repo/VERSION"
   git -C "$source_repo" add .
@@ -96,6 +117,10 @@ make_release_fixture() {
   rm -f "$source_repo/governance.md"
   printf 'GOVERNANCE v1.4.0\n' >"$source_repo/governance.md"
   printf 'v1.4.0\n' >"$source_repo/VERSION"
+  printf '%s\n' \
+    '# schema=1' \
+    '# client\tversion\tendpoint\ttoolset\ttested_on\tcapability\tstate' \
+    >"$source_repo/runtime/compatibility/atlassian.tsv"
   printf '\n# v1.4.0 fixture\n' >>"$source_repo/bin/beroka-governance"
   awk -v end='<!-- BEROKA-GOVERNANCE:END -->' '
     $0 == end { print "V1.4 ROUTING" }
@@ -598,6 +623,42 @@ $CLI install v1.1.0
 [ -x "$BEROKA_GOV_BIN_DIR/beroka-governance" ] || fail 'install did not update the user CLI'
 installed_doctor_output=$("$BEROKA_GOV_BIN_DIR/beroka-governance" doctor "$register_repo")
 assert_contains "$installed_doctor_output" 'Result: PASS'
+$CLI install v1.1.1
+schema1_repo=$TMP_ROOT/schema1-consumer
+new_repo "$schema1_repo"
+git -C "$schema1_repo" remote add origin https://github.com/beroka-vn/schema1-consumer.git
+$CLI register "$schema1_repo" --version v1.1.0 --client codex
+assert_contains "$("$CLI" doctor "$schema1_repo")" 'Result: PASS'
+schema2_repo=$TMP_ROOT/schema2-consumer
+new_repo "$schema2_repo"
+git -C "$schema2_repo" remote add origin https://github.com/beroka-vn/schema2-consumer.git
+$CLI register "$schema2_repo" --version v1.1.1 --client codex
+assert_contains "$("$CLI" doctor "$schema2_repo")" 'Result: PASS'
+release_v112=$XDG_DATA_HOME/beroka-ai-governance/releases/v1.1.2
+git -c advice.detachedHead=false clone -q --depth 1 --branch v1.1.2 \
+  https://github.com/beroka-vn/beroka-ai-governance.git "$release_v112"
+release_v112_commit=$(git -C "$release_v112" rev-parse HEAD)
+lock_temp=$(mktemp "$schema2_repo/.beroka-governance.lock.XXXXXX")
+sed \
+  "s/^VERSION=.*/VERSION=v1.1.2/;s/^COMMIT=.*/COMMIT=$release_v112_commit/" \
+  "$schema2_repo/.beroka-governance.lock" >"$lock_temp"
+mv "$lock_temp" "$schema2_repo/.beroka-governance.lock"
+if schema3_output=$($CLI doctor "$schema2_repo" 2>&1); then
+  fail 'doctor accepted an unsupported Atlassian compatibility schema'
+fi
+assert_contains "$schema3_output" 'Result: VERSION_MISMATCH'
+git -C "$schema1_repo" add .
+git -C "$schema1_repo" commit -qm 'test: register schema-1 release'
+release_v111_commit=$(git -C "$XDG_DATA_HOME/beroka-ai-governance/releases/v1.1.1" rev-parse HEAD)
+lock_temp=$(mktemp "$schema2_repo/.beroka-governance.lock.XXXXXX")
+sed \
+  "s/^VERSION=.*/VERSION=v1.1.1/;s/^COMMIT=.*/COMMIT=$release_v111_commit/" \
+  "$schema2_repo/.beroka-governance.lock" >"$lock_temp"
+mv "$lock_temp" "$schema2_repo/.beroka-governance.lock"
+git -C "$schema2_repo" add .
+git -C "$schema2_repo" commit -qm 'test: register schema-2 release'
+$CLI unregister "$schema1_repo"
+$CLI unregister "$schema2_repo"
 release_v11=$XDG_DATA_HOME/beroka-ai-governance/releases/v1.1.0
 git -C "$release_v11" checkout -qb fixture-branch
 if $CLI install v1.1.0 >/dev/null 2>&1; then fail 'install accepted a non-detached release'; fi

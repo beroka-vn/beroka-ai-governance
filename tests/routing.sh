@@ -51,8 +51,50 @@ fix_wave_contains() {
   esac
 }
 
+fix_wave_not_contains() {
+  case "$1" in
+    *"$2"*) fix_wave_fail "did not expect [$2] in [$1]" ;;
+    *) ;;
+  esac
+}
+
 cat >"$FAKE_BIN/sleep" <<'EOF'
 #!/bin/sh
+set -eu
+if [ "${FAKE_CODEX_WAIT_FOR_UTF8_SPLIT:-0}" = 1 ]; then
+  split_polls=$(sed -n '1p' "$XDG_CONFIG_HOME/fake-codex-split-polls" 2>/dev/null || :)
+  split_polls=${split_polls:-0}
+  split_polls=$((split_polls + 1))
+  printf '%s\n' "$split_polls" >"$XDG_CONFIG_HOME/fake-codex-split-polls"
+  if [ "$split_polls" -eq 1 ]; then split_marker=$XDG_CONFIG_HOME/fake-codex-split-first
+  else split_marker=$XDG_CONFIG_HOME/fake-codex-split-complete
+  fi
+  split_waits=0
+  while [ ! -f "$split_marker" ] && [ "$split_waits" -lt 100 ]; do
+    /bin/sleep 0.01
+    split_waits=$((split_waits + 1))
+  done
+  exit 0
+fi
+if [ "${FAKE_CODEX_WAIT_FOR_DECOY:-0}" = 1 ]; then
+  decoy_polls=$(sed -n '1p' \
+    "$XDG_CONFIG_HOME/fake-codex-decoy-polls" 2>/dev/null || :)
+  decoy_polls=${decoy_polls:-0}
+  decoy_polls=$((decoy_polls + 1))
+  printf '%s\n' "$decoy_polls" \
+    >"$XDG_CONFIG_HOME/fake-codex-decoy-polls"
+  if [ "$decoy_polls" -eq 1 ]; then
+    decoy_marker=$XDG_CONFIG_HOME/fake-codex-decoy
+  else
+    decoy_marker=$XDG_CONFIG_HOME/fake-codex-actual
+  fi
+  wait_loops=0
+  while [ ! -f "$decoy_marker" ] && [ "$wait_loops" -lt 100 ]; do
+    /bin/sleep 0.01
+    wait_loops=$((wait_loops + 1))
+  done
+  /bin/sleep 0.01
+fi
 exit 0
 EOF
 
@@ -61,7 +103,7 @@ cat >"$FAKE_BIN/codex" <<'EOF'
 set -eu
 printf 'codex %s\n' "$*" >>"$CALLS"
 case "$*" in
-  '--version') printf '%s\n' 'codex 1.0.0' ;;
+  '--version') printf 'codex %s\n' "${FAKE_CODEX_VERSION:-1.0.0}" ;;
   'mcp login --help'|'app-server --help') ;;
   'mcp get atlassian --json')
     [ -f "$XDG_CONFIG_HOME/fake-codex-configured" ] || exit 1
@@ -78,7 +120,220 @@ case "$*" in
         health=$(sed -n '1p' "$XDG_CONFIG_HOME/fake-codex-health" 2>/dev/null || :)
         case "$health" in
           healthy-all)
-            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{},"getJiraIssue":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]}}'
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]}}'
+            ;;
+          healthy-rpc-extensions)
+            printf '%s\n' '{"jsonrpc":"2.0","id":1,"trace-id":"abc","key with space":true,"escaped\u002dextension":null,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]}}'
+            ;;
+          nested-id-before-healthy|string-id-before-healthy)
+            decoy_requests=$(sed -n '1p' \
+              "$XDG_CONFIG_HOME/fake-codex-decoy-requests" \
+              2>/dev/null || :)
+            decoy_requests=${decoy_requests:-0}
+            decoy_requests=$((decoy_requests + 1))
+            printf '%s\n' "$decoy_requests" \
+              >"$XDG_CONFIG_HOME/fake-codex-decoy-requests"
+            case "$health" in
+              nested-id-before-healthy)
+                printf '%s\n' \
+                  '{"method":"notice","params":{"id":1,"result":{"ignored":true}}}'
+                ;;
+              string-id-before-healthy)
+                printf '%s\n' \
+                  '{"method":"notice","message":"saw \"id\":1 in text"}'
+                ;;
+            esac
+            : >"$XDG_CONFIG_HOME/fake-codex-decoy"
+            /bin/sleep 0.08
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]}}'
+            : >"$XDG_CONFIG_HOME/fake-codex-actual"
+            ;;
+          nested-id-only)
+            printf '%s\n' \
+              '{"method":"notice","params":{"id":1,"result":{"ignored":true}}}'
+            ;;
+          string-id-only)
+            printf '%s\n' \
+              '{"method":"notice","message":"saw \"id\":1 in text"}'
+            ;;
+          duplicate-rpc-id)
+            printf '%s\n' '{"id":1,"id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]}}'
+            ;;
+          duplicate-rpc-result)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]},"result":{}}'
+            ;;
+          duplicate-rpc-error)
+            printf '%s\n' '{"id":1,"error":null,"error":{"code":-32603,"message":"failed"}}'
+            ;;
+          escaped-id-one-result)
+            printf '%s\n' '{"\u0069\u0064":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]}}'
+            ;;
+          escaped-result-only)
+            printf '%s\n' '{"id":1,"\u0072esult":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]}}'
+            ;;
+          escaped-error-with-result)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]},"e\u0072ror":null}'
+            ;;
+          escaped-id-conflict-with-result)
+            printf '%s\n' '{"id":1,"i\u0064":2,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]}}'
+            ;;
+          escaped-result-with-error)
+            printf '%s\n' '{"id":1,"\u0072esult":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]},"error":null}'
+            ;;
+          semantic-duplicate-result)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]},"r\u0065sult":{}}'
+            ;;
+          semantic-duplicate-error)
+            printf '%s\n' '{"id":1,"error":null,"e\u0072ror":{"code":-32603,"message":"failed"}}'
+            ;;
+          escaped-wrapper-keys)
+            printf '%s\n' '{"id":1,"result":{"d\u0061ta":[{"n\u0061me":"atlassian","t\u006fols":{"createJiraIssue":{},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authSt\u0061tus":"oAuth"}]}}'
+            ;;
+          semantic-duplicate-data)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}],"d\u0061ta":[]}}'
+            ;;
+          semantic-duplicate-name)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","n\u0061me":"other","tools":{"createJiraIssue":{},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]}}'
+            ;;
+          semantic-duplicate-tools)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"t\u006fols":{},"authStatus":"oAuth"}]}}'
+            ;;
+          semantic-duplicate-auth-status)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"searchJiraIssuesUsingJql":{},"getJiraProjectIssueTypesMetadata":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth","authSt\u0061tus":"notLoggedIn"}]}}'
+            ;;
+          raw-nul-response)
+            printf '%s\000%s\n' \
+              '{"id":1,"result":{"data":[{"name":"atlassian","note":"before' \
+              'after","tools":{"createJiraIssue":{},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]}}'
+            ;;
+          escaped-nul-text)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","note":"before\u0000after","tools":{"createJiraIssue":{},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]}}'
+            ;;
+          nested-extension-before-tools)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","extension":{"nested":[{"text":"close } open { square ] [ escaped \" quote and \\ backslash"},["}",{"deeper":"{ [ ] }"}]]},"tools":{"createJiraIssue":{},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]}}'
+            ;;
+          malformed-nested-extension-before-tools)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","extension":{"nested":[{"text":"invalid\qescape"}]},"tools":{"createJiraIssue":{}},"authStatus":"oAuth"}]}}'
+            ;;
+          valid-raw-unicode)
+            printf '%s\302\242\342\202\254\360\220\215\210%s\n' \
+              '{"id":1,"result":{"data":[{"name":"atlassian","note":"ASCII ' \
+              '","tools":{"createJiraIssue":{},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]}}'
+            ;;
+          split-utf8-3)
+            printf '%s\342' '{"id":1,"result":{"data":[{"name":"atlassian","note":"before'
+            : >"$XDG_CONFIG_HOME/fake-codex-split-first"
+            /bin/sleep 0.08
+            printf '\202\254%s\n' 'after","tools":{"createJiraIssue":{},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]}}'
+            : >"$XDG_CONFIG_HOME/fake-codex-split-complete"
+            ;;
+          invalid-utf8-continuation)
+            printf '%s\200%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","note":"before' 'after","tools":{"createJiraIssue":{}},"authStatus":"oAuth"}]}}'
+            ;;
+          invalid-utf8-ff-fe)
+            printf '%s\377\376%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","note":"before' 'after","tools":{"createJiraIssue":{}},"authStatus":"oAuth"}]}}'
+            ;;
+          invalid-utf8-overlong)
+            printf '%s\300\200%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","note":"before' 'after","tools":{"createJiraIssue":{}},"authStatus":"oAuth"}]}}'
+            ;;
+          invalid-utf8-surrogate)
+            printf '%s\355\240\200%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","note":"before' 'after","tools":{"createJiraIssue":{}},"authStatus":"oAuth"}]}}'
+            ;;
+          invalid-utf8-too-high)
+            printf '%s\364\220\200\200%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","note":"before' 'after","tools":{"createJiraIssue":{}},"authStatus":"oAuth"}]}}'
+            ;;
+          invalid-utf8-truncated)
+            printf '%s\342\202%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","note":"before' 'after","tools":{"createJiraIssue":{}},"authStatus":"oAuth"}]}}'
+            ;;
+          healthy-empty-tools)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{},"authStatus":"oAuth"}]}}'
+            ;;
+          healthy-array-tools)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":[],"authStatus":"oAuth"}]}}'
+            ;;
+          healthy-null-tools)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":null,"authStatus":"oAuth"}]}}'
+            ;;
+          healthy-missing-tools)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","authStatus":"oAuth"}]}}'
+            ;;
+          healthy-malformed-envelope-missing-comma)
+            printf '%s\n' '{"jsonrpc":"2.0" "id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]}}'
+            ;;
+          healthy-malformed-record-illegal-escape)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","description":"invalid\qescape","tools":{"createJiraIssue":{},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]}}'
+            ;;
+          healthy-malformed-record-missing-comma)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian" "tools":{"createJiraIssue":{},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]}}'
+            ;;
+          healthy-malformed-envelope-trailing-object)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]}} {"trailing":true}'
+            ;;
+          healthy-malformed-envelope-trailing-member)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]}},"extra":{}'
+            ;;
+          healthy-malformed-envelope-trailing-member-spaced)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]}} , "extra" : {}'
+            ;;
+          healthy-malformed-envelope-trailing-member-whitespace)
+            printf '%s \t,\r\t%s\t:\t%s\n' \
+              '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]}}' \
+              '"extra"' '{}'
+            ;;
+          healthy-valid-nested-tool-values)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{"metadata":{"description":"brace } and escaped \" quote","values":[1,-2.5e+3,true,false,null,{"nested":[]}]}},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]}}'
+            ;;
+          healthy-valid-del-string)
+            printf '%s\177%s\n' \
+              '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{"metadata":{"description":"before' \
+              'after"}},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]}}'
+            ;;
+          healthy-valid-json-whitespace)
+            printf '%s \t\r%s\n' \
+              '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{"metadata":' \
+              '{"enabled":true}},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]}}'
+            ;;
+          healthy-malformed-tool-value)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":"not-an-object","getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]}}'
+            ;;
+          healthy-malformed-nested-tool-object)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{"metadata":,},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]}}'
+            ;;
+          healthy-malformed-nested-tool-array)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{"metadata":[1,,2]},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]}}'
+            ;;
+          healthy-invalid-c0-string)
+            printf '%s\037%s\n' \
+              '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{"metadata":{"description":"before' \
+              'after"}},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]}}'
+            ;;
+          healthy-nested-vertical-tab-whitespace)
+            printf '%s\013%s\n' \
+              '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{"metadata":' \
+              '{"enabled":true}},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]}}'
+            ;;
+          healthy-nested-form-feed-whitespace)
+            printf '%s\014%s\n' \
+              '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{"metadata":' \
+              '{"enabled":true}},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]}}'
+            ;;
+          healthy-duplicate-required-tool)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{},"createJiraIssue":{},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]}}'
+            ;;
+          healthy-escaped-duplicate-required-tool)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{},"create\u004airaIssue":{},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]}}'
+            ;;
+          healthy-missing-jira-metadata)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]}}'
+            ;;
+          healthy-missing-confluence-read)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{}},"authStatus":"oAuth"}]}}'
+            ;;
+          healthy-missing-resource-discovery)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]}}'
+            ;;
+          healthy-missing-jql)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]}}'
             ;;
           healthy-read-only)
             printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"getJiraIssue":{}},"authStatus":"oAuth"}]}}'
@@ -120,7 +375,49 @@ case "$*" in
           healthy-unrelated-reauth)
             printf '%s\n' \
               '{"method":"mcpServer/startupStatus/updated","params":{"name":"other","metadata":{"name":"atlassian","failureReason":"reauthenticationRequired"}}}' \
-              '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{},"getJiraIssue":{}},"authStatus":"oAuth"}]}}'
+              '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]}}'
+            ;;
+          dual-result-error|dual-result-error-null|\
+          dual-result-error-string|dual-result-error-array|\
+          dual-result-error-number|dual-result-error-bool)
+            case "$health" in
+              *-null) error_value=null ;;
+              *-string) error_value='"failed"' ;;
+              *-array) error_value='["failed"]' ;;
+              *-number) error_value=17 ;;
+              *-bool) error_value=true ;;
+              *) error_value='{"code":-32603,"message":"failed"}' ;;
+            esac
+            printf '%s%s%s\n' \
+              '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]},"error":' \
+              "$error_value" '}'
+            ;;
+          pure-error|pure-error-null|pure-error-string|pure-error-array|\
+          pure-error-number|pure-error-bool)
+            case "$health" in
+              *-null) error_value=null ;;
+              *-string) error_value='"failed"' ;;
+              *-array) error_value='["failed"]' ;;
+              *-number) error_value=17 ;;
+              *-bool) error_value=true ;;
+              *) error_value='{"code":-32603,"message":"failed"}' ;;
+            esac
+            printf '%s%s%s\n' '{"id":1,"error":' "$error_value" '}'
+            ;;
+          neither-result-nor-error)
+            printf '%s\n' '{"jsonrpc":"2.0","id":1}'
+            ;;
+          malformed-reauth-missing-comma)
+            printf '%s\n' '{"method":"mcpServer/startupStatus/updated" "params":{"name":"atlassian","failureReason":"reauthenticationRequired"}}'
+            ;;
+          malformed-reauth-illegal-escape)
+            printf '%s\n' '{"method":"mcpServer/startupStatus/updated","params":{"name":"atlassian","failureReason":"reauthenticationRequired","message":"invalid\qescape"}}'
+            ;;
+          malformed-reauth-trailing-member)
+            printf '%s\n' '{"method":"mcpServer/startupStatus/updated","params":{"name":"atlassian","failureReason":"reauthenticationRequired"}},"extra":{}'
+            ;;
+          malformed-reauth-trailing-token)
+            printf '%s\n' '{"method":"mcpServer/startupStatus/updated","params":{"name":"atlassian","failureReason":"reauthenticationRequired"}} true'
             ;;
           auth-required|'')
             printf '%s\n' \
@@ -145,7 +442,9 @@ cat >"$FAKE_BIN/claude" <<'EOF'
 set -eu
 printf 'claude %s\n' "$*" >>"$CALLS"
 case "$*" in
-  '--version') printf '%s\n' '1.2.3 (Claude Code)' ;;
+  '--version')
+    printf '%s (Claude Code)\n' "${FAKE_CLAUDE_VERSION:-1.2.3}"
+    ;;
   'mcp add --help'|'mcp get --help'|'mcp list --help') ;;
   'mcp get atlassian')
     [ -f "$XDG_CONFIG_HOME/fake-claude-configured" ] || exit 1
@@ -201,22 +500,78 @@ cat >"$FAKE_BIN/cursor-agent" <<'EOF'
 set -eu
 printf 'cursor-agent %s\n' "$*" >>"$CALLS"
 case "$*" in
-  '--version') printf '%s\n' 'cursor-agent 1.0.0' ;;
+  '--version')
+    printf 'cursor-agent %s\n' "${FAKE_CURSOR_VERSION:-1.0.0}"
+    ;;
   'mcp login --help') ;;
   'mcp login atlassian')
     printf '%s\n' healthy >"$XDG_CONFIG_HOME/fake-cursor-health"
     ;;
   'mcp list')
     case "$(sed -n '1p' "$XDG_CONFIG_HOME/fake-cursor-health" 2>/dev/null || :)" in
-      healthy) printf '%s\n' 'atlassian: Ready' ;;
+      empty|healthy|description-prefixes|legacy-free-text|missing|prose-only|ready-tools-failed|similar|trailing-prose)
+        printf '%s\n' 'atlassian: Ready'
+        ;;
       auth-required|'') printf '%s\n' 'atlassian: Authentication required' ;;
       *) printf '%s\n' 'atlassian: Failed' ;;
     esac
     ;;
   'mcp list-tools atlassian')
-    [ "$(sed -n '1p' "$XDG_CONFIG_HOME/fake-cursor-health" 2>/dev/null || :)" = healthy ] ||
-      exit 1
-    printf '%s\n' 'createJiraIssue getJiraIssue'
+    case "$(sed -n '1p' "$XDG_CONFIG_HOME/fake-cursor-health" 2>/dev/null || :)" in
+      healthy)
+        printf '%s\n' \
+          '- createJiraIssue (projectKey, issueType, summary)' \
+          '- getAccessibleAtlassianResources ()' \
+          '- getJiraIssue (issueKey)' \
+          '- getJiraIssueTypeMetaWithFields (projectKey, issueType)' \
+          '- getJiraProjectIssueTypesMetadata (projectKey)' \
+          '- searchJiraIssuesUsingJql (cloudId, jql)'
+        ;;
+      description-prefixes)
+        printf '%s\n' \
+          'createJiraIssue is configured for another server' \
+          'getAccessibleAtlassianResources: configuration only' \
+          'getJiraIssue: configuration example only' \
+          'getJiraIssueTypeMetaWithFields is mentioned in prose' \
+          'getJiraProjectIssueTypesMetadata: description only' \
+          'searchJiraIssuesUsingJql is mentioned in prose' \
+          'searchConfluenceUsingCql(query)'
+        ;;
+      empty) : ;;
+      prose-only)
+        printf '%s\n' \
+          'No tools are declared' \
+          'Configuration is empty'
+        ;;
+      legacy-free-text)
+        printf '%s\n' \
+          'createConfluencePage(spaceKey, title)' \
+          'description: createJiraIssue then getJiraIssue' \
+          'getConfluencePage(pageId)' \
+          'getJiraIssueTypeMetaWithFields(projectKey, issueType)' \
+          'getJiraProjectIssueTypesMetadata(projectKey)'
+        ;;
+      similar)
+        printf '%s\n' \
+          'createJiraIssuePreview(projectKey)' \
+          'description: call getJiraIssue after creation'
+        ;;
+      trailing-prose)
+        printf '%s\n' \
+          '- createJiraIssue (projectKey, issueType, summary) creates an issue' \
+          '- getAccessibleAtlassianResources () lists sites' \
+          '- getJiraIssue (issueKey) reads an issue' \
+          '- getJiraIssueTypeMetaWithFields (projectKey, issueType) lists fields' \
+          '- getJiraProjectIssueTypesMetadata (projectKey) lists issue types' \
+          '- searchJiraIssuesUsingJql (cloudId, jql) searches issues'
+        ;;
+      missing) printf '%s\n' 'getJiraIssue(issueKey)' ;;
+      ready-tools-failed)
+        printf '%s\n' 'Tool inventory failed'
+        exit 1
+        ;;
+      *) exit 1 ;;
+    esac
     ;;
   *) exit 1 ;;
 esac
@@ -398,9 +753,11 @@ pin_test_release() {
   git -c advice.detachedHead=false clone -q --depth 1 --branch "$ptr_version" \
     https://github.com/beroka-vn/beroka-ai-governance.git "$ptr_release"
   ptr_commit=$(git -C "$ptr_release" rev-parse HEAD)
-  sed -i \
+  ptr_lock_temp=$(mktemp "$consumer/.beroka-governance.lock.XXXXXX")
+  sed \
     "s/^VERSION=.*/VERSION=$ptr_version/;s/^COMMIT=.*/COMMIT=$ptr_commit/" \
-    "$consumer/.beroka-governance.lock"
+    "$consumer/.beroka-governance.lock" >"$ptr_lock_temp"
+  mv "$ptr_lock_temp" "$consumer/.beroka-governance.lock"
   git -C "$consumer" add .beroka-governance.lock
   git -C "$consumer" commit -qm "test: pin $ptr_version release"
 }
@@ -446,36 +803,423 @@ esac
 : >"$XDG_CONFIG_HOME/fake-codex-configured"
 printf '%s\n' healthy-all >"$XDG_CONFIG_HOME/fake-codex-health"
 : >"$CALLS"
+output=$($CLI preflight "$consumer" \
+  --client codex --operation jira-write --non-interactive)
+assert_contains "$output" 'Capability state: SUPPORTED'
+assert_not_contains "$(cat "$CALLS")" 'gh '
+
+printf '%s\n' healthy-rpc-extensions \
+  >"$XDG_CONFIG_HOME/fake-codex-health"
 if output=$($CLI preflight "$consumer" \
   --client codex --operation jira-write --non-interactive 2>&1)
 then
-  fix_wave_fail 'empty Codex tool schemas supplied semantic capability'
+  fix_wave_contains "$output" 'Capability state: SUPPORTED'
+  fix_wave_contains "$output" 'Result: PASS'
 else
-  fix_wave_contains "$output" 'Capability state: UNKNOWN'
-  fix_wave_contains "$output" 'Result: CONNECTOR_CAPABILITY_REQUIRED'
+  fix_wave_fail 'valid JSON-RPC extension keys blocked Jira preflight'
 fi
-assert_not_contains "$(cat "$CALLS")" 'gh '
 
+export FAKE_CODEX_WAIT_FOR_DECOY=1
+for delayed_response in \
+  nested-id-before-healthy \
+  string-id-before-healthy
+do
+  rm -f \
+    "$XDG_CONFIG_HOME/fake-codex-decoy" \
+    "$XDG_CONFIG_HOME/fake-codex-actual" \
+    "$XDG_CONFIG_HOME/fake-codex-decoy-polls" \
+    "$XDG_CONFIG_HOME/fake-codex-decoy-requests"
+  printf '%s\n' "$delayed_response" \
+    >"$XDG_CONFIG_HOME/fake-codex-health"
+  if output=$($CLI preflight "$consumer" \
+    --client codex --operation jira-write --non-interactive 2>&1)
+  then
+    fix_wave_contains "$output" 'Capability state: SUPPORTED'
+    fix_wave_contains "$output" 'Result: PASS'
+  else
+    fix_wave_fail "$delayed_response masked the actual Codex response"
+  fi
+  decoy_requests=$(sed -n '1p' \
+    "$XDG_CONFIG_HOME/fake-codex-decoy-requests" 2>/dev/null || :)
+  [ "$decoy_requests" = 1 ] ||
+    fix_wave_fail "$delayed_response used ${decoy_requests:-0} probes"
+done
+unset FAKE_CODEX_WAIT_FOR_DECOY
+
+for unrelated_only in nested-id-only string-id-only; do
+  printf '%s\n' "$unrelated_only" \
+    >"$XDG_CONFIG_HOME/fake-codex-health"
+  if output=$($CLI preflight "$consumer" \
+    --client codex --operation jira-write --non-interactive 2>&1)
+  then
+    fix_wave_fail "$unrelated_only passed Jira preflight"
+  else
+    fix_wave_contains "$output" 'Result: CONNECTOR_HEALTH_UNAVAILABLE'
+  fi
+  assert_not_contains "$output" 'Capability state: SUPPORTED'
+  assert_not_contains "$output" 'ATLASSIAN_AUTH_REQUIRED'
+  assert_not_contains "$output" 'codex mcp login atlassian'
+  assert_not_contains "$output" 'OAuth URL:'
+done
+
+for duplicate_rpc_member in \
+  duplicate-rpc-id \
+  duplicate-rpc-result \
+  duplicate-rpc-error
+do
+  printf '%s\n' "$duplicate_rpc_member" \
+    >"$XDG_CONFIG_HOME/fake-codex-health"
+  if output=$($CLI preflight "$consumer" \
+    --client codex --operation jira-write --non-interactive 2>&1)
+  then
+    fix_wave_fail "$duplicate_rpc_member passed Jira preflight"
+  else
+    fix_wave_contains "$output" 'Result: CONNECTOR_HEALTH_UNAVAILABLE'
+  fi
+  assert_not_contains "$output" 'Capability state: SUPPORTED'
+  assert_not_contains "$output" 'ATLASSIAN_AUTH_REQUIRED'
+  assert_not_contains "$output" 'codex mcp login atlassian'
+  assert_not_contains "$output" 'OAuth URL:'
+done
+
+printf '%s\n' escaped-id-one-result \
+  >"$XDG_CONFIG_HOME/fake-codex-health"
+if output=$($CLI preflight "$consumer" \
+  --client codex --operation jira-write --non-interactive 2>&1)
+then
+  fix_wave_contains "$output" 'Capability state: SUPPORTED'
+  fix_wave_contains "$output" 'Result: PASS'
+else
+  fix_wave_fail 'escaped semantic id=1 did not select Jira inventory'
+fi
+
+printf '%s\n' escaped-result-only \
+  >"$XDG_CONFIG_HOME/fake-codex-health"
+if output=$($CLI preflight "$consumer" \
+  --client codex --operation jira-write --non-interactive 2>&1)
+then
+  fix_wave_contains "$output" 'Capability state: SUPPORTED'
+  fix_wave_contains "$output" 'Result: PASS'
+else
+  fix_wave_fail 'escaped semantic result did not select Jira inventory'
+fi
+
+for rejected_escaped_rpc in \
+  escaped-error-with-result \
+  escaped-id-conflict-with-result \
+  escaped-result-with-error \
+  semantic-duplicate-result \
+  semantic-duplicate-error
+do
+  printf '%s\n' "$rejected_escaped_rpc" \
+    >"$XDG_CONFIG_HOME/fake-codex-health"
+  if output=$($CLI preflight "$consumer" \
+    --client codex --operation jira-write --non-interactive 2>&1)
+  then
+    fix_wave_fail "$rejected_escaped_rpc passed Jira preflight"
+  else
+    fix_wave_contains "$output" 'Result: CONNECTOR_HEALTH_UNAVAILABLE'
+  fi
+  fix_wave_not_contains "$output" 'Capability state: SUPPORTED'
+  fix_wave_not_contains "$output" 'ATLASSIAN_AUTH_REQUIRED'
+  fix_wave_not_contains "$output" 'codex mcp login atlassian'
+  fix_wave_not_contains "$output" 'OAuth URL:'
+  fix_wave_not_contains "$output" 'createJiraIssue'
+done
+
+printf '%s\n' escaped-wrapper-keys \
+  >"$XDG_CONFIG_HOME/fake-codex-health"
+if output=$($CLI preflight "$consumer" \
+  --client codex --operation jira-write --non-interactive 2>&1)
+then
+  fix_wave_contains "$output" 'Capability state: SUPPORTED'
+  fix_wave_contains "$output" 'Result: PASS'
+else
+  fix_wave_fail 'escaped semantic wrapper keys did not select Jira inventory'
+fi
+
+for rejected_wrapper in \
+  semantic-duplicate-data \
+  semantic-duplicate-name \
+  semantic-duplicate-tools \
+  semantic-duplicate-auth-status \
+  raw-nul-response
+do
+  printf '%s\n' "$rejected_wrapper" \
+    >"$XDG_CONFIG_HOME/fake-codex-health"
+  if output=$($CLI preflight "$consumer" \
+    --client codex --operation jira-write --non-interactive 2>&1)
+  then
+    fix_wave_fail "$rejected_wrapper passed Jira preflight"
+  else
+    fix_wave_contains "$output" 'Result: CONNECTOR_HEALTH_UNAVAILABLE'
+  fi
+  fix_wave_not_contains "$output" 'Capability state: SUPPORTED'
+  fix_wave_not_contains "$output" 'ATLASSIAN_AUTH_REQUIRED'
+  fix_wave_not_contains "$output" 'codex mcp login atlassian'
+  fix_wave_not_contains "$output" 'OAuth URL:'
+  fix_wave_not_contains "$output" 'createJiraIssue'
+done
+
+printf '%s\n' escaped-nul-text \
+  >"$XDG_CONFIG_HOME/fake-codex-health"
+if output=$($CLI preflight "$consumer" \
+  --client codex --operation jira-write --non-interactive 2>&1)
+then
+  fix_wave_contains "$output" 'Capability state: SUPPORTED'
+  fix_wave_contains "$output" 'Result: PASS'
+else
+  fix_wave_fail 'escaped JSON NUL text did not select Jira inventory'
+fi
+
+printf '%s\n' valid-raw-unicode \
+  >"$XDG_CONFIG_HOME/fake-codex-health"
+if output=$($CLI preflight "$consumer" \
+  --client codex --operation jira-write --non-interactive 2>&1)
+then
+  fix_wave_contains "$output" 'Capability state: SUPPORTED'
+  fix_wave_contains "$output" 'Result: PASS'
+else
+  fix_wave_fail 'valid raw UTF-8 did not select Jira inventory'
+fi
+
+for invalid_utf8 in \
+  invalid-utf8-continuation \
+  invalid-utf8-ff-fe \
+  invalid-utf8-overlong \
+  invalid-utf8-surrogate \
+  invalid-utf8-too-high \
+  invalid-utf8-truncated
+do
+  printf '%s\n' "$invalid_utf8" >"$XDG_CONFIG_HOME/fake-codex-health"
+  if output=$($CLI preflight "$consumer" \
+    --client codex --operation jira-write --non-interactive 2>&1)
+  then
+    fix_wave_fail "$invalid_utf8 passed Jira preflight"
+  else
+    fix_wave_contains "$output" 'Result: CONNECTOR_HEALTH_UNAVAILABLE'
+  fi
+  fix_wave_not_contains "$output" 'Capability state: SUPPORTED'
+  fix_wave_not_contains "$output" 'ATLASSIAN_AUTH_REQUIRED'
+  fix_wave_not_contains "$output" 'codex mcp login atlassian'
+  fix_wave_not_contains "$output" 'OAuth URL:'
+  fix_wave_not_contains "$output" 'createJiraIssue'
+done
+
+export FAKE_CODEX_WAIT_FOR_UTF8_SPLIT=1
+rm -f "$XDG_CONFIG_HOME"/fake-codex-split-*
+printf '%s\n' split-utf8-3 >"$XDG_CONFIG_HOME/fake-codex-health"
+if output=$($CLI preflight "$consumer" \
+  --client codex --operation jira-write --non-interactive 2>&1)
+then
+  fix_wave_contains "$output" 'Capability state: SUPPORTED'
+  fix_wave_contains "$output" 'Result: PASS'
+else
+  fix_wave_fail 'split UTF-8 corrupted Jira inventory'
+fi
+unset FAKE_CODEX_WAIT_FOR_UTF8_SPLIT
+
+printf '%s\n' nested-extension-before-tools \
+  >"$XDG_CONFIG_HOME/fake-codex-health"
+if output=$($CLI preflight "$consumer" \
+  --client codex --operation jira-write --non-interactive 2>&1)
+then
+  fix_wave_contains "$output" 'Capability state: SUPPORTED'
+  fix_wave_contains "$output" 'Result: PASS'
+else
+  fix_wave_fail 'nested extension corrupted Jira inventory extraction'
+fi
+fix_wave_not_contains "$output" 'ATLASSIAN_AUTH_REQUIRED'
+fix_wave_not_contains "$output" 'codex mcp login atlassian'
+fix_wave_not_contains "$output" 'OAuth URL:'
+fix_wave_not_contains "$output" 'createJiraIssue'
+
+printf '%s\n' healthy-empty-tools >"$XDG_CONFIG_HOME/fake-codex-health"
+output=$($CLI doctor "$consumer" --client codex)
+assert_contains "$output" 'Connector: PASS'
+assert_contains "$output" 'Authentication: PASS'
+assert_contains "$output" 'Result: PASS'
+assert_not_contains "$output" 'ATLASSIAN_AUTH_REQUIRED'
+assert_not_contains "$output" 'codex mcp login atlassian'
+assert_not_contains "$output" 'OAuth URL:'
+
+if output=$($CLI preflight "$consumer" \
+  --client codex --operation jira-write --non-interactive 2>&1)
+then
+  fail 'authenticated empty Codex inventory passed Jira preflight'
+fi
+assert_contains "$output" 'Capability state: UNSUPPORTED'
+assert_contains "$output" 'Runtime inventory: COMPLETE'
+assert_contains "$output" 'Result: CONNECTOR_CAPABILITY_REQUIRED'
+assert_not_contains "$output" 'ATLASSIAN_AUTH_REQUIRED'
+assert_not_contains "$output" 'codex mcp login atlassian'
+assert_not_contains "$output" 'OAuth URL:'
+assert_not_contains "$output" 'createJiraIssue'
+
+for unusable_tool_map in \
+  healthy-array-tools \
+  healthy-null-tools \
+  healthy-missing-tools
+do
+  printf '%s\n' "$unusable_tool_map" >"$XDG_CONFIG_HOME/fake-codex-health"
+  output=$($CLI doctor "$consumer" --client codex)
+  assert_contains "$output" 'Connector: PASS'
+  assert_contains "$output" 'Authentication: PASS'
+  assert_contains "$output" 'Result: PASS'
+  assert_not_contains "$output" 'ATLASSIAN_AUTH_REQUIRED'
+  assert_not_contains "$output" 'codex mcp login atlassian'
+  assert_not_contains "$output" 'OAuth URL:'
+
+  if output=$($CLI preflight "$consumer" \
+    --client codex --operation jira-write --non-interactive 2>&1)
+  then
+    fail "$unusable_tool_map passed Jira preflight"
+  fi
+  assert_contains "$output" 'Capability state: UNKNOWN'
+  assert_contains "$output" 'Runtime inventory: UNAVAILABLE'
+  assert_contains "$output" 'Result: CONNECTOR_CAPABILITY_REQUIRED'
+  assert_not_contains "$output" 'ATLASSIAN_AUTH_REQUIRED'
+  assert_not_contains "$output" 'codex mcp login atlassian'
+  assert_not_contains "$output" 'OAuth URL:'
+  assert_not_contains "$output" 'createJiraIssue'
+done
+
+printf '%s\n' healthy-valid-nested-tool-values \
+  >"$XDG_CONFIG_HOME/fake-codex-health"
+output=$($CLI preflight "$consumer" \
+  --client codex --operation jira-write --non-interactive)
+assert_contains "$output" 'Capability state: SUPPORTED'
+
+printf '%s\n' healthy-valid-del-string \
+  >"$XDG_CONFIG_HOME/fake-codex-health"
+output=$($CLI preflight "$consumer" \
+  --client codex --operation jira-write --non-interactive)
+assert_contains "$output" 'Capability state: SUPPORTED'
+assert_not_contains "$output" 'createJiraIssue'
+assert_not_contains "$output" 'metadata'
+
+printf '%s\n' healthy-valid-json-whitespace \
+  >"$XDG_CONFIG_HOME/fake-codex-health"
+output=$($CLI preflight "$consumer" \
+  --client codex --operation jira-write --non-interactive)
+assert_contains "$output" 'Capability state: SUPPORTED'
+
+LF_CODEX_RESPONSE=$(printf '%s\n%s\n' \
+  '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{"metadata":' \
+  '{"enabled":true}},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]}}')
+LF_RELEASE_DIR=$release_dir
+export LF_CODEX_RESPONSE LF_RELEASE_DIR
+lf_capability=$(
+  {
+    sed '$d' "$CLI"
+    printf '%s\n' \
+      'connector_probe() {' \
+      '  CONNECTOR_PROBE_OUTPUT=$LF_CODEX_RESPONSE' \
+      '}' \
+      'RELEASE_DIR=$LF_RELEASE_DIR' \
+      'resolve_provider_capability codex jira-issue-write' \
+      'printf "%s|%s\n" "$CAPABILITY_STATE" "$CAPABILITY_INVENTORY_STATE"'
+  } | sh
+)
+unset LF_CODEX_RESPONSE LF_RELEASE_DIR
+[ "$lf_capability" = 'SUPPORTED|COMPLETE' ] ||
+  fail "valid JSON LF whitespace resolved as $lf_capability"
+
+for invalid_tool_map in \
+  healthy-malformed-tool-value \
+  healthy-duplicate-required-tool \
+  healthy-escaped-duplicate-required-tool
+do
+  printf '%s\n' "$invalid_tool_map" >"$XDG_CONFIG_HOME/fake-codex-health"
+  if output=$($CLI preflight "$consumer" \
+    --client codex --operation jira-write --non-interactive 2>&1)
+  then
+    fail "$invalid_tool_map supplied the Atlassian inventory"
+  fi
+  assert_contains "$output" 'Capability state: UNKNOWN'
+  assert_contains "$output" 'Result: CONNECTOR_CAPABILITY_REQUIRED'
+  assert_not_contains "$output" 'Capability state: SUPPORTED'
+  assert_not_contains "$output" 'createJiraIssue'
+  assert_not_contains "$output" 'metadata'
+done
+
+for invalid_tool_json in \
+  healthy-malformed-nested-tool-object \
+  healthy-malformed-nested-tool-array \
+  healthy-invalid-c0-string \
+  healthy-nested-vertical-tab-whitespace \
+  healthy-nested-form-feed-whitespace
+do
+  printf '%s\n' "$invalid_tool_json" >"$XDG_CONFIG_HOME/fake-codex-health"
+  if output=$($CLI preflight "$consumer" \
+    --client codex --operation jira-write --non-interactive 2>&1)
+  then
+    fail "$invalid_tool_json supplied the Atlassian inventory"
+  fi
+  assert_contains "$output" 'Result: CONNECTOR_HEALTH_UNAVAILABLE'
+  assert_not_contains "$output" 'Capability state: SUPPORTED'
+  assert_not_contains "$output" 'ATLASSIAN_AUTH_REQUIRED'
+  assert_not_contains "$output" 'codex mcp login atlassian'
+  assert_not_contains "$output" 'OAuth URL:'
+  assert_not_contains "$output" 'createJiraIssue'
+  assert_not_contains "$output" 'metadata'
+done
+
+printf '%s\n' healthy-missing-resource-discovery \
+  >"$XDG_CONFIG_HOME/fake-codex-health"
+for missing_resource_operation in jira-write confluence-write; do
+  if output=$($CLI preflight "$consumer" \
+    --client codex --operation "$missing_resource_operation" \
+    --non-interactive 2>&1)
+  then
+    fail "$missing_resource_operation passed without resource discovery"
+  fi
+  assert_contains "$output" 'Capability state: UNSUPPORTED'
+  assert_contains "$output" 'Runtime inventory: COMPLETE'
+  assert_not_contains "$output" 'getAccessibleAtlassianResources'
+  assert_not_contains "$output" 'searchJiraIssuesUsingJql'
+done
+
+printf '%s\n' healthy-missing-jql >"$XDG_CONFIG_HOME/fake-codex-health"
+if output=$($CLI preflight "$consumer" \
+  --client codex --operation jira-write --non-interactive 2>&1)
+then
+  fail 'jira-write passed without JQL search'
+fi
+assert_contains "$output" 'Capability state: UNSUPPORTED'
+assert_contains "$output" 'Runtime inventory: COMPLETE'
+assert_not_contains "$output" 'getAccessibleAtlassianResources'
+assert_not_contains "$output" 'searchJiraIssuesUsingJql'
+
+printf '%s\n' healthy-all >"$XDG_CONFIG_HOME/fake-codex-health"
 mkdir -p "$HOME/.cursor"
 printf '%s\n' \
   '{"mcpServers":{"atlassian":{"url":"https://mcp.atlassian.com/v1/mcp/authv2"}}}' \
   >"$HOME/.cursor/mcp.json"
 printf '%s\n' healthy >"$XDG_CONFIG_HOME/fake-cursor-health"
-if output=$($CLI preflight "$consumer" \
-  --client cursor --operation jira-write --non-interactive 2>&1)
-then
-  fix_wave_fail 'Cursor free-text tool names supplied semantic capability'
-else
-  fix_wave_contains "$output" 'Capability state: UNKNOWN'
-  fix_wave_contains "$output" 'Result: CONNECTOR_CAPABILITY_REQUIRED'
-fi
+output=$($CLI preflight "$consumer" \
+  --client cursor --operation jira-write --non-interactive)
+assert_contains "$output" 'Capability state: SUPPORTED'
+
+for cursor_health in \
+  empty prose-only description-prefixes similar trailing-prose missing
+do
+  printf '%s\n' "$cursor_health" >"$XDG_CONFIG_HOME/fake-cursor-health"
+  if output=$($CLI preflight "$consumer" \
+    --client cursor --operation jira-write --non-interactive 2>&1)
+  then
+    fail "Cursor $cursor_health inventory passed"
+  fi
+  assert_contains "$output" 'Capability state: UNSUPPORTED'
+done
 
 printf '%s\n' \
+  '# schema=1' \
+  '# client	version	endpoint	toolset	tested_on	capability	state' \
   'codex	1.0.0	https://mcp.atlassian.com/v1/mcp/authv2	createConfluencePage,createJiraIssue,getConfluencePage,getJiraIssue	2026-07-23	jira-issue-write	SUPPORTED' \
   'codex	1.0.0	https://mcp.atlassian.com/v1/mcp/authv2	createConfluencePage,createJiraIssue,getConfluencePage,getJiraIssue	2026-07-23	confluence-page-parent-write	SUPPORTED' \
-  'codex	1.0.0	https://mcp.atlassian.com/v1/mcp/authv2	createJiraIssue,getJiraIssue	2026-07-23	jira-issue-write	SUPPORTED' \
-  'cursor	1.0.0	https://mcp.atlassian.com/v1/mcp/authv2	createJiraIssue,getJiraIssue	2026-07-23	jira-issue-write	SUPPORTED' \
-  >>"$source_repo/runtime/compatibility/atlassian.tsv"
+  'cursor	1.0.0	https://mcp.atlassian.com/v1/mcp/authv2	createConfluencePage,createJiraIssue,getConfluencePage,getJiraIssue	2026-07-23	jira-issue-write	SUPPORTED' \
+  >"$source_repo/runtime/compatibility/atlassian.tsv"
 pin_test_release v1.1.1
 
 : >"$CALLS"
@@ -488,6 +1232,16 @@ assert_contains "$output" 'Result: PASS'
 assert_not_contains "$output" 'createJiraIssue'
 [ "$(grep -Fc 'codex app-server --stdio' "$CALLS")" -eq 1 ] ||
   fail 'preflight repeated its selected-client inventory probe'
+
+FAKE_CODEX_VERSION=99.77.55
+export FAKE_CODEX_VERSION
+if output=$($CLI preflight "$consumer" \
+  --client codex --operation jira-write --non-interactive 2>&1)
+then
+  fail 'schema-1 compatibility matched a different Codex version'
+fi
+assert_contains "$output" 'Capability state: UNKNOWN'
+unset FAKE_CODEX_VERSION
 
 printf '%s\n' healthy-unrelated-reauth \
   >"$XDG_CONFIG_HOME/fake-codex-health"
@@ -503,7 +1257,7 @@ assert_contains "$output" 'Confluence root type: page'
 assert_contains "$output" 'Capability: confluence-page-parent-write'
 assert_contains "$output" 'Capability state: SUPPORTED'
 
-printf '%s\n' healthy >"$XDG_CONFIG_HOME/fake-cursor-health"
+printf '%s\n' legacy-free-text >"$XDG_CONFIG_HOME/fake-cursor-health"
 output=$($CLI preflight "$consumer" \
   --client cursor --operation jira-write --non-interactive)
 assert_contains "$output" 'Client: cursor'
@@ -587,6 +1341,80 @@ do
   fi
   assert_contains "$output" 'Result: CONNECTOR_HEALTH_UNAVAILABLE'
   assert_not_contains "$output" 'Capability state: SUPPORTED'
+done
+
+for malformed_response in \
+  healthy-malformed-envelope-missing-comma \
+  healthy-malformed-record-illegal-escape \
+  healthy-malformed-record-missing-comma \
+  malformed-nested-extension-before-tools \
+  healthy-malformed-envelope-trailing-object \
+  healthy-malformed-envelope-trailing-member \
+  healthy-malformed-envelope-trailing-member-spaced \
+  healthy-malformed-envelope-trailing-member-whitespace
+do
+  printf '%s\n' "$malformed_response" >"$XDG_CONFIG_HOME/fake-codex-health"
+  if output=$($CLI preflight "$consumer" \
+    --client codex --operation jira-write --non-interactive 2>&1)
+  then
+    fail "$malformed_response supplied the Atlassian inventory"
+  fi
+  assert_contains "$output" 'Result: CONNECTOR_HEALTH_UNAVAILABLE'
+  assert_not_contains "$output" 'Capability state: SUPPORTED'
+  assert_not_contains "$output" 'ATLASSIAN_AUTH_REQUIRED'
+  assert_not_contains "$output" 'codex mcp login atlassian'
+  assert_not_contains "$output" 'OAuth URL:'
+  assert_not_contains "$output" 'createJiraIssue'
+done
+
+for malformed_reauth in \
+  malformed-reauth-missing-comma \
+  malformed-reauth-illegal-escape \
+  malformed-reauth-trailing-member \
+  malformed-reauth-trailing-token
+do
+  printf '%s\n' "$malformed_reauth" >"$XDG_CONFIG_HOME/fake-codex-health"
+  if output=$($CLI preflight "$consumer" \
+    --client codex --operation jira-write --non-interactive 2>&1)
+  then
+    fail "$malformed_reauth passed Jira preflight"
+  fi
+  assert_contains "$output" 'Result: CONNECTOR_HEALTH_UNAVAILABLE'
+  assert_not_contains "$output" 'Capability state: SUPPORTED'
+  assert_not_contains "$output" 'ATLASSIAN_AUTH_REQUIRED'
+  assert_not_contains "$output" 'codex mcp login atlassian'
+  assert_not_contains "$output" 'OAuth URL:'
+  assert_not_contains "$output" 'reauthenticationRequired'
+done
+
+for terminal_error_response in \
+  pure-error \
+  pure-error-null \
+  pure-error-string \
+  pure-error-array \
+  pure-error-number \
+  pure-error-bool \
+  dual-result-error \
+  dual-result-error-null \
+  dual-result-error-string \
+  dual-result-error-array \
+  dual-result-error-number \
+  dual-result-error-bool \
+  neither-result-nor-error
+do
+  printf '%s\n' "$terminal_error_response" \
+    >"$XDG_CONFIG_HOME/fake-codex-health"
+  if output=$($CLI preflight "$consumer" \
+    --client codex --operation jira-write --non-interactive 2>&1)
+  then
+    fail "$terminal_error_response passed Jira preflight"
+  fi
+  assert_contains "$output" 'Result: CONNECTOR_HEALTH_UNAVAILABLE'
+  assert_not_contains "$output" 'Capability state: SUPPORTED'
+  assert_not_contains "$output" 'ATLASSIAN_AUTH_REQUIRED'
+  assert_not_contains "$output" 'codex mcp login atlassian'
+  assert_not_contains "$output" 'OAuth URL:'
+  assert_not_contains "$output" 'createJiraIssue'
 done
 
 : >"$XDG_CONFIG_HOME/fake-claude-configured"
@@ -868,70 +1696,246 @@ fi
 assert_contains "$output" 'Capability state: UNKNOWN'
 
 printf '%s\n' \
-  'claude	1.2.3	https://mcp.atlassian.com/v1/mcp/authv2	UNAVAILABLE	2026-07-23	confluence-folder-parent-write	SUPPORTED' \
-  'codex	1.0.0	https://mcp.atlassian.com/v1/mcp/authv2	getJiraIssue	2026-07-23	jira-issue-write	SUPPORTED' \
-  >>"$source_repo/runtime/compatibility/atlassian.tsv"
+  '# schema=2' \
+  '# endpoint	required_tools	tested_on	capability	evidence	state' \
+  'https://mcp.atlassian.com/v1/mcp/authv2	createJiraIssue,getAccessibleAtlassianResources,getJiraIssue,getJiraIssueTypeMetaWithFields,getJiraProjectIssueTypesMetadata,searchJiraIssuesUsingJql	2026-07-27	jira-issue-write	official-contract	SUPPORTED' \
+  'https://mcp.atlassian.com/v1/mcp/authv2	createConfluencePage,getAccessibleAtlassianResources,getConfluencePage	2026-07-27	confluence-page-parent-write	official-contract	SUPPORTED' \
+  'https://mcp.atlassian.com/v1/mcp/authv2	createJiraIssue,getAccessibleAtlassianResources,getJiraIssue,getJiraIssueTypeMetaWithFields,getJiraProjectIssueTypesMetadata,searchJiraIssuesUsingJql	2026-07-27	jira-board-verification	official-contract	SUPPORTED' \
+  'https://mcp.atlassian.com/v1/mcp/authv2	createConfluencePage,getAccessibleAtlassianResources,getConfluencePage	2026-07-27	confluence-folder-parent-write	official-contract	SUPPORTED' \
+  >"$source_repo/runtime/compatibility/atlassian.tsv"
 pin_test_release v1.1.2
+printf '%s\n' healthy-all >"$XDG_CONFIG_HOME/fake-codex-health"
 output=$($CLI preflight "$consumer" \
-  --client claude --operation confluence-write --non-interactive)
+  --client codex --operation jira-write --non-interactive)
+assert_contains "$output" 'Capability state: SUPPORTED'
+assert_contains "$output" 'Capability evidence: PROVIDER_CONTRACT'
+assert_contains "$output" 'Runtime inventory: COMPLETE'
+assert_contains "$output" 'Result: PASS'
+assert_not_contains "$output" 'createJiraIssue'
+assert_not_contains "$output" 'getAccessibleAtlassianResources'
+assert_not_contains "$output" 'getJiraIssueTypeMetaWithFields'
+assert_not_contains "$output" 'searchJiraIssuesUsingJql'
+
+if output=$($CLI preflight "$consumer" \
+  --client codex --operation confluence-write --non-interactive 2>&1)
+then
+  fail 'provider evidence enabled folder-parent writes'
+fi
+assert_contains "$output" 'Capability state: UNKNOWN'
+assert_contains "$output" 'Result: CONNECTOR_CAPABILITY_REQUIRED'
+
+page_config='SCHEMA_VERSION=1
+PROFILE=standalone
+JIRA_PROJECT_KEY=APP
+CONFLUENCE_SPACE_KEY=APP
+CONFLUENCE_ROOT_CONTENT_ID=123456
+CONFLUENCE_ROOT_CONTENT_TYPE=page
+INTEGRATION_PROFILE=none
+CROSS_REPO_POLICY=explicit-only'
+publish_routing "$page_config"
+printf '%s\n' healthy-all >"$XDG_CONFIG_HOME/fake-codex-health"
+output=$($CLI preflight "$consumer" \
+  --client codex --operation confluence-write --non-interactive)
+assert_contains "$output" 'Confluence root type: page'
+assert_contains "$output" 'Capability: confluence-page-parent-write'
 assert_contains "$output" 'Capability state: SUPPORTED'
 assert_contains "$output" 'Result: PASS'
 
+printf '%s\n' healthy-missing-confluence-read \
+  >"$XDG_CONFIG_HOME/fake-codex-health"
 if output=$($CLI preflight "$consumer" \
-  --client claude --operation confluence-write --non-interactive 2>&1)
+  --client codex --operation confluence-write --non-interactive 2>&1)
 then
-  fix_wave_contains "$output" 'Capability state: SUPPORTED'
-else
-  fix_wave_fail 'Claude Code parenthesized version did not match compatibility evidence'
+  fail 'complete inventory missing getConfluencePage passed'
 fi
+assert_contains "$output" 'Capability state: UNSUPPORTED'
+assert_contains "$output" 'Runtime inventory: COMPLETE'
+assert_contains "$output" 'Result: CONNECTOR_CAPABILITY_REQUIRED'
 
-printf '%s\n' healthy-read-only >"$XDG_CONFIG_HOME/fake-codex-health"
+board_config='SCHEMA_VERSION=1
+PROFILE=standalone
+JIRA_PROJECT_KEY=APP
+JIRA_BOARD_ID=12
+INTEGRATION_PROFILE=none
+CROSS_REPO_POLICY=explicit-only'
+publish_routing "$board_config"
+if output=$($CLI preflight "$consumer" \
+  --client codex --operation jira-board-verify --non-interactive 2>&1)
+then
+  fail 'provider evidence enabled board verification'
+fi
+assert_contains "$output" 'Capability state: UNKNOWN'
+assert_contains "$output" 'Result: CONNECTOR_CAPABILITY_REQUIRED'
+
+FAKE_CODEX_VERSION=99.77.55
+export FAKE_CODEX_VERSION
+output=$($CLI preflight "$consumer" \
+  --client codex --operation jira-write --non-interactive)
+assert_contains "$output" 'Capability state: SUPPORTED'
+unset FAKE_CODEX_VERSION
+
+printf '%s\n' healthy >"$XDG_CONFIG_HOME/fake-claude-health"
+output=$($CLI preflight "$consumer" \
+  --client claude --operation jira-write --non-interactive)
+assert_contains "$output" 'Capability state: SUPPORTED'
+assert_contains "$output" 'Capability evidence: PROVIDER_CONTRACT'
+assert_contains "$output" 'Runtime inventory: UNAVAILABLE'
+assert_not_contains "$output" 'createJiraIssue'
+assert_not_contains "$output" 'getAccessibleAtlassianResources'
+assert_not_contains "$output" 'getJiraIssueTypeMetaWithFields'
+assert_not_contains "$output" 'searchJiraIssuesUsingJql'
+
+FAKE_CLAUDE_VERSION=88.66.44
+export FAKE_CLAUDE_VERSION
+output=$($CLI preflight "$consumer" \
+  --client claude --operation jira-write --non-interactive)
+assert_contains "$output" 'Capability state: SUPPORTED'
+unset FAKE_CLAUDE_VERSION
+
+printf '%s\n' healthy >"$XDG_CONFIG_HOME/fake-cursor-health"
+output=$($CLI preflight "$consumer" \
+  --client cursor --operation jira-write --non-interactive)
+assert_contains "$output" 'Capability state: SUPPORTED'
+assert_contains "$output" 'Capability evidence: PROVIDER_CONTRACT'
+assert_contains "$output" 'Runtime inventory: COMPLETE'
+assert_not_contains "$output" 'createJiraIssue'
+assert_not_contains "$output" 'getAccessibleAtlassianResources'
+assert_not_contains "$output" 'getJiraIssueTypeMetaWithFields'
+assert_not_contains "$output" 'searchJiraIssuesUsingJql'
+
+printf '%s\n' ready-tools-failed >"$XDG_CONFIG_HOME/fake-cursor-health"
+if output=$($CLI preflight "$consumer" \
+  --client cursor --operation jira-write --non-interactive 2>&1)
+then
+  fail 'Cursor provider preflight passed with unavailable tool inventory'
+fi
+assert_contains "$output" 'Capability state: UNKNOWN'
+assert_contains "$output" 'Capability evidence: NONE'
+assert_contains "$output" 'Runtime inventory: UNAVAILABLE'
+assert_contains "$output" 'Result: CONNECTOR_CAPABILITY_REQUIRED'
+assert_not_contains "$output" 'ATLASSIAN_AUTH_REQUIRED'
+assert_not_contains "$output" 'cursor-agent mcp login atlassian'
+assert_not_contains "$output" 'OAuth URL:'
+assert_not_contains "$output" 'Tool inventory failed'
+assert_not_contains "$output" 'createJiraIssue'
+
+FAKE_CURSOR_VERSION=77.55.33
+export FAKE_CURSOR_VERSION
+printf '%s\n' healthy >"$XDG_CONFIG_HOME/fake-cursor-health"
+output=$($CLI preflight "$consumer" \
+  --client cursor --operation jira-write --non-interactive)
+assert_contains "$output" 'Capability state: SUPPORTED'
+unset FAKE_CURSOR_VERSION
+
+printf '%s\n' healthy-missing-jira-metadata >"$XDG_CONFIG_HOME/fake-codex-health"
 if output=$($CLI preflight "$consumer" \
   --client codex --operation jira-write --non-interactive 2>&1)
 then
-  fail 'compatibility evidence overrode complete runtime inventory'
+  fail 'complete inventory missing a required provider tool passed'
 fi
 assert_contains "$output" 'Capability state: UNSUPPORTED'
+assert_contains "$output" 'Capability evidence: RUNTIME_INVENTORY'
+assert_contains "$output" 'Runtime inventory: COMPLETE'
+assert_contains "$output" 'Result: CONNECTOR_CAPABILITY_REQUIRED'
+assert_not_contains "$output" 'createJiraIssue'
+assert_not_contains "$output" 'getAccessibleAtlassianResources'
+assert_not_contains "$output" 'getJiraIssueTypeMetaWithFields'
+assert_not_contains "$output" 'searchJiraIssuesUsingJql'
 
+printf '%s\n' healthy-all >"$XDG_CONFIG_HOME/fake-codex-health"
 printf '%s\n' \
-  'claude	1.2.3	https://mcp.atlassian.com/v1/mcp/authv2	UNAVAILABLE	2026-07-23	confluence-folder-parent-write	SUPPORTED' \
+  'https://mcp.atlassian.com/v1/mcp/authv2	createJiraIssue,getAccessibleAtlassianResources,getJiraIssue,getJiraIssueTypeMetaWithFields,getJiraProjectIssueTypesMetadata,searchJiraIssuesUsingJql	2026-07-27	jira-issue-write	official-contract	SUPPORTED' \
   >>"$source_repo/runtime/compatibility/atlassian.tsv"
 pin_test_release v1.1.3
 if output=$($CLI preflight "$consumer" \
-  --client claude --operation confluence-write --non-interactive 2>&1)
+  --client codex --operation jira-write --non-interactive 2>&1)
 then
-  fail 'duplicate compatibility evidence passed'
+  fail 'duplicate provider evidence passed'
 fi
 assert_contains "$output" 'Capability state: UNKNOWN'
+assert_contains "$output" 'Result: CONNECTOR_CAPABILITY_REQUIRED'
 
-sed -i '$d' "$source_repo/runtime/compatibility/atlassian.tsv"
-printf '%s\n' malformed >>"$source_repo/runtime/compatibility/atlassian.tsv"
+compatibility_temp=$(mktemp \
+  "$source_repo/runtime/compatibility/atlassian.tsv.XXXXXX")
+awk -F '\t' '$4 != "jira-issue-write"' \
+  "$source_repo/runtime/compatibility/atlassian.tsv" >"$compatibility_temp"
+mv "$compatibility_temp" "$source_repo/runtime/compatibility/atlassian.tsv"
+printf '%s\n' \
+  'https://mcp.atlassian.com/v1/mcp/authv2	createJiraIssue,createJiraIssue,getAccessibleAtlassianResources,getJiraIssue,getJiraIssueTypeMetaWithFields,getJiraProjectIssueTypesMetadata,searchJiraIssuesUsingJql	2026-07-27	jira-issue-write	official-contract	SUPPORTED' \
+  >>"$source_repo/runtime/compatibility/atlassian.tsv"
 pin_test_release v1.1.4
 if output=$($CLI preflight "$consumer" \
-  --client claude --operation confluence-write --non-interactive 2>&1)
+  --client codex --operation jira-write --non-interactive 2>&1)
 then
-  fail 'malformed compatibility evidence passed'
+  fail 'malformed provider toolset passed'
 fi
 assert_contains "$output" 'Capability state: UNKNOWN'
+assert_contains "$output" 'Result: CONNECTOR_CAPABILITY_REQUIRED'
 
-sed -i '1s/schema=1/schema=2/; /malformed/d' \
-  "$source_repo/runtime/compatibility/atlassian.tsv"
+compatibility_temp=$(mktemp \
+  "$source_repo/runtime/compatibility/atlassian.tsv.XXXXXX")
+awk -F '\t' '$4 != "jira-issue-write"' \
+  "$source_repo/runtime/compatibility/atlassian.tsv" >"$compatibility_temp"
+mv "$compatibility_temp" "$source_repo/runtime/compatibility/atlassian.tsv"
+printf '%s\n' \
+  'https://mcp.atlassian.com/v1/mcp/authv2	createJiraIssue,getAccessibleAtlassianResources,getJiraIssue,getJiraIssueTypeMetaWithFields,getJiraProjectIssueTypesMetadata,searchJiraIssuesUsingJql	2026-07-27	jira-issue-write	unrecognized	SUPPORTED' \
+  >>"$source_repo/runtime/compatibility/atlassian.tsv"
 pin_test_release v1.1.5
 if output=$($CLI preflight "$consumer" \
-  --client claude --operation confluence-write --non-interactive 2>&1)
+  --client codex --operation jira-write --non-interactive 2>&1)
 then
-  fail 'unsupported compatibility schema passed'
+  fail 'unrecognized provider evidence passed'
 fi
-assert_contains "$output" 'Result: VERSION_MISMATCH'
+assert_contains "$output" 'Capability state: UNKNOWN'
+assert_contains "$output" 'Result: CONNECTOR_CAPABILITY_REQUIRED'
 
-sed -i '1d' "$source_repo/runtime/compatibility/atlassian.tsv"
+compatibility_temp=$(mktemp \
+  "$source_repo/runtime/compatibility/atlassian.tsv.XXXXXX")
+awk -F '\t' '$4 != "jira-issue-write"' \
+  "$source_repo/runtime/compatibility/atlassian.tsv" >"$compatibility_temp"
+mv "$compatibility_temp" "$source_repo/runtime/compatibility/atlassian.tsv"
+printf '%s\n' \
+  'https://mcp.atlassian.com/v1/mcp/authv2	createJiraIssue,getAccessibleAtlassianResources,getJiraIssue,getJiraIssueTypeMetaWithFields,getJiraProjectIssueTypesMetadata,searchJiraIssuesUsingJql	2025-02-29	jira-issue-write	official-contract	SUPPORTED' \
+  >>"$source_repo/runtime/compatibility/atlassian.tsv"
 pin_test_release v1.1.6
 if output=$($CLI preflight "$consumer" \
-  --client claude --operation confluence-write --non-interactive 2>&1)
+  --client codex --operation jira-write --non-interactive 2>&1)
 then
-  fail 'missing compatibility schema passed'
+  fail 'impossible provider date passed'
 fi
-assert_contains "$output" 'Result: VERSION_MISMATCH'
+assert_contains "$output" 'Capability state: UNKNOWN'
+assert_contains "$output" 'Result: CONNECTOR_CAPABILITY_REQUIRED'
+
+printf '%s\n' \
+  '# schema=2' \
+  '# endpoint	required_tools	tested_on	capability	evidence	state' \
+  'https://mcp.atlassian.com/v1/mcp/authv2	createJiraIssue,getAccessibleAtlassianResources,getJiraIssue,getJiraIssueTypeMetaWithFields,getJiraProjectIssueTypesMetadata,searchJiraIssuesUsingJql	2026-07-27	jira-issue-write	official-contract	SUPPORTED' \
+  'https://mcp.atlassian.com/v1/mcp/authv2	getConfluencePage,getAccessibleAtlassianResources,createConfluencePage	2026-07-27	confluence-page-parent-write	official-contract	SUPPORTED' \
+  >"$source_repo/runtime/compatibility/atlassian.tsv"
+pin_test_release v1.1.7
+if output=$($CLI preflight "$consumer" \
+  --client codex --operation jira-write --non-interactive 2>&1)
+then
+  fail 'unrelated noncanonical provider row passed'
+fi
+assert_contains "$output" 'Capability state: UNKNOWN'
+assert_contains "$output" 'Result: CONNECTOR_CAPABILITY_REQUIRED'
+
+printf '%s\n' \
+  '# schema=2' \
+  '# endpoint	required_tools	tested_on	capability	evidence	state' \
+  'https://mcp.atlassian.com/v1/mcp/authv2	createJiraIssue,getAccessibleAtlassianResources,getJiraIssue,getJiraIssueTypeMetaWithFields,getJiraProjectIssueTypesMetadata,searchJiraIssuesUsingJql	2026-07-27	jira-issue-write	official-contract	SUPPORTED' \
+  'https://mcp.atlassian.com/v1/mcp/authv2	createConfluencePage,getAccessibleAtlassianResources,getConfluencePage	2026-07-27	confluence-page-parent-write	official-contract	SUPPORTED' \
+  'https://mcp.atlassian.com/v1/mcp/authv2	createConfluencePage,getAccessibleAtlassianResources,getConfluencePage	2026-07-27	confluence-page-parent-write	isolated-pilot	UNSUPPORTED' \
+  >"$source_repo/runtime/compatibility/atlassian.tsv"
+pin_test_release v1.1.8
+if output=$($CLI preflight "$consumer" \
+  --client codex --operation jira-write --non-interactive 2>&1)
+then
+  fail 'duplicate provider pair outside requested capability passed'
+fi
+assert_contains "$output" 'Capability state: UNKNOWN'
+assert_contains "$output" 'Result: CONNECTOR_CAPABILITY_REQUIRED'
 
 invalid_config='SCHEMA_VERSION=1
 PROFILE=standalone

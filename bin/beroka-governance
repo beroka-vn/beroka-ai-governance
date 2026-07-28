@@ -615,6 +615,15 @@ assert_release_file() {
   esac
 }
 
+atlassian_compatibility_schema() {
+  acs_file=$1
+  case "$(sed -n '1p' "$acs_file" 2>/dev/null)" in
+    '# schema=1') printf '%s\n' 1 ;;
+    '# schema=2') printf '%s\n' 2 ;;
+    *) return 1 ;;
+  esac
+}
+
 validate_release_checkout() {
   vrc_checkout=$1 vrc_version=$2
   [ ! -L "$vrc_checkout" ] && [ -d "$vrc_checkout" ] || die GOVERNANCE_NOT_READY "Release is not a regular directory: $vrc_version"
@@ -643,8 +652,8 @@ validate_release_checkout() {
     do
       assert_release_file "$vrc_checkout" "$vrc_routing_file"
     done
-    [ "$(sed -n '1p' \
-      "$vrc_checkout/runtime/compatibility/atlassian.tsv")" = '# schema=1' ] ||
+    atlassian_compatibility_schema \
+      "$vrc_checkout/runtime/compatibility/atlassian.tsv" >/dev/null ||
       die VERSION_MISMATCH 'Unsupported Atlassian compatibility schema'
   fi
   [ "$(sed -n '1p' "$vrc_checkout/VERSION" 2>/dev/null)" = "$vrc_version" ] || die VERSION_MISMATCH 'Installed VERSION does not match requested version'
@@ -1531,47 +1540,156 @@ claude_atlassian_endpoint() {
 codex_probe_complete() {
   cpc_file=$1
   [ -s "$cpc_file" ] || return 1
+  [ "$(codex_probe_file_transport_state "$cpc_file")" = VALID ] || return 1
   if codex_reauthentication_required <"$cpc_file" ||
      codex_http_auth_required <"$cpc_file"
   then
     return 0
   fi
   cpc_response=$(codex_probe_response "$cpc_file") || return 1
-  cpc_record=$(printf '%s\n' "$cpc_response" |
-    codex_atlassian_record) || return 1
+  cpc_kind=$(printf '%s\n' "$cpc_response" |
+    codex_probe_response_kind) || return 1
+  case "$cpc_kind" in
+    error|invalid) return 0 ;;
+    result) ;;
+    *) return 1 ;;
+  esac
+  if cpc_record=$(printf '%s\n' "$cpc_response" |
+    codex_atlassian_record)
+  then
+    :
+  else
+    cpc_record_status=$?
+    [ "$cpc_record_status" -eq 2 ] && return 0
+    return 1
+  fi
   cpc_auth=$(printf '%s\n' "$cpc_record" |
     json_top_level_string authStatus) || return 1
   case "$cpc_auth" in
     notLoggedIn) return 0 ;;
-    oAuth)
-      printf '%s\n' "$cpc_record" |
-        json_top_level_tools >/dev/null
-      ;;
+    oAuth) return 0 ;;
     *) return 1 ;;
   esac
 }
 
 codex_probe_response() {
-  awk '
-    /"id"[[:space:]]*:[[:space:]]*1/ &&
-    (/"result"[[:space:]]*:/ || /"error"[[:space:]]*:/) {
-      response=$0
-    }
-    END {
-      if (response == "") exit 1
-      print response
-    }
-  ' "$1"
+  cpr_file=$1
+  [ "$(codex_probe_file_transport_state "$cpr_file")" = VALID ] || return 1
+  cpr_response=
+  while IFS= read -r cpr_candidate; do
+    cpr_kind=$(printf '%s\n' "$cpr_candidate" |
+      codex_probe_response_kind) || continue
+    case "$cpr_kind" in
+      result|error|invalid) cpr_response=$cpr_candidate ;;
+    esac
+  done <"$cpr_file"
+  [ -n "$cpr_response" ] || return 1
+  printf '%s\n' "$cpr_response"
+}
+
+codex_probe_response_kind() {
+  cprk_response=$(cat)
+  cprk_id1=0
+  cprk_result=0
+  cprk_error=0
+  cprk_tokens=$(printf '%s\n' "$cprk_response" |
+    json_rpc_tokens) || return 1
+  while IFS= read -r cprk_token; do
+    case "$cprk_token" in
+      id1) cprk_id1=1 ;;
+      result) cprk_result=1 ;;
+      error) cprk_error=1 ;;
+    esac
+  done <<EOF
+$cprk_tokens
+EOF
+  if [ "$cprk_id1" -eq 0 ]; then
+    printf '%s\n' unrelated
+    return 0
+  fi
+  case "$cprk_result$cprk_error" in
+    10) printf '%s\n' result ;;
+    01) printf '%s\n' error ;;
+    *) printf '%s\n' invalid ;;
+  esac
 }
 
 codex_probe_response_count() {
-  awk '
-    /"id"[[:space:]]*:[[:space:]]*1/ &&
-    (/"result"[[:space:]]*:/ || /"error"[[:space:]]*:/) {
-      responses++
+  cprc_file=$1
+  cprc_transport=$(codex_probe_file_transport_state "$cprc_file")
+  case "$cprc_transport" in
+    INVALID) printf '%s\n' -1; return 0 ;;
+    INCOMPLETE_SUFFIX) printf '%s\n' -2; return 0 ;;
+  esac
+  cprc_responses=0
+  while IFS= read -r cprc_candidate; do
+    cprc_kind=$(printf '%s\n' "$cprc_candidate" |
+      codex_probe_response_kind) || continue
+    case "$cprc_kind" in
+      result|error|invalid)
+        cprc_responses=$((cprc_responses + 1))
+        ;;
+    esac
+  done <"$cprc_file"
+  printf '%s\n' "$cprc_responses"
+}
+
+codex_probe_file_transport_state() {
+  LC_ALL=C od -An -v -t u1 "$1" 2>/dev/null |
+    awk '{
+      for (i=1; i<=NF; i++) {
+        byte=$i
+        if (remaining) {
+          if (byte < next_min || byte > next_max) invalid=1
+          remaining--
+          next_min=128
+          next_max=191
+        } else if (byte == 0) {
+          invalid=1
+        } else if (byte <= 127) {
+          continue
+        } else if (byte >= 194 && byte <= 223) {
+          remaining=1
+          next_min=128
+          next_max=191
+        } else if (byte == 224) {
+          remaining=2
+          next_min=160
+          next_max=191
+        } else if (byte >= 225 && byte <= 236) {
+          remaining=2
+          next_min=128
+          next_max=191
+        } else if (byte == 237) {
+          remaining=2
+          next_min=128
+          next_max=159
+        } else if (byte >= 238 && byte <= 239) {
+          remaining=2
+          next_min=128
+          next_max=191
+        } else if (byte == 240) {
+          remaining=3
+          next_min=144
+          next_max=191
+        } else if (byte >= 241 && byte <= 243) {
+          remaining=3
+          next_min=128
+          next_max=191
+        } else if (byte == 244) {
+          remaining=3
+          next_min=128
+          next_max=143
+        } else {
+          invalid=1
+        }
+      }
     }
-    END { print responses + 0 }
-  ' "$1"
+    END {
+      if (invalid) print "INVALID"
+      else if (remaining) print "INCOMPLETE_SUFFIX"
+      else print "VALID"
+    }'
 }
 
 codex_probe_stop() {
@@ -1620,6 +1738,7 @@ codex_connector_probe() {
 
   ccp_elapsed=0
   ccp_complete=0
+  ccp_invalid_transport=0
   ccp_seen_responses=0
   printf '%s\n' \
     '{"method":"mcpServerStatus/list","id":1,"params":{"detail":"toolsAndAuthOnly","limit":100}}' \
@@ -1627,11 +1746,31 @@ codex_connector_probe() {
   while [ "$ccp_elapsed" -lt 13 ]; do
     sleep 1
     ccp_elapsed=$((ccp_elapsed + 1))
+    ccp_transport=$(codex_probe_file_transport_state "$ccp_output")
+    case "$ccp_transport" in
+      INVALID)
+        ccp_invalid_transport=1
+        break
+        ;;
+      INCOMPLETE_SUFFIX)
+        if kill -0 "$ccp_pid" 2>/dev/null; then
+          continue
+        fi
+        ccp_invalid_transport=1
+        break
+        ;;
+    esac
     if codex_probe_complete "$ccp_output"; then
       ccp_complete=1
       break
     fi
     ccp_responses=$(codex_probe_response_count "$ccp_output")
+    if [ "$ccp_responses" -lt -1 ]; then
+      continue
+    elif [ "$ccp_responses" -lt 0 ]; then
+      ccp_invalid_transport=1
+      break
+    fi
     if [ "$ccp_responses" -gt "$ccp_seen_responses" ]; then
       ccp_seen_responses=$ccp_responses
       printf '%s\n' \
@@ -1642,7 +1781,13 @@ codex_connector_probe() {
 
   exec 3>&-
   codex_probe_stop "$ccp_pid"
-  if [ "$ccp_complete" -eq 1 ] &&
+  ccp_transport=$(codex_probe_file_transport_state "$ccp_output")
+  if [ "$ccp_transport" != VALID ]; then
+    ccp_invalid_transport=1
+  fi
+  if [ "$ccp_invalid_transport" -eq 1 ]; then
+    CONNECTOR_PROBE_OUTPUT=
+  elif [ "$ccp_complete" -eq 1 ] &&
      ! codex_reauthentication_required <"$ccp_output" &&
      ! codex_http_auth_required <"$ccp_output"
   then
@@ -1651,7 +1796,7 @@ codex_connector_probe() {
     CONNECTOR_PROBE_OUTPUT=$(cat "$ccp_output" 2>/dev/null || :)
   fi
   rm -rf "$ccp_dir"
-  [ "$ccp_complete" -eq 1 ]
+  [ "$ccp_complete" -eq 1 ] && [ "$ccp_invalid_transport" -eq 0 ]
 }
 
 connector_probe() {
@@ -1715,23 +1860,59 @@ connector_probe() {
 }
 
 codex_atlassian_record() {
-  awk '
-    function string_at(start,    i, c, escaped) {
+  car_response=$(cat)
+  car_kind=$(printf '%s\n' "$car_response" |
+    codex_probe_response_kind) || return 1
+  [ "$car_kind" = result ] || return 1
+  if printf '%s\n' "$car_response" | LC_ALL=C awk '
+    function hex_codepoint(hex,    c, i, value) {
+      value=0
+      for (i=1; i<=length(hex); i++) {
+        c=tolower(substr(hex, i, 1))
+        value=value * 16 + index("0123456789abcdef", c) - 1
+      }
+      return value
+    }
+    function string_at(start,    i, c, escaped, unicode, value) {
       parsed_string=""
+      parsed_semantic_string=""
+      semantic_string_comparable=1
       escaped=0
       if (substr(raw, start, 1) != "\"") return 0
       for (i=start+1; i<=length(raw); i++) {
         c=substr(raw, i, 1)
         if (escaped) {
-          parsed_string=parsed_string c
+          if (c == "u") {
+            unicode=substr(raw, i + 1, 4)
+            parsed_string=parsed_string c unicode
+            value=hex_codepoint(unicode)
+            if (semantic_string_comparable &&
+                value >= 32 && value <= 126)
+              parsed_semantic_string=parsed_semantic_string sprintf("%c", value)
+            else
+              semantic_string_comparable=0
+            i+=4
+          } else {
+            parsed_string=parsed_string c
+            if (semantic_string_comparable &&
+                (c == "\"" || c == "\\" || c == "/"))
+              parsed_semantic_string=parsed_semantic_string c
+            else
+              semantic_string_comparable=0
+          }
           escaped=0
         } else if (c == "\\") {
           escaped=1
         } else if (c == "\"") {
+          if (!semantic_string_comparable) parsed_semantic_string=""
           parsed_end=i
           return 1
         } else {
           parsed_string=parsed_string c
+          if (semantic_string_comparable && c ~ /^[ -~]$/)
+            parsed_semantic_string=parsed_semantic_string c
+          else
+            semantic_string_comparable=0
         }
       }
       return 0
@@ -1751,44 +1932,47 @@ codex_atlassian_record() {
       result_depth=0
       data_array_depth=0
       server_depth=0
-      id1_responses=0
       invalid=0
       for (i=1; i<=length(raw); i++) {
         c=substr(raw, i, 1)
         if (c == "\"") {
           if (!string_at(i)) exit 42
           key=parsed_string
+          semantic_key=parsed_semantic_string
           key_end=parsed_end
           separator=nonspace(key_end + 1)
           if (substr(raw, separator, 1) == ":") {
             value_start=nonspace(separator + 1)
-            if (message_depth && depth == message_depth && key == "id") {
-              message_id_count++
-              value_end=nonspace(value_start + 1)
-              if (substr(raw, value_start, 1) == "1" &&
-                  substr(raw, value_end, 1) ~ /[,}]/) {
-                message_id_one=1
-                message_id_valid=1
-              }
-            }
-            if (message_depth && depth == message_depth && key == "result") {
+            if (message_depth && depth == message_depth &&
+                semantic_key == "result") {
               message_result_count++
               if (substr(raw, value_start, 1) == "{")
                 result_open=value_start
               else
                 message_result_invalid=1
             }
-            if (result_depth && depth == result_depth && key == "data") {
+            if (result_depth && depth == result_depth &&
+                semantic_key == "data") {
               message_data_count++
+              if (message_data_count > 1) semantic_conflict=1
               if (substr(raw, value_start, 1) == "[")
                 data_open=value_start
               else
                 message_data_invalid=1
             }
-            if (server_depth && depth == server_depth && key == "name") {
-              server_name_count++
-              if (!string_at(value_start)) server_name_invalid=1
-              else server_name=parsed_string
+            if (server_depth && depth == server_depth) {
+              if (semantic_key == "name") {
+                server_name_count++
+                if (server_name_count > 1) semantic_conflict=1
+                if (!string_at(value_start)) server_name_invalid=1
+                else server_name=parsed_string
+              } else if (semantic_key == "tools") {
+                server_tools_count++
+                if (server_tools_count > 1) semantic_conflict=1
+              } else if (semantic_key == "authStatus") {
+                server_auth_count++
+                if (server_auth_count > 1) semantic_conflict=1
+              }
             }
           }
           i=key_end
@@ -1796,9 +1980,6 @@ codex_atlassian_record() {
           parent_depth=depth
           if (parent_depth == 0 && array_depth == 0) {
             message_depth=1
-            message_id_count=0
-            message_id_one=0
-            message_id_valid=0
             message_result_count=0
             message_result_invalid=0
             message_data_count=0
@@ -1820,11 +2001,16 @@ codex_atlassian_record() {
             server_name=""
             server_name_count=0
             server_name_invalid=0
+            server_tools_count=0
+            server_auth_count=0
           }
         } else if (c == "}") {
           if (server_depth && depth == server_depth) {
-            if (!server_name_invalid && server_name_count == 1 &&
-                server_name == "atlassian") {
+            if (server_name_count > 1 || server_tools_count > 1 ||
+                server_auth_count > 1) {
+              invalid=1
+            } else if (!server_name_invalid && server_name_count == 1 &&
+                       server_name == "atlassian") {
               message_server_matches++
               message_record=substr(raw, server_start, i - server_start + 1)
             }
@@ -1832,16 +2018,12 @@ codex_atlassian_record() {
           }
           if (result_depth && depth == result_depth) result_depth=0
           if (message_depth && depth == message_depth) {
-            if (message_id_one) {
-              id1_responses++
-              if (message_id_count != 1 || !message_id_valid ||
-                  message_result_count != 1 || message_result_invalid ||
-                  message_data_count != 1 || message_data_invalid ||
-                  message_server_matches != 1)
-                invalid=1
-              else
-                record=message_record
-            }
+            if (message_result_count != 1 || message_result_invalid ||
+                message_data_count != 1 || message_data_invalid ||
+                message_server_matches != 1)
+              invalid=1
+            else
+              record=message_record
             message_depth=0
           }
           depth--
@@ -1854,32 +2036,71 @@ codex_atlassian_record() {
           array_depth--
         }
       }
-      if (depth != 0 || array_depth != 0 ||
-          invalid || id1_responses != 1) exit 42
+      if (semantic_conflict) exit 43
+      if (depth != 0 || array_depth != 0 || invalid) exit 42
       print record
     }
   '
+  then
+    return 0
+  else
+    car_status=$?
+    [ "$car_status" -eq 43 ] && return 2
+    return 1
+  fi
 }
 
 json_top_level_string() {
   jtls_key=$1
-  awk -v wanted="$jtls_key" '
-    function string_at(start,    i, c, escaped) {
+  LC_ALL=C awk -v wanted="$jtls_key" '
+    function hex_codepoint(hex,    c, i, value) {
+      value=0
+      for (i=1; i<=length(hex); i++) {
+        c=tolower(substr(hex, i, 1))
+        value=value * 16 + index("0123456789abcdef", c) - 1
+      }
+      return value
+    }
+    function string_at(start,    i, c, escaped, unicode, value) {
       parsed_string=""
+      parsed_semantic_string=""
+      semantic_string_comparable=1
       escaped=0
       if (substr(raw, start, 1) != "\"") return 0
       for (i=start+1; i<=length(raw); i++) {
         c=substr(raw, i, 1)
         if (escaped) {
-          parsed_string=parsed_string c
+          if (c == "u") {
+            unicode=substr(raw, i + 1, 4)
+            parsed_string=parsed_string c unicode
+            value=hex_codepoint(unicode)
+            if (semantic_string_comparable &&
+                value >= 32 && value <= 126)
+              parsed_semantic_string=parsed_semantic_string sprintf("%c", value)
+            else
+              semantic_string_comparable=0
+            i+=4
+          } else {
+            parsed_string=parsed_string c
+            if (semantic_string_comparable &&
+                (c == "\"" || c == "\\" || c == "/"))
+              parsed_semantic_string=parsed_semantic_string c
+            else
+              semantic_string_comparable=0
+          }
           escaped=0
         } else if (c == "\\") {
           escaped=1
         } else if (c == "\"") {
+          if (!semantic_string_comparable) parsed_semantic_string=""
           parsed_end=i
           return 1
         } else {
           parsed_string=parsed_string c
+          if (semantic_string_comparable && c ~ /^[ -~]$/)
+            parsed_semantic_string=parsed_semantic_string c
+          else
+            semantic_string_comparable=0
         }
       }
       return 0
@@ -1905,9 +2126,10 @@ json_top_level_string() {
         } else if (c == "\"") {
           if (!string_at(i)) exit 42
           key=parsed_string
+          semantic_key=parsed_semantic_string
           key_end=parsed_end
           separator=nonspace(key_end + 1)
-          if (depth == 1 && key == wanted &&
+          if (depth == 1 && semantic_key == wanted &&
               substr(raw, separator, 1) == ":") {
             value_start=nonspace(separator + 1)
             if (!string_at(value_start)) exit 42
@@ -1925,7 +2147,53 @@ json_top_level_string() {
 
 json_top_level_object() {
   jtlo_key=$1
-  awk -v wanted="$jtlo_key" '
+  LC_ALL=C awk -v wanted="$jtlo_key" '
+    function hex_codepoint(hex,    c, i, value) {
+      value=0
+      for (i=1; i<=length(hex); i++) {
+        c=tolower(substr(hex, i, 1))
+        value=value * 16 + index("0123456789abcdef", c) - 1
+      }
+      return value
+    }
+    function string_at(start,    i, c, escaped, unicode, value) {
+      parsed_semantic_string=""
+      semantic_string_comparable=1
+      escaped=0
+      if (substr(raw, start, 1) != "\"") return 0
+      for (i=start+1; i<=length(raw); i++) {
+        c=substr(raw, i, 1)
+        if (escaped) {
+          if (c == "u") {
+            unicode=substr(raw, i + 1, 4)
+            value=hex_codepoint(unicode)
+            if (semantic_string_comparable &&
+                value >= 32 && value <= 126)
+              parsed_semantic_string=parsed_semantic_string sprintf("%c", value)
+            else
+              semantic_string_comparable=0
+            i+=4
+          } else if (semantic_string_comparable &&
+                     (c == "\"" || c == "\\" || c == "/")) {
+            parsed_semantic_string=parsed_semantic_string c
+          } else {
+            semantic_string_comparable=0
+          }
+          escaped=0
+        } else if (c == "\\") {
+          escaped=1
+        } else if (c == "\"") {
+          if (!semantic_string_comparable) parsed_semantic_string=""
+          parsed_end=i
+          return 1
+        } else if (semantic_string_comparable && c ~ /^[ -~]$/) {
+          parsed_semantic_string=parsed_semantic_string c
+        } else {
+          semantic_string_comparable=0
+        }
+      }
+      return 0
+    }
     {
       if (NR > 1) raw=raw "\n"
       raw=raw $0
@@ -1933,43 +2201,27 @@ json_top_level_object() {
     END {
       length_raw=length(raw)
       depth=0
-      in_string=0
-      escaped=0
       matches=0
       for (i=1; i<=length_raw; i++) {
         c=substr(raw, i, 1)
-        if (in_string) {
-          if (escaped) escaped=0
-          else if (c == "\\") escaped=1
-          else if (c == "\"") in_string=0
-          continue
-        }
-        if (c == "{") {
+        if (c == "\"") {
+          if (!string_at(i)) exit 42
+          j=parsed_end
+          if (depth != 1) {
+            i=j
+            continue
+          }
+          key=parsed_semantic_string
+        } else if (c == "{") {
           depth++
           continue
-        }
-        if (c == "}") {
+        } else if (c == "}") {
           depth--
           continue
+        } else {
+          continue
         }
-        if (c != "\"" || depth != 1) continue
 
-        key=""
-        key_escaped=0
-        for (j=i+1; j<=length_raw; j++) {
-          d=substr(raw, j, 1)
-          if (key_escaped) {
-            key=key d
-            key_escaped=0
-          } else if (d == "\\") {
-            key_escaped=1
-          } else if (d == "\"") {
-            break
-          } else {
-            key=key d
-          }
-        }
-        if (j > length_raw) exit 42
         k=j+1
         while (substr(raw, k, 1) ~ /[[:space:]]/) k++
         if (substr(raw, k, 1) != ":") {
@@ -2019,55 +2271,267 @@ json_top_level_object() {
 }
 
 json_top_level_keys() {
-  awk '
+  jtlk_mode=${1:-objects}
+  case "$jtlk_mode" in
+    objects|rpc) ;;
+    *) return 1 ;;
+  esac
+  LC_ALL=C awk -v parse_mode="$jtlk_mode" '
+    function skip_space(    c) {
+      while (position <= object_length) {
+        c=substr(object, position, 1)
+        if (c != " " && c != "\t" && c != "\r" && c != "\n") break
+        position++
+      }
+    }
+    function hex_codepoint(hex,    c, i, value) {
+      value=0
+      for (i=1; i<=length(hex); i++) {
+        c=tolower(substr(hex, i, 1))
+        value=value * 16 + index("0123456789abcdef", c) - 1
+      }
+      return value
+    }
+    function append_semantic_character(c) {
+      if (!semantic_key_comparable) return
+      if (c ~ /^[ -~]$/)
+        parsed_semantic_key=parsed_semantic_key c
+      else
+        semantic_key_comparable=0
+    }
+    function append_semantic_codepoint(hex,    value) {
+      if (!semantic_key_comparable) return
+      value=hex_codepoint(hex)
+      if (value >= 32 && value <= 126)
+        parsed_semantic_key=parsed_semantic_key sprintf("%c", value)
+      else
+        semantic_key_comparable=0
+    }
+    function parse_string(allow_escape,    c, escape, i, unicode) {
+      parsed_string=""
+      parsed_semantic_key=""
+      semantic_key_comparable=1
+      if (substr(object, position, 1) != "\"") return 0
+      position++
+      while (position <= object_length) {
+        c=substr(object, position, 1)
+        if (c == "\"") {
+          if (!semantic_key_comparable) parsed_semantic_key=""
+          position++
+          return 1
+        }
+        if (c ~ /[[:cntrl:]]/ && c != sprintf("%c", 127)) return 0
+        if (c != "\\") {
+          parsed_string=parsed_string c
+          append_semantic_character(c)
+          position++
+          continue
+        }
+        if (!allow_escape) return 0
+        position++
+        if (position > object_length) return 0
+        escape=substr(object, position, 1)
+        if (escape == "\"" || escape == "\\" || escape == "/" ||
+            escape == "b" || escape == "f" || escape == "n" ||
+            escape == "r" || escape == "t") {
+          parsed_string=parsed_string "\\" escape
+          if (escape == "\"" || escape == "\\" || escape == "/")
+            append_semantic_character(escape)
+          else
+            semantic_key_comparable=0
+          position++
+          continue
+        }
+        if (escape != "u") return 0
+        for (i=1; i<=4; i++) {
+          if (substr(object, position + i, 1) !~ /^[0-9A-Fa-f]$/)
+            return 0
+        }
+        unicode=substr(object, position + 1, 4)
+        parsed_string=parsed_string "\\u" unicode
+        append_semantic_codepoint(unicode)
+        position+=5
+      }
+      return 0
+    }
+    function parse_json_number(    c) {
+      c=substr(object, position, 1)
+      if (c == "-") {
+        position++
+        c=substr(object, position, 1)
+      }
+      if (c == "0") {
+        position++
+        if (substr(object, position, 1) ~ /^[0-9]$/) return 0
+      } else if (c ~ /^[1-9]$/) {
+        while (substr(object, position, 1) ~ /^[0-9]$/) position++
+      } else {
+        return 0
+      }
+      if (substr(object, position, 1) == ".") {
+        position++
+        if (substr(object, position, 1) !~ /^[0-9]$/) return 0
+        while (substr(object, position, 1) ~ /^[0-9]$/) position++
+      }
+      c=substr(object, position, 1)
+      if (c == "e" || c == "E") {
+        position++
+        c=substr(object, position, 1)
+        if (c == "+" || c == "-") position++
+        if (substr(object, position, 1) !~ /^[0-9]$/) return 0
+        while (substr(object, position, 1) ~ /^[0-9]$/) position++
+      }
+      return 1
+    }
+    function parse_json_literal(literal) {
+      if (substr(object, position, length(literal)) != literal) return 0
+      position+=length(literal)
+      return 1
+    }
+    function parse_json_array(    separator) {
+      if (substr(object, position, 1) != "[") return 0
+      position++
+      skip_space()
+      if (substr(object, position, 1) == "]") {
+        position++
+        return 1
+      }
+      while (position <= object_length) {
+        if (!parse_json_value()) return 0
+        skip_space()
+        separator=substr(object, position, 1)
+        if (separator == "]") {
+          position++
+          return 1
+        }
+        if (separator != ",") return 0
+        position++
+        skip_space()
+        if (substr(object, position, 1) == "]") return 0
+      }
+      return 0
+    }
+    function parse_json_object(    separator) {
+      if (substr(object, position, 1) != "{") return 0
+      position++
+      skip_space()
+      if (substr(object, position, 1) == "}") {
+        position++
+        return 1
+      }
+      while (position <= object_length) {
+        if (!parse_string(1)) return 0
+        skip_space()
+        if (substr(object, position, 1) != ":") return 0
+        position++
+        if (!parse_json_value()) return 0
+        skip_space()
+        separator=substr(object, position, 1)
+        if (separator == "}") {
+          position++
+          return 1
+        }
+        if (separator != ",") return 0
+        position++
+        skip_space()
+        if (substr(object, position, 1) == "}") return 0
+      }
+      return 0
+    }
+    function parse_json_value(    c) {
+      skip_space()
+      c=substr(object, position, 1)
+      if (c == "{") return parse_json_object()
+      if (c == "[") return parse_json_array()
+      if (c == "\"") return parse_string(1)
+      if (c == "t") return parse_json_literal("true")
+      if (c == "f") return parse_json_literal("false")
+      if (c == "n") return parse_json_literal("null")
+      return parse_json_number()
+    }
     {
       if (NR > 1) object=object "\n"
       object=object $0
     }
     END {
-      depth=0
-      roots=0
-      invalid=0
-      for (i=1; i<=length(object); i++) {
-        c=substr(object, i, 1)
-        if (depth == 0 && c ~ /[[:space:]]/) {
-          continue
-        } else if (depth == 0 && c == "{" && roots == 0) {
-          depth++
-          roots++
-        } else if (depth == 0) {
-          invalid=1
-        } else if (c == "{") {
-          depth++
-        } else if (c == "}") {
-          depth--
-          if (depth < 0) invalid=1
-        } else if (c == "\"") {
-          key=""
-          key_escaped=0
-          for (j=i+1; j<=length(object); j++) {
-            d=substr(object, j, 1)
-            if (key_escaped) {
-              key=key d
-              key_escaped=0
-            } else if (d == "\\") {
-              key_escaped=1
-            } else if (d == "\"") {
-              break
-            } else {
-              key=key d
-            }
+      object_length=length(object)
+      position=1
+      skip_space()
+      if (substr(object, position, 1) != "{") exit 42
+      position++
+      skip_space()
+      if (substr(object, position, 1) == "}") {
+        position++
+      } else {
+        while (position <= object_length) {
+          if (parse_mode == "rpc") {
+            if (!parse_string(1)) exit 42
+          } else if (!parse_string(0)) {
+            exit 42
           }
-          if (j > length(object)) exit 42
-          k=j+1
-          while (substr(object, k, 1) ~ /[[:space:]]/) k++
-          if (depth == 1 && substr(object, k, 1) == ":") print key
-          i=j
+          key=parsed_string
+          semantic_key=parsed_semantic_key
+          if (parse_mode == "rpc") {
+            if (semantic_key == "id" || semantic_key == "result" ||
+                semantic_key == "error") {
+              if (rpc_seen[semantic_key]) exit 42
+              rpc_seen[semantic_key]=1
+            }
+          } else {
+            if (key !~ /^[A-Za-z][A-Za-z0-9_]*$/) exit 42
+            if (seen[key]) exit 42
+            seen[key]=1
+            keys[++key_count]=key
+          }
+          skip_space()
+          if (substr(object, position, 1) != ":") exit 42
+          position++
+          skip_space()
+          value_start=position
+          if (parse_mode == "rpc") {
+            if (!parse_json_value()) exit 42
+          } else if (!parse_json_object()) {
+            exit 42
+          }
+          if (parse_mode == "rpc" && semantic_key == "id" &&
+              substr(object, value_start, position - value_start) == "1")
+            rpc_id1=1
+          skip_space()
+          separator=substr(object, position, 1)
+          if (separator == "}") {
+            position++
+            break
+          }
+          if (separator != ",") exit 42
+          position++
+          skip_space()
+          if (substr(object, position, 1) == "}") exit 42
         }
       }
-      if (invalid || roots != 1 || depth != 0) exit 42
+      skip_space()
+      if (position <= object_length) exit 42
+      if (parse_mode == "rpc") {
+        if (rpc_id1) print "id1"
+        if (rpc_seen["result"]) print "result"
+        if (rpc_seen["error"]) print "error"
+      } else {
+        for (i=1; i<=key_count; i++) print keys[i]
+      }
     }
   '
+}
+
+json_rpc_tokens() {
+  json_top_level_keys rpc
+}
+
+json_validate_object() {
+  jvo_keys=$({
+    printf '%s' '{"object":'
+    cat
+    printf '%s\n' '}'
+  } | json_top_level_keys) || return 1
+  [ "$jvo_keys" = object ]
 }
 
 json_top_level_tools() {
@@ -2077,6 +2541,8 @@ json_top_level_tools() {
 codex_reauthentication_required() {
   crr_matches=0
   while IFS= read -r crr_message; do
+    printf '%s\n' "$crr_message" |
+      json_validate_object >/dev/null || continue
     crr_method=$(printf '%s\n' "$crr_message" |
       json_top_level_string method) || continue
     [ "$crr_method" = mcpServer/startupStatus/updated ] || continue
@@ -2129,12 +2595,30 @@ inventory_has_tool() {
   esac
 }
 
+cursor_tool_names() {
+  awk '
+    {
+      line=$0
+      sub(/^[[:space:]]*[-*]?[[:space:]]*/, "", line)
+      if (match(line, /^[A-Za-z][A-Za-z0-9_]*/)) {
+        name=substr(line, RSTART, RLENGTH)
+        rest=substr(line, RLENGTH + 1)
+        if (rest == "" ||
+            rest ~ /^[[:space:]]*\([^()]*\)[[:space:]]*$/) print name
+      }
+    }
+  '
+}
+
 connector_inventory() {
   ci_client=$1
+  ci_mode=${2:-provider}
   CAPABILITY_INVENTORY=
   CAPABILITY_INVENTORY_COMPLETE=0
   CAPABILITY_INVENTORY_FORMAT=
-  CAPABILITY_TOOLSET=UNAVAILABLE
+  if [ "$ci_mode" = legacy ]; then
+    CAPABILITY_TOOLSET=UNAVAILABLE
+  fi
   case "$ci_client" in
     codex)
       connector_probe codex || return 1
@@ -2150,14 +2634,21 @@ connector_inventory() {
       ;;
     cursor)
       connector_probe cursor || return 1
-      [ "$CONNECTOR_PROBE_TOOLS_OK" -eq 1 ] &&
+      [ "$CONNECTOR_PROBE_TOOLS_OK" -eq 1 ] || return 1
+      if [ "$ci_mode" = legacy ]; then
         [ -n "$CONNECTOR_PROBE_TOOLS" ] || return 1
-      CAPABILITY_INVENTORY=$CONNECTOR_PROBE_TOOLS
-      CAPABILITY_INVENTORY_FORMAT=text
+        CAPABILITY_INVENTORY=$CONNECTOR_PROBE_TOOLS
+        CAPABILITY_INVENTORY_FORMAT=text
+      else
+        CAPABILITY_INVENTORY=$(printf '%s\n' "$CONNECTOR_PROBE_TOOLS" |
+          cursor_tool_names) || return 1
+        CAPABILITY_INVENTORY_FORMAT=json
+      fi
       CAPABILITY_INVENTORY_COMPLETE=1
       ;;
   esac
   [ "$CAPABILITY_INVENTORY_COMPLETE" -eq 1 ] || return 0
+  [ "$ci_mode" = legacy ] || return 0
   CAPABILITY_TOOLSET=
   for ci_tool in \
     createConfluencePage createJiraIssue getConfluencePage getJiraIssue
@@ -2194,12 +2685,7 @@ connector_health() {
         json_top_level_string authStatus) || return 2
       case "$ch_auth" in
         notLoggedIn) return 1 ;;
-        oAuth)
-          ch_tools=$(printf '%s\n' "$ch_record" |
-            json_top_level_tools) || return 2
-          [ -n "$ch_tools" ] && return 0
-          return 1
-          ;;
+        oAuth) return 0 ;;
         *) return 2 ;;
       esac
       ;;
@@ -2212,13 +2698,7 @@ connector_health() {
       ;;
     cursor)
       case "$CONNECTOR_PROBE_STATE" in
-        ready|connected)
-          [ "$CONNECTOR_PROBE_TOOLS_OK" -eq 0 ] || return 0
-          case "$CONNECTOR_PROBE_TOOLS" in
-            *auth*|*Auth*|*login*|*401*|*403*) return 1 ;;
-            *) return 2 ;;
-          esac
-          ;;
+        ready|connected) return 0 ;;
         *auth*|*login*|*401*|*403*) return 1 ;;
         *) return 2 ;;
       esac
@@ -2270,7 +2750,7 @@ runtime_capability() {
   esac
 }
 
-compatibility_capability() {
+legacy_compatibility_capability() {
   cc_client=$1 cc_capability=$2
   cc_file=$RELEASE_DIR/runtime/compatibility/atlassian.tsv
   [ "$(sed -n '1p' "$cc_file" 2>/dev/null)" = '# schema=1' ] || return 1
@@ -2319,19 +2799,154 @@ compatibility_capability() {
     ' "$cc_file"
 }
 
-resolve_capability() {
+load_provider_capability() {
+  lpc_capability=$1
+  lpc_file=$RELEASE_DIR/runtime/compatibility/atlassian.tsv
+  CAPABILITY_REQUIRED_TOOLS=
+  CAPABILITY_PROVIDER_STATE=UNKNOWN
+  lpc_row=$(LC_ALL=C awk -F '\t' \
+    -v endpoint="$ATLASSIAN_MCP_URL" \
+    -v capability="$lpc_capability" '
+      /^[[:space:]]*$/ || /^#/ { next }
+      {
+        allowed["createConfluencePage"]=1
+        allowed["createJiraIssue"]=1
+        allowed["getAccessibleAtlassianResources"]=1
+        allowed["getConfluencePage"]=1
+        allowed["getJiraIssue"]=1
+        allowed["getJiraIssueTypeMetaWithFields"]=1
+        allowed["getJiraProjectIssueTypesMetadata"]=1
+        allowed["searchJiraIssuesUsingJql"]=1
+        tool_count=split($2, tools, ",")
+        for (i=1; i<=tool_count; i++) {
+          if (!allowed[tools[i]] ||
+              tool_seen[tools[i]] == NR ||
+              (i > 1 && tools[i-1] >= tools[i])) invalid=1
+          tool_seen[tools[i]]=NR
+        }
+        date_count=split($3, date, "-")
+        year=date[1] + 0
+        month=date[2] + 0
+        day=date[3] + 0
+        month_days[1]=31
+        month_days[2]=28 + (year % 4 == 0 &&
+          (year % 100 != 0 || year % 400 == 0))
+        month_days[3]=31
+        month_days[4]=30
+        month_days[5]=31
+        month_days[6]=30
+        month_days[7]=31
+        month_days[8]=31
+        month_days[9]=30
+        month_days[10]=31
+        month_days[11]=30
+        month_days[12]=31
+        if (NF != 6 ||
+            $1 != endpoint ||
+            $2 !~ /^[A-Za-z][A-Za-z0-9_]*(,[A-Za-z][A-Za-z0-9_]*)*$/ ||
+            $3 !~ /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/ ||
+            date_count != 3 ||
+            year < 1 ||
+            month < 1 || month > 12 ||
+            day < 1 || day > month_days[month] ||
+            $4 !~ /^(jira-issue-write|confluence-page-parent-write|jira-board-verification|confluence-folder-parent-write)$/ ||
+            $5 !~ /^(official-contract|isolated-pilot)$/ ||
+            $6 !~ /^(SUPPORTED|UNSUPPORTED)$/) invalid=1
+        pair=$1 SUBSEP $4
+        if (++pair_count[pair] > 1) invalid=1
+        if ($1 == endpoint && $4 == capability) {
+          matches++
+          row=$2 "\t" $6
+        }
+      }
+      END {
+        if (invalid || matches != 1) exit 1
+        print row
+      }
+    ' "$lpc_file") || return 1
+  lpc_old_ifs=$IFS
+  IFS="$(printf '\t')"
+  set -- $lpc_row
+  IFS=$lpc_old_ifs
+  [ "$#" -eq 2 ] || return 1
+  CAPABILITY_REQUIRED_TOOLS=$1
+  CAPABILITY_PROVIDER_STATE=$2
+}
+
+inventory_has_required_tools() {
+  ihrr_old_ifs=$IFS
+  IFS=,
+  set -- $CAPABILITY_REQUIRED_TOOLS
+  IFS=$ihrr_old_ifs
+  for ihrr_tool in "$@"; do
+    inventory_has_tool "$ihrr_tool" || return 1
+  done
+}
+
+resolve_legacy_capability() {
   rcap_client=$1 rcap_capability=$2
-  connector_inventory "$rcap_client" || {
-    CAPABILITY_STATE=UNKNOWN
-    return 0
-  }
+  CAPABILITY_STATE=UNKNOWN
+  CAPABILITY_EVIDENCE_SOURCE=NONE
+  CAPABILITY_INVENTORY_STATE=UNAVAILABLE
+  connector_inventory "$rcap_client" legacy || return 0
+  if [ "$CAPABILITY_INVENTORY_COMPLETE" -eq 1 ]; then
+    CAPABILITY_INVENTORY_STATE=COMPLETE
+  fi
   runtime_capability "$rcap_capability" || return 1
-  [ "$CAPABILITY_STATE" = UNKNOWN ] || return 0
-  rcap_compat=$(compatibility_capability \
+  if [ "$CAPABILITY_STATE" != UNKNOWN ]; then
+    CAPABILITY_EVIDENCE_SOURCE=RUNTIME_INVENTORY
+    return 0
+  fi
+  rcap_compat=$(legacy_compatibility_capability \
     "$rcap_client" "$rcap_capability") || rcap_compat=
   case "$rcap_compat" in
-    SUPPORTED|UNSUPPORTED) CAPABILITY_STATE=$rcap_compat ;;
+    SUPPORTED|UNSUPPORTED)
+      CAPABILITY_STATE=$rcap_compat
+      CAPABILITY_EVIDENCE_SOURCE=LEGACY_COMPATIBILITY
+      ;;
     *) CAPABILITY_STATE=UNKNOWN ;;
+  esac
+}
+
+resolve_provider_capability() {
+  rpc_client=$1 rpc_capability=$2
+  CAPABILITY_STATE=UNKNOWN
+  CAPABILITY_EVIDENCE_SOURCE=NONE
+  CAPABILITY_INVENTORY_STATE=UNAVAILABLE
+  case "$rpc_capability" in
+    jira-board-verification|confluence-folder-parent-write) return 0 ;;
+  esac
+  load_provider_capability "$rpc_capability" || return 0
+  [ "$CAPABILITY_PROVIDER_STATE" = SUPPORTED ] || {
+    CAPABILITY_STATE=UNSUPPORTED
+    CAPABILITY_EVIDENCE_SOURCE=PROVIDER_CONTRACT
+    return 0
+  }
+  connector_inventory "$rpc_client" || return 0
+  if [ "$CAPABILITY_INVENTORY_COMPLETE" -eq 1 ]; then
+    CAPABILITY_INVENTORY_STATE=COMPLETE
+    inventory_has_required_tools || {
+      CAPABILITY_STATE=UNSUPPORTED
+      CAPABILITY_EVIDENCE_SOURCE=RUNTIME_INVENTORY
+      return 0
+    }
+  fi
+  CAPABILITY_STATE=SUPPORTED
+  CAPABILITY_EVIDENCE_SOURCE=PROVIDER_CONTRACT
+}
+
+resolve_capability() {
+  rcap_client=$1 rcap_capability=$2
+  rcap_schema=$(atlassian_compatibility_schema \
+    "$RELEASE_DIR/runtime/compatibility/atlassian.tsv") || {
+    CAPABILITY_STATE=UNKNOWN
+    CAPABILITY_EVIDENCE_SOURCE=NONE
+    CAPABILITY_INVENTORY_STATE=UNAVAILABLE
+    return 0
+  }
+  case "$rcap_schema" in
+    1) resolve_legacy_capability "$rcap_client" "$rcap_capability" ;;
+    2) resolve_provider_capability "$rcap_client" "$rcap_capability" ;;
   esac
 }
 
@@ -2535,6 +3150,8 @@ print_preflight_result() {
   printf '%s\n' \
     "Capability: $PREFLIGHT_CAPABILITY" \
     "Capability state: $CAPABILITY_STATE" \
+    "Capability evidence: $CAPABILITY_EVIDENCE_SOURCE" \
+    "Runtime inventory: $CAPABILITY_INVENTORY_STATE" \
     'Result: PASS'
 }
 
@@ -2646,7 +3263,9 @@ cmd_preflight() {
       printf '%s\n' \
         "Operation: $pf_operation" \
         "Capability: $PREFLIGHT_CAPABILITY" \
-        "Capability state: $CAPABILITY_STATE"
+        "Capability state: $CAPABILITY_STATE" \
+        "Capability evidence: $CAPABILITY_EVIDENCE_SOURCE" \
+        "Runtime inventory: $CAPABILITY_INVENTORY_STATE"
       routing_cleanup
       die CONNECTOR_CAPABILITY_REQUIRED
     fi
