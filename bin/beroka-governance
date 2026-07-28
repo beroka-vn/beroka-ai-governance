@@ -47,7 +47,7 @@ pass_result() {
 usage() {
   printf '%s\n' \
     'Usage:' \
-    '  beroka-governance bootstrap REPO [--client codex|claude|cursor] [--version vX.Y.Z] [--non-interactive]' \
+    '  beroka-governance bootstrap REPO [--client codex|claude|cursor] [--version vX.Y.Z] [--upgrade] [--non-interactive]' \
     '  beroka-governance install VERSION' \
     '  beroka-governance register REPO --version VERSION --client codex|claude|cursor [--dry-run]' \
     '  beroka-governance update REPO --to VERSION [--dry-run]' \
@@ -792,7 +792,7 @@ cmd_bootstrap() {
   [ "$#" -ge 1 ] || { usage >&2; exit 2; }
   bs_requested=$1
   shift
-  bs_client= bs_version= bs_non_interactive=0
+  bs_client= bs_version= bs_non_interactive=0 bs_upgrade=0
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --client)
@@ -819,6 +819,11 @@ cmd_bootstrap() {
         bs_non_interactive=1
         shift
         ;;
+      --upgrade)
+        [ "$bs_upgrade" -eq 0 ] || { usage >&2; exit 2; }
+        bs_upgrade=1
+        shift
+        ;;
       *) usage >&2; exit 2 ;;
     esac
   done
@@ -831,16 +836,26 @@ cmd_bootstrap() {
     [ "$bs_interactive" -eq 1 ] || { usage >&2; exit 2; }
     bs_client=$(detect_client)
   fi
-  require_client "$bs_client"
 
   bs_repo=$(canonical_repo "$bs_requested")
   assert_safe_managed_paths "$bs_repo"
+  [ "$bs_upgrade" -eq 0 ] ||
+    [ -f "$bs_repo/.beroka-governance.lock" ] ||
+    die GOVERNANCE_NOT_READY \
+      'Bootstrap --upgrade requires an existing registration'
+  require_client "$bs_client"
+  bs_before=$(managed_repo_snapshot "$bs_repo")
   if [ -f "$bs_repo/.beroka-governance.lock" ]; then
     read_lock "$bs_repo"
     resolve_canonical_remote "$bs_repo" "$LOCK_REPOSITORY"
     if [ -n "$bs_version" ] && [ "$bs_version" != "$LOCK_VERSION" ]; then
-      die VERSION_MISMATCH \
-        "Repository is pinned to $LOCK_VERSION; use update to change it"
+      [ "$bs_upgrade" -eq 1 ] ||
+        die VERSION_MISMATCH \
+          "Repository is pinned to $LOCK_VERSION; use --upgrade to change it"
+      SUPPRESS_PASS_RESULT=1
+      cmd_repin update "$bs_repo" --to "$bs_version"
+      read_lock "$bs_repo"
+      resolve_canonical_remote "$bs_repo" "$LOCK_REPOSITORY"
     fi
     bs_version=$LOCK_VERSION
     bs_expected_commit=$LOCK_COMMIT
@@ -872,7 +887,6 @@ cmd_bootstrap() {
     fi
   fi
 
-  bs_before=$(managed_repo_snapshot "$bs_repo")
   SUPPRESS_PASS_RESULT=1
   cmd_install "$bs_version"
   [ "$RELEASE_COMMIT" = "$bs_expected_commit" ] ||
@@ -1224,6 +1238,28 @@ cmd_register() {
   pass_result
 }
 
+semver_not_older() {
+  awk -v current="${1#v}" -v target="${2#v}" '
+    function canonical(component) {
+      sub(/^0+/, "", component)
+      return component == "" ? "0" : component
+    }
+    BEGIN {
+      split(current, c, ".")
+      split(target, t, ".")
+      for (i = 1; i <= 3; i++) {
+        c[i] = canonical(c[i])
+        t[i] = canonical(t[i])
+        if (length(t[i]) != length(c[i]))
+          exit length(t[i]) > length(c[i]) ? 0 : 1
+        if (t[i] != c[i])
+          exit ("x" t[i]) > ("x" c[i]) ? 0 : 1
+      }
+      exit 0
+    }
+  '
+}
+
 cmd_repin() {
   mode=$1 requested=$2 to_flag=$3 version=$4 dry_run=${5:-}
   [ "$to_flag" = --to ] || { usage >&2; exit 2; }
@@ -1240,10 +1276,16 @@ cmd_repin() {
   target_major=${version#v}
   target_major=${target_major%%.*}
   [ "$current_major" = "$target_major" ] || die VERSION_MISMATCH 'Target version has a different major version'
+  if [ "$mode" = update ]; then
+    semver_not_older "$LOCK_VERSION" "$version" ||
+      die VERSION_MISMATCH \
+        'Update target is older than the current version; use rollback'
+  fi
 
   target=$DATA_ROOT/releases/$version
   if [ ! -e "$target" ] && [ ! -L "$target" ] && [ "$dry_run" = --dry-run ]; then
-    printf '%s\n' "INSTALL $version" 'Result: PASS'
+    printf '%s\n' "INSTALL $version"
+    pass_result
     return
   fi
 
@@ -1257,7 +1299,8 @@ cmd_repin() {
   if [ "$dry_run" = --dry-run ]; then
     tx_print_actions
     tx_commit
-    printf '%s\n' "Mode: $mode" "Version: $version" 'Result: PASS'
+    printf '%s\n' "Mode: $mode" "Version: $version"
+    pass_result
     return
   fi
 
@@ -1268,7 +1311,8 @@ cmd_repin() {
   if [ "$TX_RELEASE_NEW" -eq 1 ]; then activate_cli; fi
   apply_registry
   tx_commit
-  printf '%s\n' "Repository: $repository" "Version: $version" 'Result: PASS'
+  printf '%s\n' "Repository: $repository" "Version: $version"
+  pass_result
 }
 
 cmd_unregister() {
