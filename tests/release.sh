@@ -57,12 +57,6 @@ require_text PACKAGE-DESIGN.md '`v1.0.0` and `v1.0.1`'
 require_text PACKAGE-DESIGN.md 'remain immutable but are superseded for onboarding.'
 reject_text PACKAGE-DESIGN.md \
   'establishes `v1.0.0` as the first supported team release'
-require_text handbook.md 'release=v1.0.2'
-require_text PACKAGE-DESIGN.md 'VERSION=v1.0.2'
-require_text PACKAGE-DESIGN.md 'beroka-governance install v1.0.2'
-require_text PACKAGE-DESIGN.md \
-  'beroka-governance register /path/to/repo --version v1.0.2 --client codex'
-
 require_text README.md 'Backend and Frontend repositories'
 require_text handbook.md 'Chuyển quyết định cho developer'
 require_text README.md 'gh release download'
@@ -235,6 +229,27 @@ require_text PACKAGE-DESIGN.md 'checked-out HEAD each equal the embedded commit'
 [ "$(first_code_block_after_heading README.md '## Quick start')" = \
   "$interactive_launcher" ] ||
   fail 'README Quick start does not begin with the exact interactive launcher'
+
+for forbidden in \
+  '.beroka-governance.lock' \
+  'Repository pull request: REQUIRED' \
+  'git add AGENTS.md' \
+  'git commit' \
+  'git push'
+do
+  if first_code_block_after_heading README.md '## Quick start' |
+    grep -F "$forbidden" >/dev/null
+  then
+    fail "Quick start contains repository mutation: $forbidden"
+  fi
+done
+
+for file in README.md handbook.md PACKAGE-DESIGN.md governance.md workflow.md; do
+  reject_text "$file" 'pins each registered repository'
+  reject_text "$file" 'Repository entrypoints and the lock are shared through Git.'
+  reject_text "$file" 'resulting application-repository diff is reviewed'
+  reject_text "$file" 'reviewed through its normal pull-request workflow'
+done
 [ "$(first_code_block_after_heading \
   handbook.md '### Bootstrap và install')" = "$interactive_launcher" ] ||
   fail 'handbook Bootstrap và install does not begin with the exact interactive launcher'

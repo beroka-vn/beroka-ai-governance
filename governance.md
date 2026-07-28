@@ -1,5 +1,19 @@
 # Governance for Developers and AI Agents
 
+## Governance installation boundary
+
+The active verified release and enabled clients are user-owned. The Central repository catalog resolves routing from the canonical GitHub origin; catalog changes require an explicitly authorized governance-repository task.
+
+`Application repository changes: NONE`
+
+`Legacy repository metadata: PRESENT_IGNORED`
+
+Legacy tracked governance files stay untouched and have no effect on active
+release selection or routing. Repository cleanup is separate owner-authorized
+work. Cursor Individual users add the printed rule once in Cursor Settings > Rules and confirm it; the CLI does not edit Cursor's internal settings.
+
+CLI hard-enforces installation, release integrity, catalog routing, connector, authentication, and operation preflight. Agent instructions govern workflow behavior unless CI, hooks, branch protection, or platform policy provides hard enforcement.
+
 ## Roles and accountability
 
 | Role | Primary responsibility |

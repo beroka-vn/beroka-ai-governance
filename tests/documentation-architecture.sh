@@ -84,4 +84,21 @@ require_text examples/homepage-market-overview-epic-packet.md \
 require_text examples/end-to-end-traceability.md 'PORTFOLIO-SUMMARY'
 require_text examples/end-to-end-traceability.md 'Registry reference'
 
+for file in README.md handbook.md PACKAGE-DESIGN.md governance.md workflow.md; do
+  require_text "$file" 'Application repository changes: NONE'
+  require_text "$file" 'Legacy repository metadata: PRESENT_IGNORED'
+  require_text "$file" 'Central repository catalog'
+  require_text "$file" 'Cursor Settings > Rules'
+  reject_text "$file" 'Repository pull request: REQUIRED'
+  reject_text "$file" 'register /path/to/repo'
+  reject_text "$file" 'update /path/to/repo'
+  reject_text "$file" 'rollback /path/to/repo'
+  reject_text "$file" 'unregister /path/to/repo'
+done
+
+require_text governance.md \
+  'CLI hard-enforces installation, release integrity, catalog routing, connector, authentication, and operation preflight.'
+require_text workflow.md \
+  'Agent instructions govern workflow behavior unless CI, hooks, branch protection, or platform policy provides hard enforcement.'
+
 printf '%s\n' 'Documentation architecture tests: PASS'
