@@ -181,6 +181,19 @@ if [ -n "$bs_version" ] && [ "$bs_version" != "$LOCK_VERSION" ]; then
 fi
 ```
 
+Change both success exits in `cmd_repin` from an inline `Result: PASS` to the
+existing suppressible result helper:
+
+```sh
+printf '%s\n' "Mode: $mode" "Version: $version"
+pass_result
+```
+
+```sh
+printf '%s\n' "Repository: $repository" "Version: $version"
+pass_result
+```
+
 Remove the later duplicate `bs_before=` assignment. Leave the existing
 install, additive registration, final snapshot, repository-review summary,
 connector setup, and Doctor flow unchanged.
