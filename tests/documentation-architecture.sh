@@ -26,20 +26,31 @@ has_repository_governance_mutation() {
   awk '
     BEGIN { RS = "" }
     {
-      text = tolower($0)
-      install = text ~ /(governance[[:space:]]+(install|upgrade|bootstrap)|(install|upgrade|bootstrap)[[:space:]]+governance)/
-      target = text ~ /application[[:space:]]+(repository|repo)/ ||
-        (text ~ /application/ && text ~ /(pull request|(^|[[:space:]])pr([^[:alpha:]]|$))/)
-      clauses = split(text, clause, /[.;:]/)
-      for (i = 1; i <= clauses; i++) {
-        action = clause[i] ~ /(^|[[:space:]])(pin|diff|add|commit|push)([^[:alpha:]]|$)/ ||
-          clause[i] ~ /git[[:space:]]+(add|commit|push)/ ||
-          clause[i] ~ /(add|write|create|commit).*\.beroka-governance\.lock/ ||
-          clause[i] ~ /(open|create).*(pull request|[[:space:]]pr([^[:alpha:]]|$))/
-        denial = clause[i] ~ /(does not|do not|never|ignore|ignores|ignored|without).*(pin|diff|add|commit|push|\.beroka-governance\.lock|pull request|[[:space:]]pr([^[:alpha:]]|$))/
-        if (install && target && action && !denial) {
-          found = 1
-          exit
+      sentences = split(tolower($0) " ", sentence, /[.!?][[:space:]]+/)
+      for (s = 1; s <= sentences; s++) {
+        install = 0
+        target = 0
+        clauses = split(sentence[s], clause, /[;:]/)
+        for (i = 1; i <= clauses; i++) {
+          clause_install = clause[i] ~ /(governance[[:space:]]+(install|upgrade|bootstrap)|(install|upgrade|bootstrap)[[:space:]]+governance)/
+          clause_target = clause[i] ~ /application[[:space:]]+(repository|repo)/ ||
+            (clause[i] ~ /application/ && clause[i] ~ /(pull request|(^|[[:space:]])pr([^[:alpha:]]|$))/)
+          action = clause[i] ~ /(^|[[:space:]])(pin|diff|add|commit|push)([^[:alpha:]]|$)/ ||
+            clause[i] ~ /git[[:space:]]+(add|commit|push)/ ||
+            clause[i] ~ /(add|write|create|commit).*\.beroka-governance\.lock/ ||
+            clause[i] ~ /(open|create).*(pull request|[[:space:]]pr([^[:alpha:]]|$))/
+          denial = clause[i] ~ /(does not|do not|never|ignore|ignores|ignored|without).*(pin|diff|add|commit|push|change|changes|changed|changing|\.beroka-governance\.lock|pull request|[[:space:]]pr([^[:alpha:]]|$))/
+          if (denial) {
+            install = 0
+            target = 0
+            continue
+          }
+          install = install || clause_install
+          target = target || clause_target
+          if (install && target && action) {
+            found = 1
+            exit
+          }
         }
       }
     }
@@ -153,6 +164,17 @@ printf '%s\n' \
   >"$guidance_fixture"
 if has_repository_governance_mutation "$guidance_fixture"; then
   fail 'repository governance check rejected ordinary application workflow'
+fi
+printf '%s\n' \
+  'For governance installation in an application repository: add the governance lock and commit it.' \
+  >"$guidance_fixture"
+has_repository_governance_mutation "$guidance_fixture" ||
+  fail 'repository governance check accepted contextual mutation guidance'
+printf '%s\n' \
+  'Governance installation never changes application repositories. Commit application code through the normal PR workflow.' \
+  >"$guidance_fixture"
+if has_repository_governance_mutation "$guidance_fixture"; then
+  fail 'repository governance check carried denied installation context into ordinary workflow'
 fi
 printf '%s\n' \
   'Application repository behavior differs during governance installation.' \
