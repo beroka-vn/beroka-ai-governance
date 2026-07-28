@@ -101,6 +101,13 @@ then
 fi
 assert_contains "$output" 'Usage:'
 
+if output=$(cd "$target_repo" &&
+  sh "$asset" --client codex --upgrade --upgrade 2>&1)
+then
+  fail 'launcher accepted duplicate upgrade selection'
+fi
+assert_contains "$output" 'Usage:'
+
 if output=$(cd "$TEST_ROOT" &&
   sh "$asset" --client codex --non-interactive 2>&1)
 then
@@ -200,11 +207,77 @@ grep -F -- "--client codex --version v9.9.9 --non-interactive" \
 
 : >"$calls"
 output=$(cd "$target_repo" &&
+  sh "$asset" --client codex --upgrade --non-interactive)
+assert_contains "$output" 'LAUNCHER_NON_INTERACTIVE=PASS'
+grep -F -- \
+  "bootstrap $target_repo --client codex --version v9.9.9 --upgrade --non-interactive" \
+  "$calls" >/dev/null ||
+  fail 'launcher omitted explicit upgrade selection'
+
+: >"$calls"
+output=$(cd "$target_repo" &&
   script -qec \
     "sh -c 'sh -s -- --client codex <\"$asset\"'" \
     /dev/null 2>&1)
 assert_contains "$output" 'LAUNCHER_INTERACTIVE=PASS'
 grep -F -- "--client codex --version v9.9.9" "$calls" >/dev/null ||
   fail 'interactive launcher omitted the verified release decision'
+
+jq_root=$TEST_ROOT/jq-dependency
+jq_bin=$jq_root/bin
+jq_ready=$jq_root/ready
+jq_calls=$jq_root/calls
+mkdir -p "$jq_bin" "$jq_ready"
+for executable in git grep mktemp rm sh; do
+  ln -s "$(command -v "$executable")" "$jq_bin/$executable"
+done
+cat >"$jq_bin/id" <<'EOF'
+#!/bin/sh
+printf '%s\n' 0
+EOF
+cat >"$jq_bin/apt-get" <<'EOF'
+#!/bin/sh
+set -eu
+printf 'apt-get %s\n' "$*" >>"$JQ_INSTALL_CALLS"
+case "$1" in
+  update) ;;
+  install)
+    [ "$2" = -y ] && [ "$3" = jq ] || exit 64
+    /bin/cp "$JQ_READY_BIN/jq" "$JQ_ACTIVE_BIN/jq"
+    /bin/chmod 755 "$JQ_ACTIVE_BIN/jq"
+    ;;
+  *) exit 64 ;;
+esac
+EOF
+cat >"$jq_ready/jq" <<'EOF'
+#!/bin/sh
+exit 0
+EOF
+chmod 755 "$jq_bin/id" "$jq_bin/apt-get" "$jq_ready/jq"
+: >"$jq_calls"
+if output=$(cd "$target_repo" &&
+  PATH="$jq_bin" JQ_INSTALL_CALLS="$jq_calls" \
+  /bin/sh "$asset" --client codex --non-interactive 2>&1)
+then
+  fail 'non-interactive launcher accepted missing jq'
+fi
+assert_contains "$output" 'Result: DEPENDENCY_MISSING'
+assert_contains "$output" 'Remediation: install jq'
+[ ! -s "$jq_calls" ] ||
+  fail 'non-interactive launcher attempted to install jq'
+
+output=$(cd "$target_repo" &&
+  printf 'y\n' |
+  PATH="$jq_bin" \
+  JQ_INSTALL_CALLS="$jq_calls" \
+  JQ_READY_BIN="$jq_ready" \
+  JQ_ACTIVE_BIN="$jq_bin" \
+  /usr/bin/script -qec \
+    "/bin/sh $asset --client codex" /dev/null 2>&1)
+assert_contains "$output" \
+  'Missing dependency: jq. Install with apt-get (may request sudo)?'
+[ "$(cat "$jq_calls")" = "$(printf '%s\n%s' \
+  'apt-get update' 'apt-get install -y jq')" ] ||
+  fail 'interactive launcher did not install only jq'
 
 printf '%s\n' 'One-command launcher tests: PASS'

@@ -16,7 +16,62 @@ die() {
 
 usage() {
   printf '%s\n' \
-    "Usage: $PROGRAM --client codex|claude|cursor [--non-interactive]"
+    "Usage: $PROGRAM --client codex|claude|cursor [--upgrade] [--non-interactive]"
+}
+
+run_as_root() {
+  if [ "$(id -u)" -eq 0 ]; then
+    "$@"
+  elif command -v sudo >/dev/null 2>&1; then
+    sudo "$@"
+  else
+    return 1
+  fi
+}
+
+ensure_jq() {
+  command -v jq >/dev/null 2>&1 && return
+  [ "$non_interactive" -eq 0 ] ||
+    die DEPENDENCY_MISSING 'Remediation: install jq'
+  [ -t 1 ] && ( : </dev/tty ) 2>/dev/null ||
+    die TTY_REQUIRED \
+      "Retry with: $PROGRAM --client $client --non-interactive"
+
+  installer=
+  for candidate in apt-get dnf brew; do
+    if command -v "$candidate" >/dev/null 2>&1; then
+      installer=$candidate
+      break
+    fi
+  done
+  [ -n "$installer" ] ||
+    die DEPENDENCY_MISSING 'Remediation: install jq'
+
+  printf 'Missing dependency: jq. Install with %s (may request sudo)? [y/N] ' \
+    "$installer" >/dev/tty
+  IFS= read -r answer </dev/tty || answer=
+  case "$answer" in
+    y|Y|yes|YES) ;;
+    *) die DEPENDENCY_MISSING 'Remediation: install jq' ;;
+  esac
+
+  case "$installer" in
+    apt-get)
+      run_as_root apt-get update &&
+        run_as_root apt-get install -y jq ||
+        die DEPENDENCY_MISSING 'Remediation: install jq'
+      ;;
+    dnf)
+      run_as_root dnf install -y jq ||
+        die DEPENDENCY_MISSING 'Remediation: install jq'
+      ;;
+    brew)
+      brew install jq ||
+        die DEPENDENCY_MISSING 'Remediation: install jq'
+      ;;
+  esac
+  command -v jq >/dev/null 2>&1 ||
+    die DEPENDENCY_MISSING 'Remediation: install jq'
 }
 
 github_slug() {
@@ -40,6 +95,7 @@ github_slug() {
 
 client=
 non_interactive=0
+upgrade=0
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --client)
@@ -59,6 +115,14 @@ while [ "$#" -gt 0 ]; do
         exit 2
       }
       non_interactive=1
+      shift
+      ;;
+    --upgrade)
+      [ "$upgrade" -eq 0 ] || {
+        usage >&2
+        exit 2
+      }
+      upgrade=1
       shift
       ;;
     *) usage >&2; exit 2 ;;
@@ -123,18 +187,19 @@ checked_out_commit=$(git -C "$bootstrap_root/repo" \
   die RELEASE_VERIFICATION_FAILED \
     'The cloned release does not match the embedded commit'
 
+ensure_jq
+
 cli=$bootstrap_root/repo/bin/beroka-governance
-if [ "$non_interactive" -eq 1 ]; then
-  sh "$cli" bootstrap "$repo" \
-    --client "$client" \
-    --version "$RELEASE_VERSION" \
-    --non-interactive
-else
+set -- bootstrap "$repo" \
+  --client "$client" \
+  --version "$RELEASE_VERSION"
+[ "$upgrade" -eq 0 ] || set -- "$@" --upgrade
+[ "$non_interactive" -eq 0 ] || set -- "$@" --non-interactive
+if [ "$non_interactive" -eq 0 ]; then
   [ -t 1 ] && ( : </dev/tty ) 2>/dev/null ||
     die TTY_REQUIRED \
       "Retry with: $PROGRAM --client $client --non-interactive"
-  sh "$cli" bootstrap "$repo" \
-    --client "$client" \
-    --version "$RELEASE_VERSION" \
-    </dev/tty
+  sh "$cli" "$@" </dev/tty
+else
+  sh "$cli" "$@"
 fi
