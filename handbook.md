@@ -307,17 +307,23 @@ CROSS_REPO_POLICY=profile-controlled
 
 Lifecycle onboarding:
 
-1. Không có trusted hoặc local routing thì `ROUTING_REQUIRED`.
-2. Thêm file trên branch đầu tiên thì `ROUTING_CHANGE_PENDING` cho đến khi PR
-   routing được merge; local routing không được dùng cho external write.
+Current routing model: central catalog. `context` resolves the canonical
+GitHub origin against the active release's catalog; repository-local routing
+files are not used.
+
+1. Không có catalog record thì `ROUTING_REQUIRED` với standalone và
+   `explicit-only` defaults.
+2. Thêm hoặc sửa routing cần thay đổi reviewed central catalog release, không
+   phải application repository.
 3. PR đầu tiên phải tham chiếu Jira issue được tạo thủ công hoặc issue trong
-   **central governance onboarding project**, độc lập với pending routing.
+   **central governance onboarding project**.
 4. Branch, commit, push, current-repository Issue và PR vẫn được phép khi
-   routing pending.
-5. Sau merge, mở fresh session rồi chạy `context` mới và `preflight` mới trước
-   external write phụ thuộc routing.
-6. Khi offline, `context` chỉ block routing-dependent external writes;
-   source-only work vẫn tiếp tục.
+   routing chưa được cataloged.
+5. Sau khi active release đổi, mở fresh session rồi chạy `context` mới và
+   `preflight` mới trước external write phụ thuộc routing.
+
+Legacy historical routing state: `ROUTING_CHANGE_PENDING`. Đây là lifecycle
+repository-local trước central catalog và không phải remediation hiện tại.
 
 ### Confluence capability hierarchy
 
@@ -659,8 +665,6 @@ Routing và selected-client preflight trả các result sau:
 | --- | --- |
 | `ROUTING_REQUIRED` | Add exact routing through the reviewed onboarding workflow. |
 | `ROUTING_INVALID` | Fix the strict schema on a branch and merge it. |
-| `ROUTING_CHANGE_PENDING` | Review and merge the routing PR; do not use local routing for writes. |
-| `ROUTING_VERIFICATION_REQUIRED` | Restore authenticated remote access and rerun fresh preflight. |
 | `DEPENDENCY_MISSING` | Install the explicitly selected client/helper. |
 | `CONNECTOR_MISSING` | Run `beroka-governance setup-connectors --client <client>`. |
 | `ATLASSIAN_AUTH_REQUIRED` | Run the exact remediation command printed for the selected client. |
@@ -668,6 +672,10 @@ Routing và selected-client preflight trả các result sau:
 
 `SUPPORTED`, `UNSUPPORTED` và `UNKNOWN` là operation-scoped. Folder và Board
 không bao giờ fallback sang Page, space root, JQL hoặc guessed capability.
+
+`ROUTING_CHANGE_PENDING` và `ROUTING_VERIFICATION_REQUIRED` ở các release cũ
+là historical legacy states; current routing remediation dùng central catalog
+và `ROUTING_REQUIRED` hoặc `ROUTING_INVALID`.
 
 ## Tài liệu chính thức
 

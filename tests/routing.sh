@@ -1947,8 +1947,11 @@ printf '%s\n' 'PASS: routing state'
 
 grep -F 'beroka-governance preflight' "$ROOT/README.md" >/dev/null ||
   fail 'README does not document preflight'
-grep -F 'ROUTING_CHANGE_PENDING' "$ROOT/handbook.md" >/dev/null ||
-  fail 'handbook does not document pending routing'
+grep -F 'Legacy historical routing state: `ROUTING_CHANGE_PENDING`' \
+  "$ROOT/handbook.md" >/dev/null ||
+  fail 'handbook does not label pending routing as legacy'
+grep -F 'Current routing model: central catalog' "$ROOT/handbook.md" \
+  >/dev/null || fail 'handbook does not identify the central catalog as current'
 grep -F 'central governance onboarding project' "$ROOT/handbook.md" >/dev/null ||
   fail 'handbook does not document bootstrap issue provenance'
 grep -F 'CONNECTOR_CAPABILITY_REQUIRED' "$ROOT/handbook.md" >/dev/null ||
