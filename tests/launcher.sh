@@ -305,4 +305,136 @@ assert_contains "$output" \
   'apt-get update' 'apt-get install -y jq')" ] ||
   fail 'interactive launcher did not install only jq'
 
+cursor_root=$TEST_ROOT/cursor-dependency
+cursor_bin=$cursor_root/bin
+cursor_calls=$cursor_root/calls
+cursor_success=$cursor_root/install-success.sh
+cursor_failure=$cursor_root/install-failure.sh
+cursor_invalid=$cursor_root/install-invalid.sh
+mkdir -p "$cursor_bin"
+for executable in bash cat git grep id jq mktemp rm sh; do
+  ln -s "$(command -v "$executable")" "$cursor_bin/$executable"
+done
+cat >"$cursor_success" <<'EOF'
+#!/bin/sh
+set -eu
+/bin/mkdir -p "$HOME/.local/bin"
+cat >"$HOME/.local/bin/cursor-agent" <<'AGENT'
+#!/bin/sh
+case "$*" in
+  --version) printf '%s\n' 2026.07.23-test ;;
+  'mcp login --help') exit 0 ;;
+  *) exit 1 ;;
+esac
+AGENT
+/bin/chmod 755 "$HOME/.local/bin/cursor-agent"
+EOF
+cat >"$cursor_failure" <<'EOF'
+#!/bin/sh
+exit 9
+EOF
+cat >"$cursor_invalid" <<'EOF'
+#!/bin/sh
+set -eu
+/bin/mkdir -p "$HOME/.local/bin"
+cat >"$HOME/.local/bin/cursor-agent" <<'AGENT'
+#!/bin/sh
+case "$*" in
+  --version) printf '%s\n' broken-test ;;
+  *) exit 1 ;;
+esac
+AGENT
+/bin/chmod 755 "$HOME/.local/bin/cursor-agent"
+EOF
+cat >"$cursor_bin/curl" <<'EOF'
+#!/bin/sh
+set -eu
+printf 'curl %s\n' "$*" >>"$CURSOR_INSTALL_CALLS"
+[ "$1" = -fsS ] &&
+  [ "$2" = https://cursor.com/install ] &&
+  [ "$3" = -o ] &&
+  [ "$#" -eq 4 ] ||
+  exit 64
+case "${CURSOR_INSTALL_MODE:-success}" in
+  success) /bin/cp "$CURSOR_SUCCESS_INSTALLER" "$4" ;;
+  failure) /bin/cp "$CURSOR_FAILURE_INSTALLER" "$4" ;;
+  invalid) /bin/cp "$CURSOR_INVALID_INSTALLER" "$4" ;;
+  *) exit 64 ;;
+esac
+EOF
+chmod 755 "$cursor_bin/curl"
+
+: >"$cursor_calls"
+output=$(
+  printf 'y\n' |
+  PATH="$cursor_bin" \
+  CURSOR_INSTALL_CALLS="$cursor_calls" \
+  CURSOR_SUCCESS_INSTALLER="$cursor_success" \
+  CURSOR_FAILURE_INSTALLER="$cursor_failure" \
+  CURSOR_INVALID_INSTALLER="$cursor_invalid" \
+  /usr/bin/script -qec \
+    "/bin/sh $asset --client cursor" /dev/null 2>&1
+)
+assert_contains "$output" \
+  'Install Cursor Agent CLI from https://cursor.com/install? [y/N]'
+assert_contains "$output" 'LAUNCHER_INTERACTIVE=PASS'
+grep -F 'curl -fsS https://cursor.com/install -o ' "$cursor_calls" \
+  >/dev/null ||
+  fail 'launcher did not stage the official Cursor installer'
+[ -x "$HOME/.local/bin/cursor-agent" ] ||
+  fail 'launcher did not install cursor-agent into the user bin directory'
+
+: >"$cursor_calls"
+output=$(PATH="$HOME/.local/bin:$cursor_bin" \
+  CURSOR_INSTALL_CALLS="$cursor_calls" \
+  /bin/sh "$asset" --client cursor --non-interactive)
+assert_contains "$output" 'LAUNCHER_NON_INTERACTIVE=PASS'
+[ ! -s "$cursor_calls" ] ||
+  fail 'launcher reinstalled a healthy cursor-agent'
+
+rm -f "$HOME/.local/bin/cursor-agent"
+: >"$cursor_calls"
+if output=$(PATH="$cursor_bin" CURSOR_INSTALL_CALLS="$cursor_calls" \
+  /bin/sh "$asset" --client cursor --non-interactive 2>&1)
+then
+  fail 'non-interactive launcher installed cursor-agent'
+fi
+assert_contains "$output" 'Result: DEPENDENCY_MISSING'
+[ ! -s "$cursor_calls" ] ||
+  fail 'non-interactive launcher called the Cursor installer'
+
+: >"$cursor_calls"
+if output=$(
+  printf 'n\n' |
+  PATH="$cursor_bin" CURSOR_INSTALL_CALLS="$cursor_calls" \
+  /usr/bin/script -qec \
+    "/bin/sh $asset --client cursor" /dev/null 2>&1
+)
+then
+  fail 'launcher accepted declined Cursor installation'
+fi
+assert_contains "$output" 'Result: DEPENDENCY_MISSING'
+[ ! -s "$cursor_calls" ] ||
+  fail 'declined Cursor installation called curl'
+
+for cursor_mode in failure invalid; do
+  rm -f "$HOME/.local/bin/cursor-agent"
+  : >"$cursor_calls"
+  if output=$(
+    printf 'y\n' |
+    PATH="$cursor_bin" \
+    CURSOR_INSTALL_CALLS="$cursor_calls" \
+    CURSOR_INSTALL_MODE="$cursor_mode" \
+    CURSOR_SUCCESS_INSTALLER="$cursor_success" \
+    CURSOR_FAILURE_INSTALLER="$cursor_failure" \
+    CURSOR_INVALID_INSTALLER="$cursor_invalid" \
+    /usr/bin/script -qec \
+      "/bin/sh $asset --client cursor" /dev/null 2>&1
+  )
+  then
+    fail "launcher accepted $cursor_mode Cursor installation"
+  fi
+  assert_contains "$output" 'Result: DEPENDENCY_MISSING'
+done
+
 printf '%s\n' 'One-command launcher tests: PASS'
