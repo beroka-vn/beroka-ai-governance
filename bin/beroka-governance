@@ -10,6 +10,7 @@ REMOTE_URL=https://github.com/beroka-vn/beroka-ai-governance.git
 ATLASSIAN_MCP_URL=https://mcp.atlassian.com/v1/mcp/authv2
 START_MARKER='<!-- BEROKA-GOVERNANCE:START -->'
 END_MARKER='<!-- BEROKA-GOVERNANCE:END -->'
+INSTRUCTION_BOUNDARY_MARKER='<!-- BEROKA-GOVERNANCE:BOUNDARY -->'
 ACTIVE_RELEASE=$CONFIG_ROOT/active-release
 CLIENTS_FILE=$CONFIG_ROOT/clients
 CURSOR_ACK_FILE=$CONFIG_ROOT/cursor-user-rule.sha256
@@ -326,7 +327,19 @@ assert_valid_template() {
 strip_managed_block() {
   input=$1 output=$2 managed=${3:-}
   smb_range=$(LC_ALL=C awk \
-    -v start="$START_MARKER" -v end="$END_MARKER" '
+    -v start="$START_MARKER" -v end="$END_MARKER" \
+    -v boundary="$INSTRUCTION_BOUNDARY_MARKER" '
+    index($0, boundary) {
+      boundary_index=index($0, boundary)
+      if (boundary_seen ||
+          boundary_index == 1 ||
+          boundary_index + length(boundary) - 1 != length($0)) {
+        invalid=1
+      }
+      boundary_seen=1
+      boundary_line=NR
+      boundary_prefix=boundary_index - 1
+    }
     $0 == start {
       if (inside || found) invalid=1
       inside=1
@@ -341,12 +354,17 @@ strip_managed_block() {
       next
     }
     END {
+      if (boundary_seen && boundary_line != first - 1) invalid=1
       if (invalid || inside) exit 42
-      print first + 0, last + 0
+      print first + 0, last + 0, boundary_line + 0, boundary_prefix + 0
     }
   ' "$input") || return 1
   smb_start=${smb_range%% *}
-  smb_end=${smb_range#* }
+  smb_rest=${smb_range#* }
+  smb_end=${smb_rest%% *}
+  smb_rest=${smb_rest#* }
+  smb_boundary_line=${smb_rest%% *}
+  smb_boundary_prefix=${smb_rest#* }
 
   if [ "$smb_start" -eq 0 ]; then
     cp "$input" "$output" || return 1
@@ -359,7 +377,21 @@ strip_managed_block() {
       tail -n +"$smb_start" >"$managed" || return 1
   fi
   : >"$output" || return 1
-  if [ "$smb_start" -gt 1 ]; then
+  if [ "$smb_boundary_line" -gt 0 ]; then
+    if [ "$smb_boundary_line" -gt 1 ]; then
+      head -n "$((smb_boundary_line - 1))" "$input" >"$output" ||
+        return 1
+    fi
+    LC_ALL=C awk -v line="$smb_boundary_line" \
+      -v prefix_length="$smb_boundary_prefix" '
+      NR == line {
+        printf "%s", substr($0, 1, prefix_length)
+        found=1
+        exit
+      }
+      END { if (!found) exit 42 }
+    ' "$input" >>"$output" || return 1
+  elif [ "$smb_start" -gt 1 ]; then
     head -n "$((smb_start - 1))" "$input" >"$output" || return 1
   fi
   tail -n +"$((smb_end + 1))" "$input" >>"$output" || return 1
@@ -986,7 +1018,21 @@ install_client_instruction() {
   else
     : >"$instruction_stage" || die GOVERNANCE_NOT_READY "Cannot stage $instruction_client instruction"
   fi
-  cat "$instruction_stage" "$instruction_template" >"$instruction_stage.merged" ||
+  instruction_needs_boundary=0
+  if [ -s "$instruction_stage" ]; then
+    instruction_last_byte=$(tail -c 1 "$instruction_stage" |
+      LC_ALL=C od -An -tu1 | tr -d '[:space:]')
+    [ "$instruction_last_byte" = 10 ] ||
+      instruction_needs_boundary=1
+  fi
+  cat "$instruction_stage" >"$instruction_stage.merged" ||
+    die GOVERNANCE_NOT_READY "Cannot stage $instruction_client instruction"
+  if [ "$instruction_needs_boundary" -eq 1 ]; then
+    printf '%s\n' "$INSTRUCTION_BOUNDARY_MARKER" \
+      >>"$instruction_stage.merged" ||
+      die GOVERNANCE_NOT_READY "Cannot stage $instruction_client instruction"
+  fi
+  cat "$instruction_template" >>"$instruction_stage.merged" ||
     die GOVERNANCE_NOT_READY "Cannot stage $instruction_client instruction"
   apply_user_file "$instruction_stage.merged" "$instruction_destination" "$instruction_client instruction"
   rm -f "$instruction_stage" "$instruction_stage.merged" || :

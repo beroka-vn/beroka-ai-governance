@@ -13,6 +13,8 @@ export BEROKA_GOV_BIN_DIR=$TEST_ROOT/bin
 FAKE_BIN=$TEST_ROOT/fake-bin
 DISABLED_BIN=$TEST_ROOT/disabled-bin
 CALLS=$TEST_ROOT/calls
+START_MARKER='<!-- BEROKA-GOVERNANCE:START -->'
+END_MARKER='<!-- BEROKA-GOVERNANCE:END -->'
 export CALLS
 mkdir -p "$HOME" "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" \
   "$BEROKA_GOV_BIN_DIR" "$FAKE_BIN" "$DISABLED_BIN"
@@ -42,6 +44,14 @@ assert_one_result() {
   aor_count=$(printf '%s\n' "$1" | grep -c '^Result:' || :)
   [ "$aor_count" -eq 1 ] ||
     fail "expected exactly one Result line, found $aor_count in [$1]"
+}
+
+assert_separate_managed_block() {
+  asmb_file=$1
+  asmb_start_count=$(grep -Fxc "$START_MARKER" "$asmb_file" || :)
+  asmb_end_count=$(grep -Fxc "$END_MARKER" "$asmb_file" || :)
+  [ "$asmb_start_count" -eq 1 ] && [ "$asmb_end_count" -eq 1 ] ||
+    fail "instruction markers are not separately delimited in $asmb_file"
 }
 
 new_repo() {
@@ -239,7 +249,9 @@ assert_not_contains "$output" 'should-not-appear'
 : >"$CALLS"
 repo_before=$(snapshot_repo "$repo")
 mkdir -p "$HOME/.codex"
-printf '%s\n' '# Personal Codex instruction' >"$HOME/.codex/AGENTS.md"
+codex_personal_expected=$TEST_ROOT/codex-personal-expected
+printf '%s' '# Personal Codex instruction' >"$codex_personal_expected"
+cp "$codex_personal_expected" "$HOME/.codex/AGENTS.md"
 
 output=$($CLI bootstrap "$repo" --client codex \
   --version v1.1.0 --non-interactive)
@@ -250,12 +262,35 @@ assert_contains "$(cat "$HOME/.codex/AGENTS.md")" \
   '# Personal Codex instruction'
 assert_contains "$(cat "$HOME/.codex/AGENTS.md")" \
   '<!-- BEROKA-GOVERNANCE:START -->'
+assert_separate_managed_block "$HOME/.codex/AGENTS.md"
 [ "$(cat "$XDG_CONFIG_HOME/beroka-ai-governance/clients")" = codex ] ||
   fail 'bootstrap omitted Codex enrollment'
 assert_not_contains "$output" 'Repository pull request:'
 assert_contains "$(cat "$CALLS")" 'codex app-server --stdio'
 assert_not_contains "$(cat "$CALLS")" 'claude '
 assert_contains "$output" 'Repository: beroka-vn/bootstrap-application'
+doctor_output=$($CLI doctor "$repo" --client codex)
+assert_contains "$doctor_output" 'Instruction: INSTALLED'
+
+cat_failure_before=$TEST_ROOT/codex-before-cat-failure
+cp "$HOME/.codex/AGENTS.md" "$cat_failure_before"
+cat >"$FAKE_BIN/cat" <<'EOF'
+#!/bin/sh
+case "${1:-}" in
+  */beroka-governance-instruction.*) exit 73 ;;
+esac
+exec /usr/bin/cat "$@"
+EOF
+chmod 755 "$FAKE_BIN/cat"
+if output=$($CLI bootstrap "$repo" --client codex \
+  --version v1.1.0 --non-interactive 2>&1)
+then
+  fail 'bootstrap masked a personal-instruction read failure'
+fi
+assert_contains "$output" 'Result: GOVERNANCE_NOT_READY'
+cmp -s "$cat_failure_before" "$HOME/.codex/AGENTS.md" ||
+  fail 'failed instruction merge changed personal bytes'
+rm -f "$FAKE_BIN/cat"
 
 active_release=$XDG_CONFIG_HOME/beroka-ai-governance/active-release
 active_before=$(cat "$active_release")
@@ -282,11 +317,13 @@ assert_contains "$output" 'Result: VERSION_MISMATCH'
 git -C "$source_repo" tag -fa v1.1.0 "$v1_1_commit" -m v1.1.0 \
   >/dev/null
 
-codex_before=$(cat "$HOME/.codex/AGENTS.md")
+codex_before=$TEST_ROOT/codex-before-repeat
+cp "$HOME/.codex/AGENTS.md" "$codex_before"
 output=$(cd "$TEST_ROOT" &&
   $CLI bootstrap --client codex --version v1.1.0 --non-interactive)
-[ "$codex_before" = "$(cat "$HOME/.codex/AGENTS.md")" ] ||
+cmp -s "$codex_before" "$HOME/.codex/AGENTS.md" ||
   fail 'repeat Codex bootstrap changed user instructions'
+assert_separate_managed_block "$HOME/.codex/AGENTS.md"
 assert_not_contains "$output" 'Repository pull request:'
 assert_not_contains "$output" 'Repository:'
 
@@ -294,15 +331,20 @@ output=$(cd "$repo" &&
   $CLI bootstrap --client codex --version v1.1.0 --non-interactive)
 assert_contains "$output" 'Repository: beroka-vn/bootstrap-application'
 
-printf '%s\n' '# Active override' >"$HOME/.codex/AGENTS.override.md"
+codex_override_expected=$TEST_ROOT/codex-override-expected
+printf '%s' '# Active override' >"$codex_override_expected"
+cp "$codex_override_expected" "$HOME/.codex/AGENTS.override.md"
 output=$($CLI bootstrap "$repo" --client codex \
   --version v1.1.0 --non-interactive)
 assert_contains "$(cat "$HOME/.codex/AGENTS.override.md")" '# Active override'
 assert_contains "$(cat "$HOME/.codex/AGENTS.override.md")" \
   '<!-- BEROKA-GOVERNANCE:START -->'
+assert_separate_managed_block "$HOME/.codex/AGENTS.override.md"
 
 mkdir -p "$HOME/.claude"
-printf '%s\n' '# Personal Claude instruction' >"$HOME/.claude/CLAUDE.md"
+claude_personal_expected=$TEST_ROOT/claude-personal-expected
+printf '%s' '# Personal Claude instruction' >"$claude_personal_expected"
+cp "$claude_personal_expected" "$HOME/.claude/CLAUDE.md"
 cp "$DISABLED_BIN/claude" "$FAKE_BIN/claude"
 chmod 755 "$FAKE_BIN/claude"
 : >"$CALLS"
@@ -314,16 +356,19 @@ assert_contains "$(cat "$HOME/.claude/CLAUDE.md")" \
   '# Personal Claude instruction'
 assert_contains "$(cat "$HOME/.claude/CLAUDE.md")" \
   '<!-- BEROKA-GOVERNANCE:START -->'
+assert_separate_managed_block "$HOME/.claude/CLAUDE.md"
 [ "$(cat "$XDG_CONFIG_HOME/beroka-ai-governance/clients")" = codex,claude ] ||
   fail 'bootstrap omitted Claude enrollment'
 assert_contains "$(cat "$CALLS")" 'claude mcp'
 assert_not_contains "$(cat "$CALLS")" 'codex '
 
-claude_after=$(cat "$HOME/.claude/CLAUDE.md")
+claude_after=$TEST_ROOT/claude-after
+cp "$HOME/.claude/CLAUDE.md" "$claude_after"
 output=$($CLI bootstrap "$repo" --client claude \
   --version v1.1.0 --non-interactive)
-[ "$claude_after" = "$(cat "$HOME/.claude/CLAUDE.md")" ] ||
+cmp -s "$claude_after" "$HOME/.claude/CLAUDE.md" ||
   fail 'repeat Claude bootstrap changed user instructions'
+assert_separate_managed_block "$HOME/.claude/CLAUDE.md"
 assert_not_contains "$output" 'Repository pull request:'
 
 codex_instruction=$HOME/.codex/AGENTS.override.md
@@ -498,5 +543,13 @@ assert_contains "$output" \
   'Remediation: beroka-governance bootstrap --client cursor'
 [ ! -e "$HOME/.cursor" ] ||
   fail 'Cursor bootstrap edited undocumented Cursor state'
+
+$CLI uninstall --force >/dev/null
+cmp -s "$codex_personal_expected" "$HOME/.codex/AGENTS.md" ||
+  fail 'uninstall changed no-newline Codex personal instructions'
+cmp -s "$codex_override_expected" "$HOME/.codex/AGENTS.override.md" ||
+  fail 'uninstall changed no-newline Codex override instructions'
+cmp -s "$claude_personal_expected" "$HOME/.claude/CLAUDE.md" ||
+  fail 'uninstall changed no-newline Claude personal instructions'
 
 printf '%s\n' 'Bootstrap onboarding tests: PASS'
