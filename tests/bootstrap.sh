@@ -292,6 +292,63 @@ cmp -s "$cat_failure_before" "$HOME/.codex/AGENTS.md" ||
   fail 'failed instruction merge changed personal bytes'
 rm -f "$FAKE_BIN/cat"
 
+tail_failure_personal=$TEST_ROOT/codex-tail-failure-personal
+printf '%s\n' '# Newline Codex instruction' >"$tail_failure_personal"
+cp "$tail_failure_personal" "$HOME/.codex/AGENTS.override.md"
+tail_failure_before=$TEST_ROOT/codex-before-tail-failure
+cp "$HOME/.codex/AGENTS.override.md" "$tail_failure_before"
+cat >"$FAKE_BIN/tail" <<'EOF'
+#!/bin/sh
+if [ "$#" -eq 3 ] && [ "$1" = -c ] && [ "$2" = 1 ]; then
+  case "$3" in
+    */beroka-governance-instruction.*) exit 74 ;;
+  esac
+fi
+exec /usr/bin/tail "$@"
+EOF
+chmod 755 "$FAKE_BIN/tail"
+if output=$($CLI bootstrap "$repo" --client codex \
+  --version v1.1.0 --non-interactive 2>&1)
+then
+  fail 'bootstrap masked a personal-instruction tail failure'
+fi
+assert_contains "$output" 'Result: GOVERNANCE_NOT_READY'
+cmp -s "$tail_failure_before" "$HOME/.codex/AGENTS.override.md" ||
+  fail 'failed last-byte read changed personal bytes'
+rm -f "$FAKE_BIN/tail"
+
+output=$($CLI bootstrap "$repo" --client codex \
+  --version v1.1.0 --non-interactive)
+assert_separate_managed_block "$HOME/.codex/AGENTS.override.md"
+doctor_output=$($CLI doctor "$repo" --client codex)
+assert_contains "$doctor_output" 'Instruction: INSTALLED'
+rm -f "$HOME/.codex/AGENTS.override.md"
+
+nul_personal_expected=$TEST_ROOT/codex-nul-personal-expected
+printf '# NUL Codex instruction\000' >"$nul_personal_expected"
+cp "$nul_personal_expected" "$HOME/.codex/AGENTS.override.md"
+output=$($CLI bootstrap "$repo" --client codex \
+  --version v1.1.0 --non-interactive)
+assert_separate_managed_block "$HOME/.codex/AGENTS.override.md"
+if ! doctor_output=$($CLI doctor "$repo" --client codex 2>&1); then
+  fail "Doctor rejected NUL-ended personal instructions: $doctor_output"
+fi
+assert_contains "$doctor_output" 'Instruction: INSTALLED'
+nul_instruction_before_repeat=$TEST_ROOT/codex-nul-before-repeat
+cp "$HOME/.codex/AGENTS.override.md" "$nul_instruction_before_repeat"
+output=$($CLI bootstrap "$repo" --client codex \
+  --version v1.1.0 --non-interactive)
+cmp -s "$nul_instruction_before_repeat" \
+  "$HOME/.codex/AGENTS.override.md" ||
+  fail 'repeat bootstrap changed NUL-ended personal instructions'
+$CLI uninstall --force >/dev/null
+cmp -s "$nul_personal_expected" "$HOME/.codex/AGENTS.override.md" ||
+  fail 'uninstall changed NUL-ended personal instructions'
+rm -f "$HOME/.codex/AGENTS.override.md"
+output=$($CLI bootstrap "$repo" --client codex \
+  --version v1.1.0 --non-interactive)
+assert_separate_managed_block "$HOME/.codex/AGENTS.md"
+
 active_release=$XDG_CONFIG_HOME/beroka-ai-governance/active-release
 active_before=$(cat "$active_release")
 if output=$($CLI bootstrap "$repo" --client codex \

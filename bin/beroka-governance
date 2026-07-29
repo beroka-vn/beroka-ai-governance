@@ -1020,10 +1020,28 @@ install_client_instruction() {
   fi
   instruction_needs_boundary=0
   if [ -s "$instruction_stage" ]; then
-    instruction_last_byte=$(tail -c 1 "$instruction_stage" |
-      LC_ALL=C od -An -tu1 | tr -d '[:space:]')
-    [ "$instruction_last_byte" = 10 ] ||
-      instruction_needs_boundary=1
+    instruction_last_byte_file=$instruction_stage.last-byte
+    instruction_lf_file=$instruction_stage.lf
+    tail -c 1 "$instruction_stage" >"$instruction_last_byte_file" ||
+      die GOVERNANCE_NOT_READY \
+        "Cannot inspect $instruction_client instruction boundary"
+    [ -s "$instruction_last_byte_file" ] ||
+      die GOVERNANCE_NOT_READY \
+        "Cannot inspect $instruction_client instruction boundary"
+    printf '\n' >"$instruction_lf_file" ||
+      die GOVERNANCE_NOT_READY \
+        "Cannot inspect $instruction_client instruction boundary"
+    instruction_newline_status=0
+    cmp -s "$instruction_last_byte_file" "$instruction_lf_file" ||
+      instruction_newline_status=$?
+    case "$instruction_newline_status" in
+      0) ;;
+      1) instruction_needs_boundary=1 ;;
+      *)
+        die GOVERNANCE_NOT_READY \
+          "Cannot inspect $instruction_client instruction boundary"
+        ;;
+    esac
   fi
   cat "$instruction_stage" >"$instruction_stage.merged" ||
     die GOVERNANCE_NOT_READY "Cannot stage $instruction_client instruction"
@@ -1035,7 +1053,9 @@ install_client_instruction() {
   cat "$instruction_template" >>"$instruction_stage.merged" ||
     die GOVERNANCE_NOT_READY "Cannot stage $instruction_client instruction"
   apply_user_file "$instruction_stage.merged" "$instruction_destination" "$instruction_client instruction"
-  rm -f "$instruction_stage" "$instruction_stage.merged" || :
+  rm -f "$instruction_stage" "$instruction_stage.last-byte" \
+    "$instruction_stage.lf" \
+    "$instruction_stage.merged" || :
   printf '%s\n' 'Instruction: INSTALLED'
 }
 
