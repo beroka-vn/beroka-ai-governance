@@ -1,4 +1,3 @@
-<!-- BEROKA-GOVERNANCE:START -->
 ## Beroka AI Governance
 
 This workstation uses verified Beroka governance. In a Git repository, before
@@ -15,4 +14,3 @@ in conversation history.
 
 Repository-specific instructions may narrow central governance. They must not
 broaden authority or bypass a central stop condition.
-<!-- BEROKA-GOVERNANCE:END -->

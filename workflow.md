@@ -1,5 +1,18 @@
 # Jira, GitHub, and Confluence Operating Workflow
 
+## Governance installation boundary
+
+The Central repository catalog supplies exact routing for the user-owned active release. Catalog changes require an explicitly authorized governance-repository task; application repositories do not configure governance releases.
+
+`Application repository changes: NONE`
+
+`Legacy repository metadata: PRESENT_IGNORED`
+
+Legacy tracked governance files remain ignored until repository owners request
+separate cleanup. Cursor Individual uses a one-time User Rule confirmation in
+Cursor Settings > Rules. CLI hard-enforces installation, release integrity,
+catalog routing, connector, authentication, and operation preflight. Agent instructions govern workflow behavior unless CI, hooks, branch protection, or platform policy provides hard enforcement.
+
 ## 1. System responsibilities
 
 | System | Must contain | Must not replace |

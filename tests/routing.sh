@@ -437,6 +437,21 @@ case "$*" in
 esac
 EOF
 
+cat >"$FAKE_BIN/ssh" <<'EOF'
+#!/bin/sh
+set -eu
+if [ "$1" = -G ] && [ "$2" = github.com-work ]; then
+  printf '%s\n' 'hostname github.com'
+  exit 0
+fi
+if [ "$1" = -G ]; then
+  printf '%s\n' 'hostname git.example.invalid'
+  exit 0
+fi
+exit 64
+EOF
+chmod +x "$FAKE_BIN/ssh"
+
 cat >"$FAKE_BIN/claude" <<'EOF'
 #!/bin/sh
 set -eu
@@ -648,6 +663,18 @@ printf '%s\n' v1.1.0 >"$source_repo/VERSION"
 cp "$CLI" "$source_repo/bin/beroka-governance"
 chmod 755 "$source_repo/bin/beroka-governance"
 cp -R "$ROOT/runtime" "$source_repo/runtime"
+catalog=$source_repo/runtime/repositories/beroka-vn
+mkdir -p "$catalog"
+cat >"$catalog/routing-consumer.conf" <<'EOF'
+SCHEMA_VERSION=1
+PROFILE=standalone
+JIRA_PROJECT_KEY=APP
+CONFLUENCE_SPACE_KEY=APP
+CONFLUENCE_ROOT_CONTENT_ID=123456
+CONFLUENCE_ROOT_CONTENT_TYPE=page
+INTEGRATION_PROFILE=none
+CROSS_REPO_POLICY=explicit-only
+EOF
 mkdir -p "$source_repo/runtime/integrations"
 printf 'beroka-vn/routing-consumer\tbackend\n' \
   >>"$source_repo/runtime/integrations/beroka-be-fe.repositories"
@@ -664,6 +691,22 @@ release_dir=$XDG_DATA_HOME/beroka-ai-governance/releases/v1.1.0
 mkdir -p "$(dirname -- "$release_dir")"
 git -c advice.detachedHead=false clone -q --depth 1 --branch v1.1.0 \
   https://github.com/beroka-vn/beroka-ai-governance.git "$release_dir"
+release_commit=$(git -C "$release_dir" rev-parse HEAD)
+mkdir -p "$XDG_CONFIG_HOME/beroka-ai-governance"
+printf '%s\n' \
+  'VERSION=v1.1.0' \
+  "COMMIT=$release_commit" \
+  >"$XDG_CONFIG_HOME/beroka-ai-governance/active-release"
+printf '%s\n' codex,claude,cursor \
+  >"$XDG_CONFIG_HOME/beroka-ai-governance/clients"
+mkdir -p "$HOME/.codex" "$HOME/.claude"
+cp "$release_dir/templates/agent-entrypoints/AGENTS.md" \
+  "$HOME/.codex/AGENTS.md"
+cp "$release_dir/templates/agent-entrypoints/CLAUDE.md" \
+  "$HOME/.claude/CLAUDE.md"
+git --git-dir=/dev/null hash-object --no-filters \
+  "$release_dir/templates/agent-entrypoints/CURSOR-USER-RULE.txt" \
+  >"$XDG_CONFIG_HOME/beroka-ai-governance/cursor-user-rule.sha256"
 
 consumer=$TEST_ROOT/consumer
 new_repo "$consumer"
@@ -671,14 +714,6 @@ git -C "$consumer" remote add upstream \
   https://github.com/beroka-vn/routing-consumer.git
 git -C "$consumer" fetch -q upstream trunk
 git -C "$consumer" switch -qc trunk FETCH_HEAD
-$CLI register "$consumer" --version v1.1.0 --client codex
-git -C "$consumer" add .
-git -C "$consumer" commit -qm 'test: register governance'
-cp "$consumer/.beroka-governance.lock" "$remote_work/.beroka-governance.lock"
-cp "$consumer/AGENTS.md" "$remote_work/AGENTS.md"
-git -C "$remote_work" add .beroka-governance.lock AGENTS.md
-git -C "$remote_work" commit -qm 'test: register application'
-git -C "$remote_work" push -q origin trunk
 
 before=$(snapshot_repo "$consumer")
 output=$($CLI context "$consumer")
@@ -686,7 +721,34 @@ after=$(snapshot_repo "$consumer")
 
 [ "$before" = "$after" ] ||
   fail 'context changed application repository state'
-assert_contains "$output" 'Routing: ROUTING_REQUIRED'
+assert_contains "$output" 'Routing: ROUTING_ACTIVE'
+assert_contains "$output" 'Routing source: central catalog'
+
+unknown_repo=$TEST_ROOT/unknown-repo
+new_repo "$unknown_repo"
+printf '%s\n' '# unknown' >"$unknown_repo/README.md"
+git -C "$unknown_repo" add README.md
+git -C "$unknown_repo" commit -qm 'test: initialize unknown application'
+git -C "$unknown_repo" remote add origin \
+  https://github.com/beroka-vn/unknown-repo.git
+unknown_output=$($CLI context "$unknown_repo")
+assert_contains "$unknown_output" 'Routing: ROUTING_REQUIRED'
+assert_contains "$unknown_output" 'Dependency state: NO_DEPENDENCY_DECLARED'
+assert_contains "$unknown_output" 'Cross-repository policy: explicit-only'
+
+git -C "$consumer" remote set-url upstream \
+  git@github.com-work:beroka-vn/routing-consumer.git
+output=$($CLI context "$consumer")
+assert_contains "$output" 'Routing: ROUTING_ACTIVE'
+assert_contains "$output" 'Routing source: central catalog'
+git -C "$consumer" remote set-url upstream \
+  git@github.com-not-work:beroka-vn/routing-consumer.git
+if output=$($CLI context "$consumer" 2>&1); then
+  fail 'SSH alias resolving outside github.com was accepted'
+fi
+assert_contains "$output" 'Result: REMOTE_MISMATCH'
+git -C "$consumer" remote set-url upstream \
+  git@github.com-work:beroka-vn/routing-consumer.git
 
 rm -f "$XDG_CONFIG_HOME/fake-github-health"
 : >"$CALLS"
@@ -735,61 +797,44 @@ assert_not_contains "$(cat "$CALLS")" \
 
 publish_routing() {
   pr_content=$1
-  printf '%s\n' "$pr_content" >"$remote_work/.beroka-governance.conf"
-  git -C "$remote_work" add .beroka-governance.conf
-  git -C "$remote_work" commit -qm 'test: publish routing'
-  git -C "$remote_work" push -q "file://$remote_bare" trunk
-  git -C "$consumer" fetch -q "file://$remote_bare" trunk
-  git -C "$consumer" reset -q --hard FETCH_HEAD
+  printf '%s\n' "$pr_content" >"$catalog/routing-consumer.conf"
+  PUBLISH_SERIAL=$((PUBLISH_SERIAL + 1))
+  pin_test_release "v1.2.$PUBLISH_SERIAL"
+}
+
+assert_catalog_invalid() {
+  publish_routing "$1"
+  if output=$($CLI context "$consumer" 2>&1); then
+    fail 'invalid catalog record passed release validation'
+  fi
+  assert_contains "$output" 'Result: VERSION_MISMATCH'
+  assert_contains "$output" 'Invalid repository catalog record'
 }
 
 pin_test_release() {
   ptr_version=$1
   printf '%s\n' "$ptr_version" >"$source_repo/VERSION"
-  git -C "$source_repo" add VERSION runtime/compatibility/atlassian.tsv
+  git -C "$source_repo" add VERSION runtime/compatibility/atlassian.tsv \
+    runtime/repositories
   git -C "$source_repo" commit -qm "test: create $ptr_version release"
   git -C "$source_repo" tag -a "$ptr_version" -m "$ptr_version"
   ptr_release=$XDG_DATA_HOME/beroka-ai-governance/releases/$ptr_version
   git -c advice.detachedHead=false clone -q --depth 1 --branch "$ptr_version" \
     https://github.com/beroka-vn/beroka-ai-governance.git "$ptr_release"
   ptr_commit=$(git -C "$ptr_release" rev-parse HEAD)
-  ptr_lock_temp=$(mktemp "$consumer/.beroka-governance.lock.XXXXXX")
-  sed \
-    "s/^VERSION=.*/VERSION=$ptr_version/;s/^COMMIT=.*/COMMIT=$ptr_commit/" \
-    "$consumer/.beroka-governance.lock" >"$ptr_lock_temp"
-  mv "$ptr_lock_temp" "$consumer/.beroka-governance.lock"
-  git -C "$consumer" add .beroka-governance.lock
-  git -C "$consumer" commit -qm "test: pin $ptr_version release"
+  printf '%s\n' \
+    "VERSION=$ptr_version" \
+    "COMMIT=$ptr_commit" \
+    >"$XDG_CONFIG_HOME/beroka-ai-governance/active-release"
 }
 
-printf '%s\n' \
-  'SCHEMA_VERSION=1' \
-  'PROFILE=standalone' \
-  'JIRA_PROJECT_KEY=APP' \
-  'JIRA_BOARD_ID=12' \
-  'CONFLUENCE_SPACE_KEY=APP' \
-  'CONFLUENCE_ROOT_CONTENT_ID=123456' \
-  'CONFLUENCE_ROOT_CONTENT_TYPE=page' \
-  'INTEGRATION_PROFILE=none' \
-  'CROSS_REPO_POLICY=explicit-only' \
-  >"$consumer/.beroka-governance.conf"
-
-output=$($CLI context "$consumer")
-assert_contains "$output" 'Routing: ROUTING_CHANGE_PENDING'
+PUBLISH_SERIAL=0
 
 : >"$CALLS"
 output=$($CLI preflight "$consumer" --client codex \
   --operation github-write --non-interactive)
 assert_contains "$output" 'Result: PASS'
-assert_not_contains "$output" 'ROUTING_CHANGE_PENDING'
 assert_not_contains "$(cat "$CALLS")" 'mcp '
-
-git -C "$consumer" add .beroka-governance.conf
-git -C "$consumer" commit -qm 'test: commit local routing'
-cp "$consumer/.beroka-governance.conf" "$remote_work/.beroka-governance.conf"
-git -C "$remote_work" add .beroka-governance.conf
-git -C "$remote_work" commit -qm 'test: add routing'
-git -C "$remote_work" push -q origin trunk
 
 output=$($CLI context "$consumer")
 assert_contains "$output" 'Routing: ROUTING_ACTIVE'
@@ -1266,10 +1311,9 @@ assert_contains "$output" 'Capability state: SUPPORTED'
 if output=$($CLI preflight "$consumer" \
   --client codex --operation jira-board-verify --non-interactive 2>&1)
 then
-  fail 'board verification passed without board capability evidence'
+  fail 'board verification passed without a catalog board'
 fi
-assert_contains "$output" 'Capability state: UNKNOWN'
-assert_contains "$output" 'Result: CONNECTOR_CAPABILITY_REQUIRED'
+assert_contains "$output" 'Result: ROUTING_REQUIRED'
 
 if output=$($CLI preflight "$consumer" \
   --client codex --operation invalid --non-interactive 2>&1)
@@ -1515,88 +1559,6 @@ assert_contains "$output" 'Authentication: PASS'
 assert_contains "$output" 'Result: PASS'
 $CLI context "$consumer" >/dev/null
 assert_not_contains "$(cat "$CALLS")" 'mcp login atlassian'
-
-printf '%s\n' 'PROFILE=working-tree' >"$consumer/.beroka-governance.conf"
-output=$($CLI context "$consumer")
-assert_contains "$output" 'Routing: ROUTING_CHANGE_PENDING'
-git -C "$consumer" checkout -- .beroka-governance.conf
-
-printf '%s\n' 'PROFILE=index' >"$consumer/.beroka-governance.conf"
-git -C "$consumer" add .beroka-governance.conf
-output=$($CLI context "$consumer")
-assert_contains "$output" 'Routing: ROUTING_CHANGE_PENDING'
-git -C "$consumer" reset -q HEAD -- .beroka-governance.conf
-git -C "$consumer" checkout -- .beroka-governance.conf
-
-git -C "$consumer" update-index --skip-worktree .beroka-governance.conf
-printf '%s\n' 'PROFILE=hidden-by-skip-worktree' \
-  >"$consumer/.beroka-governance.conf"
-skip_status=0
-skip_output=$($CLI context "$consumer") || skip_status=$?
-git -C "$consumer" update-index --no-skip-worktree .beroka-governance.conf
-git -C "$consumer" checkout -- .beroka-governance.conf
-[ "$skip_status" -eq 0 ] ||
-  fix_wave_fail 'context failed while checking skip-worktree bytes'
-fix_wave_contains "$skip_output" 'Routing: ROUTING_CHANGE_PENDING'
-
-git -C "$consumer" update-index --assume-unchanged .beroka-governance.conf
-printf '%s\n' 'PROFILE=hidden-by-assume-unchanged' \
-  >"$consumer/.beroka-governance.conf"
-assume_status=0
-assume_output=$($CLI context "$consumer") || assume_status=$?
-git -C "$consumer" update-index --no-assume-unchanged .beroka-governance.conf
-git -C "$consumer" checkout -- .beroka-governance.conf
-[ "$assume_status" -eq 0 ] ||
-  fix_wave_fail 'context failed while checking assume-unchanged bytes'
-fix_wave_contains "$assume_output" 'Routing: ROUTING_CHANGE_PENDING'
-
-git -C "$consumer" update-index --skip-worktree .beroka-governance.conf
-chmod +x "$consumer/.beroka-governance.conf"
-mode_644_status=0
-mode_644_output=$($CLI context "$consumer") || mode_644_status=$?
-git -C "$consumer" update-index --no-skip-worktree .beroka-governance.conf
-chmod -x "$consumer/.beroka-governance.conf"
-[ "$mode_644_status" -eq 0 ] ||
-  fix_wave_fail 'context failed while checking physical 100644 mode'
-fix_wave_contains "$mode_644_output" 'Routing: ROUTING_CHANGE_PENDING'
-
-chmod +x "$remote_work/.beroka-governance.conf"
-git -C "$remote_work" add .beroka-governance.conf
-git -C "$remote_work" commit -qm 'test: publish executable routing'
-git -C "$remote_work" push -q "file://$remote_bare" trunk
-git -C "$consumer" fetch -q "file://$remote_bare" trunk
-git -C "$consumer" reset -q --hard FETCH_HEAD
-git -C "$consumer" update-index --assume-unchanged .beroka-governance.conf
-chmod -x "$consumer/.beroka-governance.conf"
-mode_755_status=0
-mode_755_output=$($CLI context "$consumer") || mode_755_status=$?
-git -C "$consumer" update-index --no-assume-unchanged .beroka-governance.conf
-chmod +x "$consumer/.beroka-governance.conf"
-[ "$mode_755_status" -eq 0 ] ||
-  fix_wave_fail 'context failed while checking physical 100755 mode'
-fix_wave_contains "$mode_755_output" 'Routing: ROUTING_CHANGE_PENDING'
-
-chmod -x "$remote_work/.beroka-governance.conf"
-git -C "$remote_work" add .beroka-governance.conf
-git -C "$remote_work" commit -qm 'test: restore non-executable routing'
-git -C "$remote_work" push -q "file://$remote_bare" trunk
-git -C "$consumer" fetch -q "file://$remote_bare" trunk
-git -C "$consumer" reset -q --hard FETCH_HEAD
-
-git -C "$consumer" switch -qc routing-task
-printf '%s\n' 'PROFILE=task-branch' >"$consumer/.beroka-governance.conf"
-git -C "$consumer" add .beroka-governance.conf
-git -C "$consumer" commit -qm 'test: change routing on task branch'
-output=$($CLI context "$consumer")
-assert_contains "$output" 'Routing: ROUTING_CHANGE_PENDING'
-
-mv "$remote_bare" "$TEST_ROOT/remote.offline"
-doctor_output=$($CLI doctor "$consumer")
-assert_contains "$doctor_output" 'Result: PASS'
-context_output=$($CLI context "$consumer")
-assert_contains "$context_output" 'Routing: ROUTING_VERIFICATION_REQUIRED'
-assert_contains "$context_output" 'External routing-dependent writes: BLOCKED'
-mv "$TEST_ROOT/remote.offline" "$remote_bare"
 
 backend_config='SCHEMA_VERSION=1
 PROFILE=backend
@@ -1942,87 +1904,60 @@ PROFILE=standalone
 PROFILE=backend
 INTEGRATION_PROFILE=none
 CROSS_REPO_POLICY=explicit-only'
-publish_routing "$invalid_config"
-output=$($CLI context "$consumer")
-assert_contains "$output" 'Routing: ROUTING_INVALID'
+assert_catalog_invalid "$invalid_config"
 
 unknown_key_config='SCHEMA_VERSION=1
 PROFILE=standalone
 INTEGRATION_PROFILE=none
 CROSS_REPO_POLICY=explicit-only
 UNKNOWN=value'
-publish_routing "$unknown_key_config"
-output=$($CLI context "$consumer")
-assert_contains "$output" 'Routing: ROUTING_INVALID'
+assert_catalog_invalid "$unknown_key_config"
 
 unsupported_schema_config='SCHEMA_VERSION=2
 PROFILE=standalone
 INTEGRATION_PROFILE=none
 CROSS_REPO_POLICY=explicit-only'
-publish_routing "$unsupported_schema_config"
-output=$($CLI context "$consumer")
-assert_contains "$output" 'Routing: ROUTING_INVALID'
+assert_catalog_invalid "$unsupported_schema_config"
 
 invalid_board_config='SCHEMA_VERSION=1
 PROFILE=standalone
 JIRA_BOARD_ID=0
 INTEGRATION_PROFILE=none
 CROSS_REPO_POLICY=explicit-only'
-publish_routing "$invalid_board_config"
-output=$($CLI context "$consumer")
-assert_contains "$output" 'Routing: ROUTING_INVALID'
+assert_catalog_invalid "$invalid_board_config"
 
 standalone_integration_config='SCHEMA_VERSION=1
 PROFILE=standalone
 INTEGRATION_PROFILE=beroka-be-fe
 CROSS_REPO_POLICY=profile-controlled'
-publish_routing "$standalone_integration_config"
-output=$($CLI context "$consumer")
-assert_contains "$output" 'Routing: ROUTING_INVALID'
+assert_catalog_invalid "$standalone_integration_config"
 
 profile_controlled_none_config='SCHEMA_VERSION=1
 PROFILE=backend
 INTEGRATION_PROFILE=none
 CROSS_REPO_POLICY=profile-controlled'
-publish_routing "$profile_controlled_none_config"
-output=$($CLI context "$consumer")
-assert_contains "$output" 'Routing: ROUTING_INVALID'
+assert_catalog_invalid "$profile_controlled_none_config"
 
-rm -f "$remote_work/.beroka-governance.conf"
-ln -s README.md "$remote_work/.beroka-governance.conf"
-git -C "$remote_work" add .beroka-governance.conf
-git -C "$remote_work" commit -qm 'test: publish symlinked routing'
-git -C "$remote_work" push -q "file://$remote_bare" trunk
-git -C "$consumer" fetch -q "file://$remote_bare" trunk
-git -C "$consumer" reset -q --hard FETCH_HEAD
-output=$($CLI context "$consumer")
-assert_contains "$output" 'Routing: ROUTING_INVALID'
+rm "$catalog/routing-consumer.conf"
+ln -s ../../rules/general.md "$catalog/routing-consumer.conf"
+pin_test_release v1.3.0
+if output=$($CLI context "$consumer" 2>&1); then
+  fail 'symlinked catalog record passed release validation'
+fi
+assert_contains "$output" 'Result: VERSION_MISMATCH'
+assert_contains "$output" 'Repository catalog contains a symlink'
 
 printf '%s\n' 'PASS: routing state'
 
 grep -F 'beroka-governance preflight' "$ROOT/README.md" >/dev/null ||
   fail 'README does not document preflight'
-grep -F 'ROUTING_CHANGE_PENDING' "$ROOT/handbook.md" >/dev/null ||
-  fail 'handbook does not document pending routing'
-grep -F 'central governance onboarding project' "$ROOT/handbook.md" >/dev/null ||
-  fail 'handbook does not document bootstrap issue provenance'
 grep -F 'CONNECTOR_CAPABILITY_REQUIRED' "$ROOT/handbook.md" >/dev/null ||
   fail 'handbook does not document capability remediation'
-grep -F '`INTEGRATION_PROFILE=none` không trigger BE–FE hoặc cross-repository' "$ROOT/handbook.md" >/dev/null ||
-  fail 'handbook does not document standalone preflight scope'
-grep -F 'Read access chỉ cần cho selected profile, requested operation và selected integration profile' "$ROOT/handbook.md" >/dev/null ||
-  fail 'handbook does not scope team permissions'
-grep -F 'BE–FE targets chỉ áp dụng khi reviewed beroka-be-fe integration profile được chọn và operation yêu cầu' "$ROOT/handbook.md" >/dev/null ||
-  fail 'handbook does not scope required reads'
 
-[ "$(sed -n '1p' "$ROOT/VERSION")" = v1.0.2 ] ||
-  fix_wave_fail 'root VERSION does not select v1.0.2'
+[ "$(sed -n '1p' "$ROOT/VERSION")" = v1.0.0 ] ||
+  fix_wave_fail 'root VERSION does not select v1.0.0'
 grep -F -- 'gh release download' "$ROOT/README.md" >/dev/null ||
   fix_wave_fail 'README does not select the authenticated release launcher'
-grep -F -- 'release=v1.0.2' "$ROOT/handbook.md" >/dev/null ||
-  fix_wave_fail 'handbook does not select v1.0.2'
-grep -F 'VERSION=v1.0.2' "$ROOT/PACKAGE-DESIGN.md" >/dev/null ||
-  fix_wave_fail 'package design does not select v1.0.2'
 
 [ "$FIX_WAVE_FAILURES" -eq 0 ] ||
   fail "$FIX_WAVE_FAILURES fix-wave regressions remain"

@@ -74,25 +74,6 @@ ensure_jq() {
     die DEPENDENCY_MISSING 'Remediation: install jq'
 }
 
-github_slug() {
-  gs_url=$1
-  case "$gs_url" in
-    https://github.com/*) gs_slug=${gs_url#https://github.com/} ;;
-    git@github.com:*) gs_slug=${gs_url#git@github.com:} ;;
-    ssh://git@github.com/*)
-      gs_slug=${gs_url#ssh://git@github.com/}
-      ;;
-    *) return 1 ;;
-  esac
-  while [ "${gs_slug%/}" != "$gs_slug" ]; do
-    gs_slug=${gs_slug%/}
-  done
-  gs_slug=${gs_slug%.git}
-  printf '%s\n' "$gs_slug" |
-    grep -Eq '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' || return 1
-  printf '%s\n' "$gs_slug"
-}
-
 client=
 non_interactive=0
 upgrade=0
@@ -140,30 +121,6 @@ printf '%s\n' "$RELEASE_COMMIT" |
   grep -Eq '^[0-9a-f]{40}$' ||
   die RELEASE_VERIFICATION_FAILED 'Invalid embedded release commit'
 
-repo=$(git rev-parse --show-toplevel 2>/dev/null) ||
-  die REPOSITORY_REQUIRED 'Run this command inside the repository to register'
-repo=$(CDPATH= cd -- "$repo" && pwd -P) ||
-  die REPOSITORY_REQUIRED 'Cannot resolve the current Git root'
-
-remote_count=0
-origin_url=$(git -C "$repo" config --get remote.origin.url 2>/dev/null || :)
-if [ -n "$origin_url" ] &&
-   github_slug "$origin_url" >/dev/null 2>&1
-then
-  remote_count=1
-fi
-if [ "$remote_count" -eq 0 ]; then
-  for remote_name in $(git -C "$repo" remote); do
-    remote_url=$(git -C "$repo" config --get \
-      "remote.$remote_name.url" 2>/dev/null || :)
-    github_slug "$remote_url" >/dev/null 2>&1 || continue
-    remote_count=$((remote_count + 1))
-  done
-fi
-[ "$remote_count" -eq 1 ] ||
-  die REMOTE_MISMATCH \
-    'Cannot resolve exactly one canonical GitHub remote'
-
 bootstrap_root=$(mktemp -d \
   "${TMPDIR:-/tmp}/beroka-governance-bootstrap.XXXXXX") ||
   die GOVERNANCE_NOT_READY 'Cannot create the bootstrap directory'
@@ -190,9 +147,10 @@ checked_out_commit=$(git -C "$bootstrap_root/repo" \
 ensure_jq
 
 cli=$bootstrap_root/repo/bin/beroka-governance
-set -- bootstrap "$repo" \
+set -- bootstrap \
   --client "$client" \
-  --version "$RELEASE_VERSION"
+  --version "$RELEASE_VERSION" \
+  --expected-commit "$RELEASE_COMMIT"
 [ "$upgrade" -eq 0 ] || set -- "$@" --upgrade
 [ "$non_interactive" -eq 0 ] || set -- "$@" --non-interactive
 if [ "$non_interactive" -eq 0 ]; then

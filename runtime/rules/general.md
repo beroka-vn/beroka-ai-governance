@@ -1,6 +1,6 @@
 # General Repository Governance
 
-- Work only in the registered repository, issue, branch, and file scope.
+- Work only in the current repository, issue, branch, and file scope.
 - Read existing linked records before asking for information or creating work.
 - Do not guess a Jira project, Confluence location, repository, dependency,
   counterpart, parent, assignee, permission, or integration mapping.

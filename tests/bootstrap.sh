@@ -13,6 +13,8 @@ export BEROKA_GOV_BIN_DIR=$TEST_ROOT/bin
 FAKE_BIN=$TEST_ROOT/fake-bin
 DISABLED_BIN=$TEST_ROOT/disabled-bin
 CALLS=$TEST_ROOT/calls
+START_MARKER='<!-- BEROKA-GOVERNANCE:START -->'
+END_MARKER='<!-- BEROKA-GOVERNANCE:END -->'
 export CALLS
 mkdir -p "$HOME" "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" \
   "$BEROKA_GOV_BIN_DIR" "$FAKE_BIN" "$DISABLED_BIN"
@@ -42,6 +44,14 @@ assert_one_result() {
   aor_count=$(printf '%s\n' "$1" | grep -c '^Result:' || :)
   [ "$aor_count" -eq 1 ] ||
     fail "expected exactly one Result line, found $aor_count in [$1]"
+}
+
+assert_separate_managed_block() {
+  asmb_file=$1
+  asmb_start_count=$(grep -Fxc "$START_MARKER" "$asmb_file" || :)
+  asmb_end_count=$(grep -Fxc "$END_MARKER" "$asmb_file" || :)
+  [ "$asmb_start_count" -eq 1 ] && [ "$asmb_end_count" -eq 1 ] ||
+    fail "instruction markers are not separately delimited in $asmb_file"
 }
 
 new_repo() {
@@ -168,14 +178,27 @@ git -C "$source_repo" config user.email release@example.invalid
 git -C "$source_repo" add .
 git -C "$source_repo" commit -qm 'test: release v1.1.0'
 git -C "$source_repo" tag -a v1.1.0 -m v1.1.0
+v1_1_commit=$(git -C "$source_repo" rev-parse v1.1.0^{commit})
 
 printf '%s\n' v1.2.0 >"$source_repo/VERSION"
-git -C "$source_repo" add VERSION
+for entrypoint in AGENTS.md CLAUDE.md; do
+  sed 's/verified Beroka governance/verified v1.2 Beroka governance/' \
+    "$source_repo/templates/agent-entrypoints/$entrypoint" \
+    >"$source_repo/templates/agent-entrypoints/$entrypoint.next"
+  mv "$source_repo/templates/agent-entrypoints/$entrypoint.next" \
+    "$source_repo/templates/agent-entrypoints/$entrypoint"
+done
+git -C "$source_repo" add VERSION templates/agent-entrypoints
 git -C "$source_repo" commit -qm 'test: release v1.2.0'
 git -C "$source_repo" tag -a v1.2.0 -m v1.2.0
 v1_2_commit=$(git -C "$source_repo" rev-parse v1.2.0^{commit})
 git -C "$source_repo" tag -a v2.0.0-rc1 -m v2.0.0-rc1
 git -C "$source_repo" tag v9.0.0
+
+printf '%s\n' v2.0.0 >"$source_repo/VERSION"
+git -C "$source_repo" add VERSION
+git -C "$source_repo" commit -qm 'test: release v2.0.0'
+git -C "$source_repo" tag -a v2.0.0 -m v2.0.0
 
 printf '%s\n' v8.0.0 >"$source_repo/VERSION"
 git -C "$source_repo" add VERSION
@@ -187,13 +210,6 @@ git config --global \
 
 repo=$TEST_ROOT/application
 new_repo "$repo" bootstrap-application
-
-if output=$($CLI bootstrap "$repo" --client codex \
-  --non-interactive 2>&1)
-then
-  fail 'bootstrap accepted an implicit non-interactive latest'
-fi
-assert_contains "$output" 'Result: RELEASE_RESOLUTION_REQUIRED'
 
 if output=$($CLI bootstrap "$repo" --version v1.1.0 \
   --non-interactive 2>&1)
@@ -224,247 +240,475 @@ fi
 assert_contains "$output" 'Usage:'
 
 if output=$($CLI bootstrap "$repo" --client codex \
-  --version v1.1.0 --upgrade --non-interactive 2>&1)
-then
-  fail 'bootstrap upgrade accepted an unregistered repository'
-fi
-assert_contains "$output" 'Result: GOVERNANCE_NOT_READY'
-
-if output=$($CLI bootstrap "$repo" --client codex \
   --api-token should-not-appear 2>&1)
 then
   fail 'bootstrap accepted a developer API token'
 fi
 assert_not_contains "$output" 'should-not-appear'
 
-: >"$CALLS"
-output=$(printf 'y\ny\n' | script -qec \
-  "$CLI bootstrap $repo" /dev/null 2>&1)
-assert_contains "$output" 'Detected client: codex'
-assert_contains "$output" 'Resolved release: v1.2.0'
-assert_contains "$output" "Release commit: $v1_2_commit"
-assert_contains "$output" 'Release: PASS'
-assert_contains "$output" 'Repository registration: PASS'
-assert_contains "$output" 'Client entrypoint: ADDED'
-assert_contains "$output" 'Selected client: codex'
-assert_contains "$output" 'Repository changes: REVIEW_REQUIRED'
-assert_contains "$output" 'Repository pull request: REQUIRED'
+incidental_repo=$TEST_ROOT/incidental-gitlab-repository
+new_repo "$incidental_repo" incidental-gitlab-repository
+git -C "$incidental_repo" remote set-url origin \
+  https://gitlab.com/example/incidental.git
+incidental_before=$(snapshot_repo "$incidental_repo")
+if ! output=$(cd "$incidental_repo" &&
+  $CLI bootstrap --client codex --version v1.1.0 \
+    --non-interactive 2>&1)
+then
+  fail "repo-independent bootstrap inferred incidental Git state: $output"
+fi
 assert_contains "$output" 'Result: PASS'
-assert_one_result "$output"
-assert_not_contains "$output" 'v2.0.0-rc1'
-assert_not_contains "$output" 'v9.0.0'
-grep -F 'VERSION=v1.2.0' "$repo/.beroka-governance.lock" >/dev/null ||
-  fail 'bootstrap did not pin the resolved version'
-grep -F "COMMIT=$v1_2_commit" "$repo/.beroka-governance.lock" >/dev/null ||
-  fail 'bootstrap did not pin the resolved commit'
-grep -Fx 'CLIENTS=codex' "$repo/.beroka-governance.lock" >/dev/null ||
-  fail 'bootstrap did not record the selected client'
-[ -f "$repo/AGENTS.md" ] ||
-  fail 'Codex bootstrap omitted AGENTS.md'
-[ ! -e "$repo/CLAUDE.md" ] ||
-  fail 'Codex bootstrap created CLAUDE.md'
-[ ! -e "$repo/.cursor" ] ||
-  fail 'Codex bootstrap created .cursor'
+assert_contains "$output" 'Release: PASS'
+assert_contains "$output" 'Connector: PASS'
+assert_not_contains "$output" 'Repository:'
+[ "$incidental_before" = "$(snapshot_repo "$incidental_repo")" ] ||
+  fail 'repo-independent bootstrap changed the incidental repository'
+[ "$(cat "$XDG_CONFIG_HOME/beroka-ai-governance/clients")" = codex ] ||
+  fail 'repo-independent bootstrap omitted Codex enrollment'
+assert_separate_managed_block "$HOME/.codex/AGENTS.md"
+$CLI uninstall --force >/dev/null
+rm -f "$XDG_CONFIG_HOME/fake-codex-configured"
+
+: >"$CALLS"
+repo_before=$(snapshot_repo "$repo")
+mkdir -p "$HOME/.codex"
+codex_personal_expected=$TEST_ROOT/codex-personal-expected
+printf '%s' '# Personal Codex instruction' >"$codex_personal_expected"
+cp "$codex_personal_expected" "$HOME/.codex/AGENTS.md"
+
+output=$($CLI bootstrap "$repo" --client codex \
+  --version v1.1.0 --non-interactive)
+
+[ "$repo_before" = "$(snapshot_repo "$repo")" ] ||
+  fail 'bootstrap changed the application repository'
+assert_contains "$(cat "$HOME/.codex/AGENTS.md")" \
+  '# Personal Codex instruction'
+assert_contains "$(cat "$HOME/.codex/AGENTS.md")" \
+  '<!-- BEROKA-GOVERNANCE:START -->'
+assert_separate_managed_block "$HOME/.codex/AGENTS.md"
+[ "$(cat "$XDG_CONFIG_HOME/beroka-ai-governance/clients")" = codex ] ||
+  fail 'bootstrap omitted Codex enrollment'
+assert_not_contains "$output" 'Repository pull request:'
 assert_contains "$(cat "$CALLS")" 'codex app-server --stdio'
 assert_not_contains "$(cat "$CALLS")" 'claude '
+assert_contains "$output" 'Repository: beroka-vn/bootstrap-application'
+doctor_output=$($CLI doctor "$repo" --client codex)
+assert_contains "$doctor_output" 'Instruction: INSTALLED'
 
-before=$(snapshot_repo "$repo")
-: >"$CALLS"
-output=$($CLI bootstrap "$repo" --client codex --non-interactive)
-after=$(snapshot_repo "$repo")
-[ "$before" = "$after" ] ||
-  fail 'bootstrap changed an already registered repository'
-assert_contains "$output" 'Version: v1.2.0'
-assert_contains "$output" 'Repository registration: NO_CHANGE'
-assert_contains "$output" 'Client entrypoint: ALREADY_CONFIGURED'
-assert_contains "$output" 'Selected client: codex'
-assert_contains "$output" 'Repository changes: NONE'
-assert_contains "$output" 'Repository pull request: NOT_REQUIRED'
-assert_one_result "$output"
-
-git -C "$repo" add .beroka-governance.lock AGENTS.md
-git -C "$repo" commit -qm 'test: commit Codex bootstrap'
-
+cat_failure_before=$TEST_ROOT/codex-before-cat-failure
+cp "$HOME/.codex/AGENTS.md" "$cat_failure_before"
+cat >"$FAKE_BIN/cat" <<'EOF'
+#!/bin/sh
+case "${1:-}" in
+  */beroka-governance-instruction.*) exit 73 ;;
+esac
+exec /usr/bin/cat "$@"
+EOF
+chmod 755 "$FAKE_BIN/cat"
 if output=$($CLI bootstrap "$repo" --client codex \
   --version v1.1.0 --non-interactive 2>&1)
 then
-  fail 'bootstrap silently changed a pinned version'
+  fail 'bootstrap masked a personal-instruction read failure'
+fi
+assert_contains "$output" 'Result: GOVERNANCE_NOT_READY'
+cmp -s "$cat_failure_before" "$HOME/.codex/AGENTS.md" ||
+  fail 'failed instruction merge changed personal bytes'
+rm -f "$FAKE_BIN/cat"
+
+tail_failure_personal=$TEST_ROOT/codex-tail-failure-personal
+printf '%s\n' '# Newline Codex instruction' >"$tail_failure_personal"
+cp "$tail_failure_personal" "$HOME/.codex/AGENTS.override.md"
+tail_failure_before=$TEST_ROOT/codex-before-tail-failure
+cp "$HOME/.codex/AGENTS.override.md" "$tail_failure_before"
+tail_failure_tmp=$TEST_ROOT
+tail_stage_mode_log=$TEST_ROOT/instruction-tail-stage-mode
+export TAIL_STAGE_MODE_LOG=$tail_stage_mode_log
+cat >"$FAKE_BIN/tail" <<'EOF'
+#!/bin/sh
+if [ "$#" -eq 3 ] && [ "$1" = -c ] && [ "$2" = 1 ]; then
+  case "$3" in
+    */beroka-governance-instruction.*)
+      tail_stage_dir=${3%/*}
+      tail_stage_mode=600
+      check_stage_mode() {
+        checked_mode=$(/usr/bin/stat -c '%a' "$1")
+        [ "$checked_mode" = 600 ] || tail_stage_mode=$checked_mode
+      }
+      case "${tail_stage_dir##*/}" in
+        beroka-governance-instruction.*)
+          for tail_stage_file in "$tail_stage_dir"/*; do
+            check_stage_mode "$tail_stage_file"
+          done
+          ;;
+        *)
+          for tail_stage_file in \
+            "$tail_stage_dir"/beroka-governance-instruction.*
+          do
+            check_stage_mode "$tail_stage_file"
+          done
+          ;;
+      esac
+      printf '%s\n' "$tail_stage_mode" >"$TAIL_STAGE_MODE_LOG"
+      exit 74
+      ;;
+  esac
+fi
+exec /usr/bin/tail "$@"
+EOF
+chmod 755 "$FAKE_BIN/tail"
+if output=$(TMPDIR="$tail_failure_tmp" \
+  $CLI bootstrap "$repo" --client codex \
+  --version v1.1.0 --non-interactive 2>&1)
+then
+  fail 'bootstrap masked a personal-instruction tail failure'
+fi
+assert_contains "$output" 'Result: GOVERNANCE_NOT_READY'
+assert_contains "$output" 'Cannot inspect codex instruction boundary'
+cmp -s "$tail_failure_before" "$HOME/.codex/AGENTS.override.md" ||
+  fail 'failed last-byte read changed personal bytes'
+[ -z "$(find "$tail_failure_tmp" -maxdepth 1 \
+  -name 'beroka-governance-instruction.*' -print)" ] ||
+  fail 'failed instruction read left personal staging files'
+[ "$(cat "$tail_stage_mode_log")" = 600 ] ||
+  fail 'personal instruction staging files were not mode 600'
+rm -f "$FAKE_BIN/tail"
+
+output=$($CLI bootstrap "$repo" --client codex \
+  --version v1.1.0 --non-interactive)
+assert_separate_managed_block "$HOME/.codex/AGENTS.override.md"
+doctor_output=$($CLI doctor "$repo" --client codex)
+assert_contains "$doctor_output" 'Instruction: INSTALLED'
+rm -f "$HOME/.codex/AGENTS.override.md"
+
+nul_personal_expected=$TEST_ROOT/codex-nul-personal-expected
+printf '# NUL Codex instruction\000' >"$nul_personal_expected"
+cp "$nul_personal_expected" "$HOME/.codex/AGENTS.override.md"
+output=$($CLI bootstrap "$repo" --client codex \
+  --version v1.1.0 --non-interactive)
+assert_separate_managed_block "$HOME/.codex/AGENTS.override.md"
+if ! doctor_output=$($CLI doctor "$repo" --client codex 2>&1); then
+  fail "Doctor rejected NUL-ended personal instructions: $doctor_output"
+fi
+assert_contains "$doctor_output" 'Instruction: INSTALLED'
+nul_instruction_before_repeat=$TEST_ROOT/codex-nul-before-repeat
+cp "$HOME/.codex/AGENTS.override.md" "$nul_instruction_before_repeat"
+output=$($CLI bootstrap "$repo" --client codex \
+  --version v1.1.0 --non-interactive)
+cmp -s "$nul_instruction_before_repeat" \
+  "$HOME/.codex/AGENTS.override.md" ||
+  fail 'repeat bootstrap changed NUL-ended personal instructions'
+$CLI uninstall --force >/dev/null
+cmp -s "$nul_personal_expected" "$HOME/.codex/AGENTS.override.md" ||
+  fail 'uninstall changed NUL-ended personal instructions'
+rm -f "$HOME/.codex/AGENTS.override.md"
+output=$($CLI bootstrap "$repo" --client codex \
+  --version v1.1.0 --non-interactive)
+assert_separate_managed_block "$HOME/.codex/AGENTS.md"
+
+active_release=$XDG_CONFIG_HOME/beroka-ai-governance/active-release
+active_before=$(cat "$active_release")
+if output=$($CLI bootstrap "$repo" --client codex \
+  --version v1.1.0 \
+  --expected-commit 0000000000000000000000000000000000000000 \
+  --non-interactive 2>&1)
+then
+  fail 'bootstrap accepted a commit different from the verified launcher'
 fi
 assert_contains "$output" 'Result: VERSION_MISMATCH'
+[ "$active_before" = "$(cat "$active_release")" ] ||
+  fail 'commit mismatch changed the active release'
 
-upgrade_repo=$TEST_ROOT/upgrade-application
-new_repo "$upgrade_repo" bootstrap-upgrade-application
-$CLI bootstrap "$upgrade_repo" --client codex \
-  --version v1.1.0 --non-interactive >/dev/null
-git -C "$upgrade_repo" add .beroka-governance.lock AGENTS.md
-git -C "$upgrade_repo" commit -qm 'test: commit v1.1 bootstrap'
-upgrade_output=$($CLI bootstrap "$upgrade_repo" --client codex \
-  --version v1.2.0 --upgrade --non-interactive)
-assert_contains "$upgrade_output" 'Version: v1.2.0'
-assert_contains "$upgrade_output" 'Repository pull request: REQUIRED'
-assert_contains "$(cat "$upgrade_repo/.beroka-governance.lock")" \
-  'VERSION=v1.2.0'
-git -C "$upgrade_repo" add .beroka-governance.lock AGENTS.md
-git -C "$upgrade_repo" commit -qm 'test: commit v1.2 bootstrap'
-same_version_output=$($CLI bootstrap "$upgrade_repo" --client codex \
-  --version v1.2.0 --upgrade --non-interactive)
-assert_contains "$same_version_output" \
-  'Repository pull request: NOT_REQUIRED'
-assert_one_result "$same_version_output"
+git -C "$source_repo" tag -fa v1.1.0 -m moved >/dev/null
+if output=$($CLI bootstrap "$repo" --client codex \
+  --version v1.1.0 --non-interactive 2>&1)
+then
+  fail 'direct bootstrap accepted a moved remote tag'
+fi
+assert_contains "$output" 'Result: VERSION_MISMATCH'
+[ "$active_before" = "$(cat "$active_release")" ] ||
+  fail 'moved tag changed the active release'
+git -C "$source_repo" tag -fa v1.1.0 "$v1_1_commit" -m v1.1.0 \
+  >/dev/null
 
+codex_before=$TEST_ROOT/codex-before-repeat
+cp "$HOME/.codex/AGENTS.md" "$codex_before"
+output=$(cd "$TEST_ROOT" &&
+  $CLI bootstrap --client codex --version v1.1.0 --non-interactive)
+cmp -s "$codex_before" "$HOME/.codex/AGENTS.md" ||
+  fail 'repeat Codex bootstrap changed user instructions'
+assert_separate_managed_block "$HOME/.codex/AGENTS.md"
+assert_not_contains "$output" 'Repository pull request:'
+assert_not_contains "$output" 'Repository:'
+
+output=$(cd "$repo" &&
+  $CLI bootstrap --client codex --version v1.1.0 --non-interactive)
+assert_not_contains "$output" 'Repository:'
+output=$($CLI bootstrap "$repo" --client codex \
+  --version v1.1.0 --non-interactive)
+assert_contains "$output" 'Repository: beroka-vn/bootstrap-application'
+
+codex_override_expected=$TEST_ROOT/codex-override-expected
+printf '%s' '# Active override' >"$codex_override_expected"
+cp "$codex_override_expected" "$HOME/.codex/AGENTS.override.md"
+output=$($CLI bootstrap "$repo" --client codex \
+  --version v1.1.0 --non-interactive)
+assert_contains "$(cat "$HOME/.codex/AGENTS.override.md")" '# Active override'
+assert_contains "$(cat "$HOME/.codex/AGENTS.override.md")" \
+  '<!-- BEROKA-GOVERNANCE:START -->'
+assert_separate_managed_block "$HOME/.codex/AGENTS.override.md"
+
+mkdir -p "$HOME/.claude"
+claude_personal_expected=$TEST_ROOT/claude-personal-expected
+printf '%s' '# Personal Claude instruction' >"$claude_personal_expected"
+cp "$claude_personal_expected" "$HOME/.claude/CLAUDE.md"
 cp "$DISABLED_BIN/claude" "$FAKE_BIN/claude"
 chmod 755 "$FAKE_BIN/claude"
 : >"$CALLS"
-output=$($CLI bootstrap "$repo" --client claude --non-interactive)
-assert_contains "$output" 'Selected client: claude'
-assert_contains "$output" 'Repository changes: REVIEW_REQUIRED'
-assert_contains "$output" 'Repository pull request: REQUIRED'
-grep -Fx 'CLIENTS=codex,claude' \
-  "$repo/.beroka-governance.lock" >/dev/null ||
-  fail 'second bootstrap did not add Claude'
-[ -f "$repo/CLAUDE.md" ] ||
-  fail 'second bootstrap omitted CLAUDE.md'
-[ ! -e "$repo/.cursor" ] ||
-  fail 'second bootstrap created Cursor files'
-assert_contains "$(cat "$CALLS")" 'claude mcp'
-assert_not_contains "$(cat "$CALLS")" 'codex '
-
-before=$(snapshot_repo "$repo")
-output=$($CLI bootstrap "$repo" --client claude --non-interactive)
-after=$(snapshot_repo "$repo")
-[ "$before" = "$after" ] ||
-  fail 'repeat Claude bootstrap changed an already registered repository'
-assert_contains "$output" 'Repository changes: NONE'
-assert_contains "$output" 'Repository pull request: NOT_REQUIRED'
-
-multi_repo=$TEST_ROOT/multiple-clients
-new_repo "$multi_repo" bootstrap-multiple
-: >"$CALLS"
-output=$(printf '2\ny\n' | script -qec \
-  "$CLI bootstrap $multi_repo" /dev/null 2>&1)
-assert_contains "$output" 'Select one client:'
-assert_contains "$output" 'Selected client: claude'
-assert_contains "$(cat "$CALLS")" 'claude mcp'
-assert_not_contains "$(cat "$CALLS")" 'codex '
-
-mv "$FAKE_BIN/codex" "$DISABLED_BIN/codex"
-mv "$FAKE_BIN/claude" "$DISABLED_BIN/claude"
-none_repo=$TEST_ROOT/no-client
-new_repo "$none_repo" bootstrap-none
-if output=$(printf '\n' | script -qec \
-  "$CLI bootstrap $none_repo" /dev/null 2>&1)
-then
-  fail 'bootstrap accepted no detected client'
-fi
-assert_contains "$output" 'Result: DEPENDENCY_MISSING'
-mv "$DISABLED_BIN/codex" "$FAKE_BIN/codex"
-
-broken_repo=$TEST_ROOT/broken-remote
-new_repo "$broken_repo" bootstrap-broken
-git config --global --unset-all \
-  url."file://$source_repo".insteadOf
-git config --global \
-  url."file://$TEST_ROOT/missing-release-source".insteadOf \
-  https://github.com/beroka-vn/beroka-ai-governance.git
-if output=$(printf 'y\n' | script -qec \
-  "$CLI bootstrap $broken_repo --client codex" /dev/null 2>&1)
-then
-  fail 'bootstrap accepted an unverifiable latest release'
-fi
-assert_contains "$output" 'Result: RELEASE_RESOLUTION_REQUIRED'
-git config --global --unset-all \
-  url."file://$TEST_ROOT/missing-release-source".insteadOf
-git config --global \
-  url."file://$source_repo".insteadOf \
-  https://github.com/beroka-vn/beroka-ai-governance.git
-
-exact_repo=$TEST_ROOT/exact-version
-new_repo "$exact_repo" bootstrap-exact
-output=$($CLI bootstrap "$exact_repo" --client codex \
+output=$($CLI bootstrap "$repo" --client claude \
   --version v1.1.0 --non-interactive)
-assert_contains "$output" 'Version: v1.1.0'
-assert_one_result "$output"
-grep -F 'VERSION=v1.1.0' \
-  "$exact_repo/.beroka-governance.lock" >/dev/null ||
-  fail 'bootstrap did not use the explicit non-interactive version'
+[ "$repo_before" = "$(snapshot_repo "$repo")" ] ||
+  fail 'Claude bootstrap changed the application repository'
+assert_contains "$(cat "$HOME/.claude/CLAUDE.md")" \
+  '# Personal Claude instruction'
+assert_contains "$(cat "$HOME/.claude/CLAUDE.md")" \
+  '<!-- BEROKA-GOVERNANCE:START -->'
+assert_separate_managed_block "$HOME/.claude/CLAUDE.md"
+[ "$(cat "$XDG_CONFIG_HOME/beroka-ai-governance/clients")" = codex,claude ] ||
+  fail 'bootstrap omitted Claude enrollment'
+assert_contains "$(cat "$CALLS")" 'claude mcp'
+assert_not_contains "$(cat "$CALLS")" 'codex '
 
-pending_repo=$TEST_ROOT/auth-pending
-new_repo "$pending_repo" bootstrap-auth-pending
-export FAKE_CODEX_HEALTH=auth-required
-export FAKE_CODEX_OAUTH=fail
-if output=$(printf 'y\ny\n' | script -qec \
-  "$CLI bootstrap $pending_repo --client codex --version v1.1.0" \
-  /dev/null 2>&1)
-then
-  fail 'bootstrap accepted incomplete OAuth'
+claude_after=$TEST_ROOT/claude-after
+cp "$HOME/.claude/CLAUDE.md" "$claude_after"
+output=$($CLI bootstrap "$repo" --client claude \
+  --version v1.1.0 --non-interactive)
+cmp -s "$claude_after" "$HOME/.claude/CLAUDE.md" ||
+  fail 'repeat Claude bootstrap changed user instructions'
+assert_separate_managed_block "$HOME/.claude/CLAUDE.md"
+assert_not_contains "$output" 'Repository pull request:'
+
+codex_instruction=$HOME/.codex/AGENTS.override.md
+codex_instruction_healthy=$TEST_ROOT/codex-instruction-healthy
+cp "$codex_instruction" "$codex_instruction_healthy"
+
+: >"$CALLS"
+doctor_output=$($CLI doctor "$repo" --client codex)
+assert_contains "$doctor_output" 'Instruction: INSTALLED'
+assert_contains "$doctor_output" 'Connector: PASS'
+
+printf '%s\n' '# Active override without governance' >"$codex_instruction"
+: >"$CALLS"
+if output=$($CLI doctor "$repo" --client codex 2>&1); then
+  fail 'Doctor accepted a missing active Codex instruction'
 fi
-assert_contains "$output" 'Result: AUTH_PENDING'
+assert_contains "$output" 'Result: CLIENT_INSTRUCTION_REQUIRED'
 assert_contains "$output" \
-  'Resume: beroka-governance setup-connectors --client codex'
-assert_contains "$output" 'Repository changes: REVIEW_REQUIRED'
-assert_contains "$output" 'Repository pull request: REQUIRED'
-assert_one_result "$output"
-[ -f "$pending_repo/.beroka-governance.lock" ] &&
-  [ -f "$pending_repo/AGENTS.md" ] ||
-  fail 'AUTH_PENDING rolled back repository registration'
-pending_before=$(snapshot_repo "$pending_repo")
-if output=$(printf 'y\n' | script -qec \
-  "$CLI bootstrap $pending_repo --client codex" /dev/null 2>&1)
-then
-  fail 'bootstrap rerun accepted incomplete OAuth'
-fi
-pending_after=$(snapshot_repo "$pending_repo")
-[ "$pending_before" = "$pending_after" ] ||
-  fail 'AUTH_PENDING bootstrap rerun changed managed files'
-assert_contains "$output" 'Result: AUTH_PENDING'
-assert_contains "$output" 'Repository changes: NONE'
-assert_contains "$output" 'Repository pull request: NOT_REQUIRED'
-assert_one_result "$output"
+  'Remediation: beroka-governance bootstrap --client codex'
+[ ! -s "$CALLS" ] ||
+  fail 'Doctor checked the connector before the missing instruction'
 
-health_repo=$TEST_ROOT/health-unavailable
-new_repo "$health_repo" bootstrap-health-unavailable
-unset FAKE_CODEX_OAUTH
-export FAKE_CODEX_HEALTH=unavailable
-if output=$($CLI bootstrap "$health_repo" --client codex \
+printf '%s\n' \
+  '# Active override' \
+  '<!-- BEROKA-GOVERNANCE:START -->' \
+  'stale governance' \
+  '<!-- BEROKA-GOVERNANCE:END -->' >"$codex_instruction"
+: >"$CALLS"
+if output=$($CLI preflight "$repo" --client codex \
+  --operation github-write --non-interactive 2>&1)
+then
+  fail 'Preflight accepted a stale active Codex instruction'
+fi
+assert_contains "$output" 'Result: CLIENT_INSTRUCTION_REQUIRED'
+[ ! -s "$CALLS" ] ||
+  fail 'Preflight checked dependencies before the stale instruction'
+
+printf '%s\n' \
+  '# Active override' \
+  '<!-- BEROKA-GOVERNANCE:START -->' \
+  'unterminated governance' >"$codex_instruction"
+: >"$CALLS"
+if output=$($CLI doctor "$repo" --client codex 2>&1); then
+  fail 'Doctor accepted malformed active Codex markers'
+fi
+assert_contains "$output" 'Result: CLIENT_INSTRUCTION_CONFLICT'
+[ ! -s "$CALLS" ] ||
+  fail 'Doctor checked the connector before malformed instructions'
+if output=$($CLI bootstrap "$repo" --client codex \
   --version v1.1.0 --non-interactive 2>&1)
 then
-  fail 'bootstrap accepted unavailable connector health'
+  fail 'bootstrap replaced conflicting active Codex markers'
 fi
-assert_contains "$output" 'Result: CONNECTOR_HEALTH_UNAVAILABLE'
-assert_contains "$output" \
-  'Resume: beroka-governance setup-connectors --client codex'
-assert_contains "$output" 'Repository changes: REVIEW_REQUIRED'
-assert_contains "$output" 'Repository pull request: REQUIRED'
-assert_one_result "$output"
-[ -f "$health_repo/.beroka-governance.lock" ] &&
-  [ -f "$health_repo/AGENTS.md" ] ||
-  fail 'CONNECTOR_HEALTH_UNAVAILABLE rolled back repository registration'
-health_before=$(snapshot_repo "$health_repo")
-if output=$($CLI bootstrap "$health_repo" --client codex \
-  --non-interactive 2>&1)
-then
-  fail 'bootstrap rerun accepted unavailable connector health'
-fi
-health_after=$(snapshot_repo "$health_repo")
-[ "$health_before" = "$health_after" ] ||
-  fail 'health-unavailable bootstrap rerun changed managed files'
-assert_contains "$output" 'Result: CONNECTOR_HEALTH_UNAVAILABLE'
-assert_contains "$output" 'Repository changes: NONE'
-assert_contains "$output" 'Repository pull request: NOT_REQUIRED'
-assert_one_result "$output"
-unset FAKE_CODEX_HEALTH
+assert_contains "$output" 'Result: CLIENT_INSTRUCTION_CONFLICT'
+cp "$codex_instruction_healthy" "$codex_instruction"
 
-grep -F 'beroka-governance bootstrap' "$ROOT/README.md" >/dev/null ||
-  fail 'README does not document bootstrap'
-grep -F 'latest stable annotated' "$ROOT/PACKAGE-DESIGN.md" >/dev/null ||
-  fail 'package design does not define latest'
-grep -F 'fresh AI session' "$ROOT/handbook.md" >/dev/null ||
-  fail 'handbook does not document the bootstrap handoff'
-grep -F 'gh release download' "$ROOT/README.md" >/dev/null ||
-  fail 'README does not document the release launcher'
-grep -F 'AUTH_PENDING' "$ROOT/handbook.md" >/dev/null ||
-  fail 'handbook does not document pending authentication'
-grep -F 'CONNECTOR_HEALTH_UNAVAILABLE' "$ROOT/handbook.md" >/dev/null ||
-  fail 'handbook does not document unavailable connector health'
+doctor_output=$($CLI doctor "$repo" --client claude)
+assert_contains "$doctor_output" 'Instruction: INSTALLED'
+
+cat >"$FAKE_BIN/cursor-agent" <<'EOF'
+#!/bin/sh
+set -eu
+printf 'cursor-agent %s\n' "$*" >>"$CALLS"
+case "$*" in
+  'mcp login --help') exit 0 ;;
+  'mcp list') printf '%s\n' 'atlassian: Ready' ;;
+  'mcp list-tools atlassian')
+    printf '%s\n' '- getAccessibleAtlassianResources ()'
+    ;;
+  *) exit 1 ;;
+esac
+EOF
+chmod 755 "$FAKE_BIN/cursor-agent"
+cursor_rule=$XDG_DATA_HOME/beroka-ai-governance/releases/v1.1.0/templates/agent-entrypoints/CURSOR-USER-RULE.txt
+cursor_hash=$(git -C "$source_repo" hash-object --no-filters "$cursor_rule")
+cursor_sha1_cwd=$TEST_ROOT/cursor-sha1-cwd
+cursor_sha256_cwd=$TEST_ROOT/cursor-sha256-cwd
+mkdir -p "$cursor_sha1_cwd" "$cursor_sha256_cwd"
+git -C "$cursor_sha1_cwd" init -q --object-format=sha1
+git -C "$cursor_sha256_cwd" init -q --object-format=sha256
+git -C "$cursor_sha1_cwd" remote add origin \
+  https://github.com/beroka-vn/cursor-sha1-cwd.git
+git -C "$cursor_sha256_cwd" remote add origin \
+  https://github.com/beroka-vn/cursor-sha256-cwd.git
+[ "$(git -C "$cursor_sha1_cwd" rev-parse --show-object-format)" = sha1 ] ||
+  fail 'Cursor SHA-1 fixture uses the wrong object format'
+[ "$(git -C "$cursor_sha256_cwd" rev-parse --show-object-format)" = sha256 ] ||
+  fail 'Cursor SHA-256 fixture uses the wrong object format'
+printf '%s\n' codex,claude,cursor \
+  >"$XDG_CONFIG_HOME/beroka-ai-governance/clients"
+printf '%s\n' "$cursor_hash" \
+  >"$XDG_CONFIG_HOME/beroka-ai-governance/cursor-user-rule.sha256"
+output=$(cd "$cursor_sha1_cwd" &&
+  $CLI bootstrap --client cursor --version v1.1.0 --non-interactive)
+assert_contains "$output" 'Instruction: USER_CONFIRMED'
+assert_contains "$output" 'Result: PASS'
+cursor_ack_before_format_change=$TEST_ROOT/cursor-ack-before-format-change
+cp "$XDG_CONFIG_HOME/beroka-ai-governance/cursor-user-rule.sha256" \
+  "$cursor_ack_before_format_change"
+if ! output=$(cd "$cursor_sha256_cwd" &&
+  $CLI bootstrap --client cursor --version v1.1.0 \
+    --non-interactive 2>&1)
+then
+  fail "SHA-256 cwd invalidated Cursor acknowledgement: $output"
+fi
+assert_contains "$output" 'Instruction: USER_CONFIRMED'
+assert_contains "$output" 'Result: PASS'
+cmp -s "$cursor_ack_before_format_change" \
+  "$XDG_CONFIG_HOME/beroka-ai-governance/cursor-user-rule.sha256" ||
+  fail 'caller repository format changed Cursor acknowledgement'
+
+: >"$CALLS"
+doctor_output=$(cd "$cursor_sha256_cwd" &&
+  $CLI doctor "$repo" --client cursor)
+assert_contains "$doctor_output" 'Instruction: USER_CONFIRMED'
+assert_contains "$doctor_output" 'Connector: PASS'
+assert_contains "$doctor_output" 'Result: PASS'
+cmp -s "$cursor_ack_before_format_change" \
+  "$XDG_CONFIG_HOME/beroka-ai-governance/cursor-user-rule.sha256" ||
+  fail 'Doctor changed Cursor acknowledgement across repository formats'
+rm -rf "$HOME/.cursor"
+
+printf '%s\n' 0000000000000000000000000000000000000000 \
+  >"$XDG_CONFIG_HOME/beroka-ai-governance/cursor-user-rule.sha256"
+: >"$CALLS"
+if output=$($CLI doctor "$repo" --client cursor 2>&1); then
+  fail 'Cursor Doctor accepted a stale User Rule acknowledgement'
+fi
+assert_contains "$output" 'Result: CURSOR_USER_RULE_REQUIRED'
+assert_contains "$output" \
+  'Remediation: beroka-governance bootstrap --client cursor'
+[ ! -s "$CALLS" ] ||
+  fail 'Cursor Doctor checked dependencies before the stale acknowledgement'
+
+printf '%s\n%s\n' "$cursor_hash" extra \
+  >"$XDG_CONFIG_HOME/beroka-ai-governance/cursor-user-rule.sha256"
+if output=$($CLI doctor "$repo" --client cursor 2>&1); then
+  fail 'Cursor Doctor accepted a malformed User Rule acknowledgement'
+fi
+assert_contains "$output" 'Result: CURSOR_USER_RULE_REQUIRED'
+printf '%s\n' codex,claude \
+  >"$XDG_CONFIG_HOME/beroka-ai-governance/clients"
+rm -f "$XDG_CONFIG_HOME/beroka-ai-governance/cursor-user-rule.sha256"
+
+if output=$($CLI bootstrap "$repo" --client codex \
+  --version v1.2.0 --non-interactive 2>&1)
+then
+  fail 'bootstrap silently changed the active release'
+fi
+assert_contains "$output" 'Result: GOVERNANCE_UPGRADE_REQUIRED'
+assert_contains "$output" \
+  'Remediation: beroka-governance bootstrap --client codex --version v1.2.0 --upgrade --non-interactive'
+[ "$active_before" = "$(cat "$active_release")" ] ||
+  fail 'upgrade-required failure changed the active release'
+
+: >"$CALLS"
+output=$($CLI bootstrap "$repo" --client codex \
+  --version v1.2.0 --upgrade --non-interactive)
+assert_contains "$output" 'Version: v1.2.0'
+[ "$(cat "$active_release")" = "$(printf '%s\n%s' \
+  'VERSION=v1.2.0' "COMMIT=$v1_2_commit")" ] ||
+  fail 'upgrade activated the wrong verified commit'
+[ "$(cat "$XDG_CONFIG_HOME/beroka-ai-governance/clients")" = codex,claude ] ||
+  fail 'upgrade discarded enabled clients'
+[ -f "$XDG_CONFIG_HOME/fake-codex-configured" ] &&
+  [ -f "$XDG_CONFIG_HOME/fake-claude-configured" ] ||
+  fail 'upgrade discarded client-owned connector state'
+assert_contains "$(cat "$CALLS")" 'codex app-server --stdio'
+assert_not_contains "$(cat "$CALLS")" 'claude '
+assert_contains "$(cat "$HOME/.codex/AGENTS.override.md")" \
+  'verified v1.2 Beroka governance'
+assert_contains "$(cat "$HOME/.claude/CLAUDE.md")" \
+  'verified v1.2 Beroka governance'
+doctor_output=$($CLI doctor "$repo" --client codex)
+assert_contains "$doctor_output" 'Instruction: INSTALLED'
+doctor_output=$($CLI doctor "$repo" --client claude)
+assert_contains "$doctor_output" 'Instruction: INSTALLED'
+
+active_v1_2=$(cat "$active_release")
+clients_v1_2=$(cat "$XDG_CONFIG_HOME/beroka-ai-governance/clients")
+codex_v1_2=$(cat "$HOME/.codex/AGENTS.override.md")
+claude_v1_2=$(cat "$HOME/.claude/CLAUDE.md")
+output=$($CLI bootstrap "$repo" --client codex \
+  --version v1.2.0 --upgrade --non-interactive)
+assert_contains "$output" 'Version: v1.2.0'
+[ "$active_v1_2" = "$(cat "$active_release")" ] ||
+  fail 'same-version upgrade changed the active release'
+[ "$clients_v1_2" = \
+  "$(cat "$XDG_CONFIG_HOME/beroka-ai-governance/clients")" ] ||
+  fail 'same-version upgrade changed client enrollment'
+[ "$codex_v1_2" = "$(cat "$HOME/.codex/AGENTS.override.md")" ] ||
+  fail 'same-version upgrade changed Codex instructions'
+[ "$claude_v1_2" = "$(cat "$HOME/.claude/CLAUDE.md")" ] ||
+  fail 'same-version upgrade changed Claude instructions'
+
+for invalid_upgrade in v1.1.0 v2.0.0; do
+  if output=$($CLI bootstrap "$repo" --client codex \
+    --version "$invalid_upgrade" --upgrade --non-interactive 2>&1)
+  then
+    fail "bootstrap accepted invalid upgrade target $invalid_upgrade"
+  fi
+  assert_contains "$output" 'Result: VERSION_MISMATCH'
+  [ "$(cat "$active_release")" = "$(printf '%s\n%s' \
+    'VERSION=v1.2.0' "COMMIT=$v1_2_commit")" ] ||
+    fail "invalid upgrade $invalid_upgrade changed the active release"
+done
+
+if output=$($CLI bootstrap "$repo" --client cursor \
+  --version v1.2.0 --non-interactive 2>&1)
+then
+  fail 'Cursor bootstrap accepted a missing User Rule acknowledgement'
+fi
+assert_contains "$output" 'Result: CURSOR_USER_RULE_REQUIRED'
+assert_contains "$output" \
+  'Remediation: beroka-governance bootstrap --client cursor'
+[ ! -e "$HOME/.cursor" ] ||
+  fail 'Cursor bootstrap edited undocumented Cursor state'
+
+$CLI uninstall --force >/dev/null
+cmp -s "$codex_personal_expected" "$HOME/.codex/AGENTS.md" ||
+  fail 'uninstall changed no-newline Codex personal instructions'
+cmp -s "$codex_override_expected" "$HOME/.codex/AGENTS.override.md" ||
+  fail 'uninstall changed no-newline Codex override instructions'
+cmp -s "$claude_personal_expected" "$HOME/.claude/CLAUDE.md" ||
+  fail 'uninstall changed no-newline Claude personal instructions'
 
 printf '%s\n' 'Bootstrap onboarding tests: PASS'
