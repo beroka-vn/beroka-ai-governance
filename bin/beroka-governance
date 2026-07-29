@@ -1140,6 +1140,7 @@ cmd_bootstrap() {
     [ "$bs_interactive" -eq 1 ] || { usage >&2; exit 2; }
     bs_client=$(detect_client)
   fi
+  require_client "$bs_client"
 
   if [ -z "$bs_version" ]; then
     [ "$bs_interactive" -eq 1 ] ||
@@ -1270,6 +1271,10 @@ oauth_command() {
   esac
 }
 
+cursor_mcp() {
+  (cd / && cursor-agent mcp "$@")
+}
+
 github_oauth_command() {
   printf '%s\n' 'gh auth login --hostname github.com --web'
 }
@@ -1294,7 +1299,7 @@ require_client() {
         die DEPENDENCY_MISSING 'Claude Code lacks required MCP commands'
       ;;
     cursor)
-      cursor-agent mcp login --help >/dev/null 2>&1 ||
+      cursor_mcp login --help >/dev/null 2>&1 ||
         die DEPENDENCY_MISSING 'Cursor Agent lacks required MCP login support'
       ;;
   esac
@@ -1758,7 +1763,7 @@ connector_probe() {
       esac
       ;;
     cursor)
-      CONNECTOR_PROBE_OUTPUT=$(cursor-agent mcp list 2>&1) || :
+      CONNECTOR_PROBE_OUTPUT=$(cursor_mcp list 2>&1) || :
       CONNECTOR_PROBE_STATUS=$(printf '%s\n' "$CONNECTOR_PROBE_OUTPUT" |
         atlassian_status_line)
       CONNECTOR_PROBE_STATE=$(printf '%s\n' "$CONNECTOR_PROBE_STATUS" |
@@ -1770,7 +1775,7 @@ connector_probe() {
       case "$CONNECTOR_PROBE_STATE" in
         ready|connected)
           if CONNECTOR_PROBE_TOOLS=$(
-            cursor-agent mcp list-tools atlassian 2>&1
+            cursor_mcp list-tools atlassian 2>&1
           ); then
             CONNECTOR_PROBE_TOOLS_OK=1
           fi
@@ -2635,7 +2640,7 @@ run_oauth() {
       printf '%s\n' 'In Claude: /mcp -> atlassian -> Authenticate'
       claude
       ;;
-    cursor) cursor-agent mcp login atlassian ;;
+    cursor) cursor_mcp login atlassian ;;
   esac || return $?
   CONNECTOR_PROBE_CLIENT=
   CONNECTOR_PROBE_OUTPUT=
