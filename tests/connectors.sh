@@ -1374,7 +1374,7 @@ printf '%s\n' codex,cursor \
 mkdir -p "$HOME/.codex"
 cp "$RELEASE_DIR/templates/agent-entrypoints/AGENTS.md" \
   "$HOME/.codex/AGENTS.md"
-git hash-object --no-filters \
+git --git-dir=/dev/null hash-object --no-filters \
   "$RELEASE_DIR/templates/agent-entrypoints/CURSOR-USER-RULE.txt" \
   >"$XDG_CONFIG_HOME/beroka-ai-governance/cursor-user-rule.sha256"
 

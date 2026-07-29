@@ -43,7 +43,9 @@ client-owned remediation without opening a browser.
 
 The launcher verifies its embedded annotated tag and commit before it executes
 package code. It installs the active release and selected-client adapter in
-user-owned locations, then renders context when a Git repository is present.
+user-owned locations. Bootstrap does not infer repository context from the
+current directory; run `beroka-governance context "$PWD"` explicitly when
+governed repository work begins.
 
 `Application repository changes: NONE`
 

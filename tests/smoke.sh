@@ -106,6 +106,16 @@ git -C "$source_repo" tag -a v2.0.0 -m v2.0.0
 git config --global url."file://$source_repo".insteadOf \
   https://github.com/beroka-vn/beroka-ai-governance.git
 
+if usage_output=$($CLI 2>&1); then
+  fail 'empty command passed'
+fi
+assert_contains "$usage_output" \
+  'Retired commands: register, update, rollback, unregister'
+for retired_syntax in register update rollback unregister; do
+  assert_not_contains "$usage_output" \
+    "beroka-governance $retired_syntax "
+done
+
 $CLI install v1.1.0 >/dev/null
 active_release=$XDG_CONFIG_HOME/beroka-ai-governance/active-release
 [ "$(cat "$active_release")" = "$(printf '%s\n%s' \
@@ -162,6 +172,11 @@ assert_contains "$context_output" 'Version: v1.1.0'
 assert_contains "$context_output" "Commit: $release_commit"
 assert_contains "$context_output" 'Routing source: central catalog'
 assert_contains "$context_output" 'Routing: ROUTING_ACTIVE'
+assert_contains "$context_output" 'sole routing source'
+assert_contains "$context_output" 'authorized governance-repository task'
+assert_not_contains "$context_output" 'default-branch routing'
+assert_not_contains "$context_output" 'Pending local routing'
+assert_not_contains "$context_output" 'registered repository'
 
 assert_contains "$($CLI show "$known_repo" governance)" '# governance.md v1.1.0'
 
@@ -189,6 +204,13 @@ assert_contains "$unknown_output" 'Profile: standalone'
 assert_contains "$unknown_output" 'Cross-repository policy: explicit-only'
 assert_contains "$unknown_output" '# General Repository Governance'
 assert_contains "$unknown_output" 'External routing-dependent writes: BLOCKED'
+assert_not_contains "$unknown_output" 'registered repository'
+
+if output=$($CLI context "$TMP_ROOT/not-a-repository" 2>&1); then
+  fail 'context accepted a non-repository path'
+fi
+assert_contains "$output" 'Result: REPOSITORY_INVALID'
+assert_not_contains "$output" 'REPOSITORY_NOT_REGISTERED'
 
 for state in clean modified untracked deleted detached behind feature; do
   state_repo=$TMP_ROOT/state-$state
@@ -266,6 +288,9 @@ for command in register update rollback unregister; do
     fail "$command remained active"
   fi
   assert_contains "$output" 'Result: COMMAND_RETIRED'
+  assert_contains "$output" \
+    'Repository routing is managed in the Central catalog'
+  assert_not_contains "$output" 'Repository registration is central'
   [ "$before" = "$(snapshot_repo_complete "$legacy_repo")" ] ||
     fail "$command changed the repository"
 done

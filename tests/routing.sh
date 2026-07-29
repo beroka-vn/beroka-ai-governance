@@ -704,7 +704,7 @@ cp "$release_dir/templates/agent-entrypoints/AGENTS.md" \
   "$HOME/.codex/AGENTS.md"
 cp "$release_dir/templates/agent-entrypoints/CLAUDE.md" \
   "$HOME/.claude/CLAUDE.md"
-git hash-object --no-filters \
+git --git-dir=/dev/null hash-object --no-filters \
   "$release_dir/templates/agent-entrypoints/CURSOR-USER-RULE.txt" \
   >"$XDG_CONFIG_HOME/beroka-ai-governance/cursor-user-rule.sha256"
 

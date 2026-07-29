@@ -246,6 +246,29 @@ then
 fi
 assert_not_contains "$output" 'should-not-appear'
 
+incidental_repo=$TEST_ROOT/incidental-gitlab-repository
+new_repo "$incidental_repo" incidental-gitlab-repository
+git -C "$incidental_repo" remote set-url origin \
+  https://gitlab.com/example/incidental.git
+incidental_before=$(snapshot_repo "$incidental_repo")
+if ! output=$(cd "$incidental_repo" &&
+  $CLI bootstrap --client codex --version v1.1.0 \
+    --non-interactive 2>&1)
+then
+  fail "repo-independent bootstrap inferred incidental Git state: $output"
+fi
+assert_contains "$output" 'Result: PASS'
+assert_contains "$output" 'Release: PASS'
+assert_contains "$output" 'Connector: PASS'
+assert_not_contains "$output" 'Repository:'
+[ "$incidental_before" = "$(snapshot_repo "$incidental_repo")" ] ||
+  fail 'repo-independent bootstrap changed the incidental repository'
+[ "$(cat "$XDG_CONFIG_HOME/beroka-ai-governance/clients")" = codex ] ||
+  fail 'repo-independent bootstrap omitted Codex enrollment'
+assert_separate_managed_block "$HOME/.codex/AGENTS.md"
+$CLI uninstall --force >/dev/null
+rm -f "$XDG_CONFIG_HOME/fake-codex-configured"
+
 : >"$CALLS"
 repo_before=$(snapshot_repo "$repo")
 mkdir -p "$HOME/.codex"
@@ -297,24 +320,57 @@ printf '%s\n' '# Newline Codex instruction' >"$tail_failure_personal"
 cp "$tail_failure_personal" "$HOME/.codex/AGENTS.override.md"
 tail_failure_before=$TEST_ROOT/codex-before-tail-failure
 cp "$HOME/.codex/AGENTS.override.md" "$tail_failure_before"
+tail_failure_tmp=$TEST_ROOT
+tail_stage_mode_log=$TEST_ROOT/instruction-tail-stage-mode
+export TAIL_STAGE_MODE_LOG=$tail_stage_mode_log
 cat >"$FAKE_BIN/tail" <<'EOF'
 #!/bin/sh
 if [ "$#" -eq 3 ] && [ "$1" = -c ] && [ "$2" = 1 ]; then
   case "$3" in
-    */beroka-governance-instruction.*) exit 74 ;;
+    */beroka-governance-instruction.*)
+      tail_stage_dir=${3%/*}
+      tail_stage_mode=600
+      check_stage_mode() {
+        checked_mode=$(/usr/bin/stat -c '%a' "$1")
+        [ "$checked_mode" = 600 ] || tail_stage_mode=$checked_mode
+      }
+      case "${tail_stage_dir##*/}" in
+        beroka-governance-instruction.*)
+          for tail_stage_file in "$tail_stage_dir"/*; do
+            check_stage_mode "$tail_stage_file"
+          done
+          ;;
+        *)
+          for tail_stage_file in \
+            "$tail_stage_dir"/beroka-governance-instruction.*
+          do
+            check_stage_mode "$tail_stage_file"
+          done
+          ;;
+      esac
+      printf '%s\n' "$tail_stage_mode" >"$TAIL_STAGE_MODE_LOG"
+      exit 74
+      ;;
   esac
 fi
 exec /usr/bin/tail "$@"
 EOF
 chmod 755 "$FAKE_BIN/tail"
-if output=$($CLI bootstrap "$repo" --client codex \
+if output=$(TMPDIR="$tail_failure_tmp" \
+  $CLI bootstrap "$repo" --client codex \
   --version v1.1.0 --non-interactive 2>&1)
 then
   fail 'bootstrap masked a personal-instruction tail failure'
 fi
 assert_contains "$output" 'Result: GOVERNANCE_NOT_READY'
+assert_contains "$output" 'Cannot inspect codex instruction boundary'
 cmp -s "$tail_failure_before" "$HOME/.codex/AGENTS.override.md" ||
   fail 'failed last-byte read changed personal bytes'
+[ -z "$(find "$tail_failure_tmp" -maxdepth 1 \
+  -name 'beroka-governance-instruction.*' -print)" ] ||
+  fail 'failed instruction read left personal staging files'
+[ "$(cat "$tail_stage_mode_log")" = 600 ] ||
+  fail 'personal instruction staging files were not mode 600'
 rm -f "$FAKE_BIN/tail"
 
 output=$($CLI bootstrap "$repo" --client codex \
@@ -386,6 +442,9 @@ assert_not_contains "$output" 'Repository:'
 
 output=$(cd "$repo" &&
   $CLI bootstrap --client codex --version v1.1.0 --non-interactive)
+assert_not_contains "$output" 'Repository:'
+output=$($CLI bootstrap "$repo" --client codex \
+  --version v1.1.0 --non-interactive)
 assert_contains "$output" 'Repository: beroka-vn/bootstrap-application'
 
 codex_override_expected=$TEST_ROOT/codex-override-expected
@@ -489,21 +548,64 @@ cat >"$FAKE_BIN/cursor-agent" <<'EOF'
 #!/bin/sh
 set -eu
 printf 'cursor-agent %s\n' "$*" >>"$CALLS"
-[ "$*" = 'mcp login --help' ]
+case "$*" in
+  'mcp login --help') exit 0 ;;
+  'mcp list') printf '%s\n' 'atlassian: Ready' ;;
+  'mcp list-tools atlassian')
+    printf '%s\n' '- getAccessibleAtlassianResources ()'
+    ;;
+  *) exit 1 ;;
+esac
 EOF
 chmod 755 "$FAKE_BIN/cursor-agent"
 cursor_rule=$XDG_DATA_HOME/beroka-ai-governance/releases/v1.1.0/templates/agent-entrypoints/CURSOR-USER-RULE.txt
-cursor_hash=$(git hash-object --no-filters "$cursor_rule")
+cursor_hash=$(git -C "$source_repo" hash-object --no-filters "$cursor_rule")
+cursor_sha1_cwd=$TEST_ROOT/cursor-sha1-cwd
+cursor_sha256_cwd=$TEST_ROOT/cursor-sha256-cwd
+mkdir -p "$cursor_sha1_cwd" "$cursor_sha256_cwd"
+git -C "$cursor_sha1_cwd" init -q --object-format=sha1
+git -C "$cursor_sha256_cwd" init -q --object-format=sha256
+git -C "$cursor_sha1_cwd" remote add origin \
+  https://github.com/beroka-vn/cursor-sha1-cwd.git
+git -C "$cursor_sha256_cwd" remote add origin \
+  https://github.com/beroka-vn/cursor-sha256-cwd.git
+[ "$(git -C "$cursor_sha1_cwd" rev-parse --show-object-format)" = sha1 ] ||
+  fail 'Cursor SHA-1 fixture uses the wrong object format'
+[ "$(git -C "$cursor_sha256_cwd" rev-parse --show-object-format)" = sha256 ] ||
+  fail 'Cursor SHA-256 fixture uses the wrong object format'
 printf '%s\n' codex,claude,cursor \
   >"$XDG_CONFIG_HOME/beroka-ai-governance/clients"
 printf '%s\n' "$cursor_hash" \
   >"$XDG_CONFIG_HOME/beroka-ai-governance/cursor-user-rule.sha256"
-: >"$CALLS"
-if output=$($CLI doctor "$repo" --client cursor 2>&1); then
-  fail 'Cursor Doctor unexpectedly found a connector'
+output=$(cd "$cursor_sha1_cwd" &&
+  $CLI bootstrap --client cursor --version v1.1.0 --non-interactive)
+assert_contains "$output" 'Instruction: USER_CONFIRMED'
+assert_contains "$output" 'Result: PASS'
+cursor_ack_before_format_change=$TEST_ROOT/cursor-ack-before-format-change
+cp "$XDG_CONFIG_HOME/beroka-ai-governance/cursor-user-rule.sha256" \
+  "$cursor_ack_before_format_change"
+if ! output=$(cd "$cursor_sha256_cwd" &&
+  $CLI bootstrap --client cursor --version v1.1.0 \
+    --non-interactive 2>&1)
+then
+  fail "SHA-256 cwd invalidated Cursor acknowledgement: $output"
 fi
 assert_contains "$output" 'Instruction: USER_CONFIRMED'
-assert_contains "$output" 'Result: CONNECTOR_MISSING'
+assert_contains "$output" 'Result: PASS'
+cmp -s "$cursor_ack_before_format_change" \
+  "$XDG_CONFIG_HOME/beroka-ai-governance/cursor-user-rule.sha256" ||
+  fail 'caller repository format changed Cursor acknowledgement'
+
+: >"$CALLS"
+doctor_output=$(cd "$cursor_sha256_cwd" &&
+  $CLI doctor "$repo" --client cursor)
+assert_contains "$doctor_output" 'Instruction: USER_CONFIRMED'
+assert_contains "$doctor_output" 'Connector: PASS'
+assert_contains "$doctor_output" 'Result: PASS'
+cmp -s "$cursor_ack_before_format_change" \
+  "$XDG_CONFIG_HOME/beroka-ai-governance/cursor-user-rule.sha256" ||
+  fail 'Doctor changed Cursor acknowledgement across repository formats'
+rm -rf "$HOME/.cursor"
 
 printf '%s\n' 0000000000000000000000000000000000000000 \
   >"$XDG_CONFIG_HOME/beroka-ai-governance/cursor-user-rule.sha256"

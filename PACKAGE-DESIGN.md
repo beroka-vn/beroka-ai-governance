@@ -53,7 +53,7 @@ bash -e -o pipefail -c '
 
 `gh auth setup-git --hostname github.com` reuses client-owned GitHub OAuth for the private HTTPS clone. No token is requested, printed, copied, logged, or stored. The downloaded release launcher clones the embedded annotated tag and invokes the package CLI only after tag type, peeled commit, and checked-out HEAD each equal the embedded commit. A mismatch returns `RELEASE_VERIFICATION_FAILED` before user-state changes.
 
-After verification, bootstrap installs the active release, enrolls the selected client, configures only that client's connector, and renders context if a Git repository is present. It does not require a Git repository. Missing `jq` may be installed interactively with `apt-get`, `dnf`, or `brew`; declining returns `DEPENDENCY_MISSING`.
+After verification, bootstrap installs the active release, enrolls the selected client, and configures only that client's connector. Bootstrap does not infer repository context from the current directory; callers run `beroka-governance context REPO` explicitly when governed repository work begins. Missing `jq` may be installed interactively with `apt-get`, `dnf`, or `brew`; declining returns `DEPENDENCY_MISSING`.
 
 ### Upgrade
 

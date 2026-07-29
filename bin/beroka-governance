@@ -30,10 +30,18 @@ CAPABILITY_INVENTORY= CAPABILITY_INVENTORY_COMPLETE=0
 CAPABILITY_INVENTORY_FORMAT= CAPABILITY_TOOLSET=UNAVAILABLE
 CAPABILITY_STATE= PREFLIGHT_CAPABILITY=
 SUPPRESS_PASS_RESULT=0
+PERSONAL_STAGE_ROOT=
+
+cleanup_personal_stage() {
+  cleanup_stage_root=$PERSONAL_STAGE_ROOT
+  PERSONAL_STAGE_ROOT=
+  [ -z "$cleanup_stage_root" ] || rm -rf "$cleanup_stage_root"
+}
 
 die() {
   code=$1
   shift
+  cleanup_personal_stage || :
   printf '%s\n' "Result: $code" >&2
   if [ "$#" -gt 0 ]; then printf '%s\n' "$*" >&2; fi
   exit 1
@@ -49,24 +57,22 @@ usage() {
     'Usage:' \
     '  beroka-governance bootstrap [REPO] --client codex|claude|cursor [--version vX.Y.Z] [--upgrade] [--non-interactive]' \
     '  beroka-governance install VERSION' \
-    '  beroka-governance register REPO --version VERSION --client codex|claude|cursor [--dry-run]' \
-    '  beroka-governance update REPO --to VERSION [--dry-run]' \
-    '  beroka-governance rollback REPO --to VERSION [--dry-run]' \
-    '  beroka-governance unregister REPO [--dry-run]' \
     '  beroka-governance uninstall [--force]' \
     '  beroka-governance setup-connectors [--client codex|claude|cursor] [--non-interactive]' \
     '  beroka-governance doctor REPO [--client codex|claude|cursor]' \
     '  beroka-governance preflight REPO --client codex|claude|cursor --operation OPERATION [--non-interactive]' \
     '  beroka-governance context REPO' \
     '  beroka-governance show REPO governance|handbook|workflow' \
-    '  beroka-governance show REPO template ai-agent-assignment|github-issue|jira-confluence|pull-request'
+    '  beroka-governance show REPO template ai-agent-assignment|github-issue|jira-confluence|pull-request' \
+    'Retired commands: register, update, rollback, unregister'
 }
 
 canonical_repo() {
   requested=$1
   root=$(git -C "$requested" rev-parse --show-toplevel 2>/dev/null) ||
-    die REPOSITORY_NOT_REGISTERED "Not a Git repository: $requested"
-  (CDPATH= cd -- "$root" && pwd -P) || die REPOSITORY_NOT_REGISTERED "Cannot resolve Git repository: $requested"
+    die REPOSITORY_INVALID "Not a Git repository: $requested"
+  (CDPATH= cd -- "$root" && pwd -P) ||
+    die REPOSITORY_INVALID "Cannot resolve Git repository: $requested"
 }
 
 assert_safe_user_path() {
@@ -905,6 +911,10 @@ cursor_ack_matches() {
     [ "$(sed -n '1p' "$CURSOR_ACK_FILE")" = "$cam_hash" ]
 }
 
+cursor_rule_identity() {
+  git --git-dir=/dev/null hash-object --no-filters "$1"
+}
+
 verify_client_instruction() {
   verify_instruction_client=$1
   case "$verify_instruction_client" in
@@ -917,7 +927,7 @@ verify_client_instruction() {
     cursor)
       verify_instruction_template=$RELEASE_DIR/templates/agent-entrypoints/CURSOR-USER-RULE.txt
       assert_client_files
-      verify_cursor_hash=$(git hash-object --no-filters \
+      verify_cursor_hash=$(cursor_rule_identity \
         "$verify_instruction_template") ||
         die GOVERNANCE_NOT_READY 'Cannot hash Cursor user rule'
       cursor_ack_matches "$verify_cursor_hash" ||
@@ -941,27 +951,31 @@ verify_client_instruction() {
     die CLIENT_INSTRUCTION_REQUIRED \
       "Remediation: beroka-governance bootstrap --client $verify_instruction_client"
 
-  verify_instruction_stage=$(mktemp -d \
+  PERSONAL_STAGE_ROOT=$(mktemp -d \
     "${TMPDIR:-/tmp}/beroka-governance-instruction-check.XXXXXX") ||
     die GOVERNANCE_NOT_READY 'Cannot verify client instruction'
-  : >"$verify_instruction_stage/managed"
+  verify_instruction_stage=$PERSONAL_STAGE_ROOT
+  verify_instruction_personal=$(mktemp \
+    "$verify_instruction_stage/personal.XXXXXX") ||
+    die GOVERNANCE_NOT_READY 'Cannot verify client instruction'
+  verify_instruction_managed=$(mktemp \
+    "$verify_instruction_stage/managed.XXXXXX") ||
+    die GOVERNANCE_NOT_READY 'Cannot verify client instruction'
   if ! strip_managed_block "$verify_instruction_destination" \
-    "$verify_instruction_stage/personal" \
-    "$verify_instruction_stage/managed"
+    "$verify_instruction_personal" \
+    "$verify_instruction_managed"
   then
-    rm -rf "$verify_instruction_stage" || :
     die CLIENT_INSTRUCTION_CONFLICT \
       "Remediation: repair the managed block, then run: beroka-governance bootstrap --client $verify_instruction_client"
   fi
-  if [ ! -s "$verify_instruction_stage/managed" ] ||
-    ! cmp -s "$verify_instruction_stage/managed" \
+  if [ ! -s "$verify_instruction_managed" ] ||
+    ! cmp -s "$verify_instruction_managed" \
       "$verify_instruction_template"
   then
-    rm -rf "$verify_instruction_stage" || :
     die CLIENT_INSTRUCTION_REQUIRED \
       "Remediation: beroka-governance bootstrap --client $verify_instruction_client"
   fi
-  rm -rf "$verify_instruction_stage" ||
+  cleanup_personal_stage ||
     die GOVERNANCE_NOT_READY 'Cannot finish client instruction verification'
   printf '%s\n' 'Instruction: INSTALLED'
 }
@@ -976,7 +990,7 @@ install_client_instruction() {
       [ -f "$instruction_template" ] ||
         die ENTRYPOINT_DRIFT "Missing Cursor user rule in $RELEASE_DIR"
       assert_client_files
-      cursor_rule_hash=$(git hash-object --no-filters "$instruction_template") ||
+      cursor_rule_hash=$(cursor_rule_identity "$instruction_template") ||
         die GOVERNANCE_NOT_READY 'Cannot hash Cursor user rule'
       if cursor_ack_matches "$cursor_rule_hash"; then
         printf '%s\n' 'Instruction: USER_CONFIRMED'
@@ -1007,11 +1021,20 @@ install_client_instruction() {
   assert_safe_user_path "$instruction_destination" "$instruction_client instruction"
   [ ! -e "$instruction_destination" ] || { [ -f "$instruction_destination" ] && [ ! -L "$instruction_destination" ]; } ||
     die GOVERNANCE_NOT_READY "Unsafe $instruction_client instruction"
-  instruction_stage=$(mktemp "${TMPDIR:-/tmp}/beroka-governance-instruction.XXXXXX") ||
+  PERSONAL_STAGE_ROOT=$(mktemp -d \
+    "${TMPDIR:-/tmp}/beroka-governance-instruction.XXXXXX") ||
+    die GOVERNANCE_NOT_READY "Cannot stage $instruction_client instruction"
+  instruction_stage=$(mktemp "$PERSONAL_STAGE_ROOT/personal.XXXXXX") ||
+    die GOVERNANCE_NOT_READY "Cannot stage $instruction_client instruction"
+  instruction_last_byte_file=$(mktemp \
+    "$PERSONAL_STAGE_ROOT/last-byte.XXXXXX") ||
+    die GOVERNANCE_NOT_READY "Cannot stage $instruction_client instruction"
+  instruction_lf_file=$(mktemp "$PERSONAL_STAGE_ROOT/lf.XXXXXX") ||
+    die GOVERNANCE_NOT_READY "Cannot stage $instruction_client instruction"
+  instruction_merged_file=$(mktemp "$PERSONAL_STAGE_ROOT/merged.XXXXXX") ||
     die GOVERNANCE_NOT_READY "Cannot stage $instruction_client instruction"
   if [ -e "$instruction_destination" ]; then
     strip_managed_block "$instruction_destination" "$instruction_stage" || {
-      rm -f "$instruction_stage" || :
       die CLIENT_INSTRUCTION_CONFLICT \
         "Remediation: repair the managed block, then run: beroka-governance bootstrap --client $instruction_client"
     }
@@ -1020,8 +1043,6 @@ install_client_instruction() {
   fi
   instruction_needs_boundary=0
   if [ -s "$instruction_stage" ]; then
-    instruction_last_byte_file=$instruction_stage.last-byte
-    instruction_lf_file=$instruction_stage.lf
     tail -c 1 "$instruction_stage" >"$instruction_last_byte_file" ||
       die GOVERNANCE_NOT_READY \
         "Cannot inspect $instruction_client instruction boundary"
@@ -1043,19 +1064,20 @@ install_client_instruction() {
         ;;
     esac
   fi
-  cat "$instruction_stage" >"$instruction_stage.merged" ||
+  cat "$instruction_stage" >"$instruction_merged_file" ||
     die GOVERNANCE_NOT_READY "Cannot stage $instruction_client instruction"
   if [ "$instruction_needs_boundary" -eq 1 ]; then
     printf '%s\n' "$INSTRUCTION_BOUNDARY_MARKER" \
-      >>"$instruction_stage.merged" ||
+      >>"$instruction_merged_file" ||
       die GOVERNANCE_NOT_READY "Cannot stage $instruction_client instruction"
   fi
-  cat "$instruction_template" >>"$instruction_stage.merged" ||
+  cat "$instruction_template" >>"$instruction_merged_file" ||
     die GOVERNANCE_NOT_READY "Cannot stage $instruction_client instruction"
-  apply_user_file "$instruction_stage.merged" "$instruction_destination" "$instruction_client instruction"
-  rm -f "$instruction_stage" "$instruction_stage.last-byte" \
-    "$instruction_stage.lf" \
-    "$instruction_stage.merged" || :
+  apply_user_file "$instruction_merged_file" "$instruction_destination" \
+    "$instruction_client instruction"
+  cleanup_personal_stage ||
+    die GOVERNANCE_NOT_READY \
+      "Cannot finish $instruction_client instruction staging"
   printf '%s\n' 'Instruction: INSTALLED'
 }
 
@@ -1160,8 +1182,6 @@ cmd_bootstrap() {
 
   if [ -n "$bs_requested" ]; then
     cmd_context "$bs_requested"
-  elif git rev-parse --show-toplevel >/dev/null 2>&1; then
-    cmd_context "$PWD"
   fi
   printf '%s\n' 'Result: PASS'
 }
@@ -1171,9 +1191,10 @@ cmd_uninstall() {
   [ -z "$force" ] || [ "$force" = --force ] || { usage >&2; exit 2; }
   assert_install_paths
   assert_client_files
-  uninstall_stage=$(mktemp -d \
+  PERSONAL_STAGE_ROOT=$(mktemp -d \
     "${TMPDIR:-/tmp}/beroka-governance-uninstall.XXXXXX") ||
     die GOVERNANCE_NOT_READY 'Cannot stage instruction removal'
+  uninstall_stage=$PERSONAL_STAGE_ROOT
   codex_home=${CODEX_HOME:-$HOME/.codex}
   for uninstall_spec in \
     "codex-agents	$codex_home/AGENTS.md" \
@@ -1186,16 +1207,18 @@ cmd_uninstall() {
     [ ! -e "$uninstall_path" ] || {
       [ -f "$uninstall_path" ] && [ ! -L "$uninstall_path" ]
     } || {
-      rm -rf "$uninstall_stage" || :
       die GOVERNANCE_NOT_READY "Unsafe instruction file: $uninstall_path"
     }
-    [ ! -e "$uninstall_path" ] ||
+    if [ -e "$uninstall_path" ]; then
+      : >"$uninstall_stage/$uninstall_name" ||
+        die GOVERNANCE_NOT_READY 'Cannot stage instruction removal'
+      chmod 600 "$uninstall_stage/$uninstall_name" ||
+        die GOVERNANCE_NOT_READY 'Cannot secure instruction removal stage'
       strip_managed_block "$uninstall_path" \
-        "$uninstall_stage/$uninstall_name" || {
-          rm -rf "$uninstall_stage" || :
-          die CLIENT_INSTRUCTION_CONFLICT \
-            "Malformed managed block in $uninstall_path"
-        }
+        "$uninstall_stage/$uninstall_name" ||
+        die CLIENT_INSTRUCTION_CONFLICT \
+          "Malformed managed block in $uninstall_path"
+    fi
   done
 
   for uninstall_spec in \
@@ -1214,7 +1237,7 @@ cmd_uninstall() {
         die GOVERNANCE_NOT_READY "Cannot remove $uninstall_name instruction"
     fi
   done
-  rm -rf "$uninstall_stage" ||
+  cleanup_personal_stage ||
     die GOVERNANCE_NOT_READY 'Cannot remove uninstall stage'
   rm -f "$BIN_DIR/$PROGRAM" || die GOVERNANCE_NOT_READY 'Cannot remove the user CLI'
   rm -rf "$DATA_ROOT" || die GOVERNANCE_NOT_READY 'Cannot remove package data'
@@ -1226,7 +1249,7 @@ cmd_uninstall() {
 
 retired_command() {
   die COMMAND_RETIRED \
-    'Repository registration is central; bootstrap and upgrade never modify application repositories'
+    'Repository routing is managed in the Central catalog; bootstrap and upgrade never modify application repositories'
 }
 
 client_executable() {
