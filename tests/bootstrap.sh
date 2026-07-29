@@ -246,6 +246,15 @@ then
 fi
 assert_not_contains "$output" 'should-not-appear'
 
+if output=$($CLI bootstrap "$repo" --client cursor \
+  --version v1.1.0 --non-interactive 2>&1)
+then
+  fail 'direct Cursor bootstrap accepted a missing cursor-agent'
+fi
+assert_contains "$output" 'Result: DEPENDENCY_MISSING'
+[ ! -e "$XDG_CONFIG_HOME/beroka-ai-governance/active-release" ] ||
+  fail 'missing cursor-agent changed active-release state'
+
 incidental_repo=$TEST_ROOT/incidental-gitlab-repository
 new_repo "$incidental_repo" incidental-gitlab-repository
 git -C "$incidental_repo" remote set-url origin \

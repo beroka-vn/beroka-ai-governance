@@ -29,10 +29,11 @@ run_as_root() {
   fi
 }
 
-ensure_jq() {
-  command -v jq >/dev/null 2>&1 && return
+ensure_os_dependency() {
+  dependency=$1
+  command -v "$dependency" >/dev/null 2>&1 && return
   [ "$non_interactive" -eq 0 ] ||
-    die DEPENDENCY_MISSING 'Remediation: install jq'
+    die DEPENDENCY_MISSING "Remediation: install $dependency"
   [ -t 1 ] && ( : </dev/tty ) 2>/dev/null ||
     die TTY_REQUIRED \
       "Retry with: $PROGRAM --client $client --non-interactive"
@@ -45,33 +46,74 @@ ensure_jq() {
     fi
   done
   [ -n "$installer" ] ||
-    die DEPENDENCY_MISSING 'Remediation: install jq'
+    die DEPENDENCY_MISSING "Remediation: install $dependency"
 
-  printf 'Missing dependency: jq. Install with %s (may request sudo)? [y/N] ' \
-    "$installer" >/dev/tty
+  printf 'Missing dependency: %s. Install with %s (may request sudo)? [y/N] ' \
+    "$dependency" "$installer" >/dev/tty
   IFS= read -r answer </dev/tty || answer=
   case "$answer" in
     y|Y|yes|YES) ;;
-    *) die DEPENDENCY_MISSING 'Remediation: install jq' ;;
+    *) die DEPENDENCY_MISSING "Remediation: install $dependency" ;;
   esac
 
   case "$installer" in
     apt-get)
       run_as_root apt-get update &&
-        run_as_root apt-get install -y jq ||
-        die DEPENDENCY_MISSING 'Remediation: install jq'
+        run_as_root apt-get install -y "$dependency" ||
+        die DEPENDENCY_MISSING "Remediation: install $dependency"
       ;;
     dnf)
-      run_as_root dnf install -y jq ||
-        die DEPENDENCY_MISSING 'Remediation: install jq'
+      run_as_root dnf install -y "$dependency" ||
+        die DEPENDENCY_MISSING "Remediation: install $dependency"
       ;;
     brew)
-      brew install jq ||
-        die DEPENDENCY_MISSING 'Remediation: install jq'
+      brew install "$dependency" ||
+        die DEPENDENCY_MISSING "Remediation: install $dependency"
       ;;
   esac
-  command -v jq >/dev/null 2>&1 ||
-    die DEPENDENCY_MISSING 'Remediation: install jq'
+  command -v "$dependency" >/dev/null 2>&1 ||
+    die DEPENDENCY_MISSING "Remediation: install $dependency"
+}
+
+ensure_cursor_agent() {
+  [ "$client" = cursor ] || return 0
+  if command -v cursor-agent >/dev/null 2>&1 &&
+     cursor-agent mcp login --help >/dev/null 2>&1
+  then
+    return
+  fi
+  [ "$non_interactive" -eq 0 ] ||
+    die DEPENDENCY_MISSING \
+      'Missing dependency: cursor-agent; https://cursor.com/install'
+  [ -t 1 ] && ( : </dev/tty ) 2>/dev/null ||
+    die TTY_REQUIRED \
+      "Retry with: $PROGRAM --client $client --non-interactive"
+
+  printf 'Install Cursor Agent CLI from https://cursor.com/install? [y/N] ' \
+    >/dev/tty
+  IFS= read -r answer </dev/tty || answer=
+  case "$answer" in
+    y|Y|yes|YES) ;;
+    *)
+      die DEPENDENCY_MISSING \
+        'Missing dependency: cursor-agent; https://cursor.com/install'
+      ;;
+  esac
+
+  command -v bash >/dev/null 2>&1 ||
+    die DEPENDENCY_MISSING 'Missing dependency: bash'
+  ensure_os_dependency curl
+  cursor_installer=$bootstrap_root/cursor-install.sh
+  curl -fsS https://cursor.com/install -o "$cursor_installer" ||
+    die DEPENDENCY_MISSING 'Cursor Agent installer download failed'
+  bash "$cursor_installer" ||
+    die DEPENDENCY_MISSING 'Cursor Agent installer failed'
+  PATH=$HOME/.local/bin:$PATH
+  export PATH
+  cursor-agent --version >/dev/null 2>&1 &&
+    cursor-agent mcp login --help >/dev/null 2>&1 ||
+    die DEPENDENCY_MISSING \
+      'Installed Cursor Agent lacks required MCP login support'
 }
 
 client=
@@ -144,7 +186,8 @@ checked_out_commit=$(git -C "$bootstrap_root/repo" \
   die RELEASE_VERIFICATION_FAILED \
     'The cloned release does not match the embedded commit'
 
-ensure_jq
+ensure_os_dependency jq
+ensure_cursor_agent
 
 cli=$bootstrap_root/repo/bin/beroka-governance
 set -- bootstrap \

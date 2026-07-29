@@ -6,9 +6,11 @@ Central repository catalog; it does not configure the application repository.
 
 ## Quick start
 
-Install the selected AI client and `gh` once per workstation. Run this from any
-directory. Healthy client-owned GitHub OAuth is reused; when it is missing,
-`gh` starts its browser OAuth flow and keeps credentials in its own store.
+Install `gh` and the selected Codex or Claude client once per workstation.
+Interactive Cursor bootstrap installs a missing Cursor Agent after one
+confirmation. Run this from any directory. Healthy client-owned GitHub OAuth
+is reused; when it is missing, `gh` starts its browser OAuth flow and keeps
+credentials in its own store.
 
 ```bash
 bash -e -o pipefail -c '
@@ -53,8 +55,18 @@ governed repository work begins.
 
 Tracked legacy governance files remain until a repository owner explicitly
 authorizes a separate cleanup. The new CLI ignores them for release selection
-and routing. `v1.0.0` is the current supported capability release. Every
+and routing. `v1.0.1` is the current supported capability release. Every
 published tag is immutable.
+
+### Cursor v1.0.0 hotfix
+
+Bootstrap installs a missing Cursor Agent after one confirmation. Developers
+upgrading from `v1.0.0` run this once; installation and Atlassian connector
+setup continue in the same process:
+
+```bash
+bash -e -o pipefail -c 'gh release download v1.0.1 --repo beroka-vn/beroka-ai-governance --pattern bootstrap.sh --output - | sh -s -- --client cursor --upgrade'
+```
 
 ### Upgrade
 

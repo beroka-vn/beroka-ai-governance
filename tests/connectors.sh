@@ -1179,13 +1179,17 @@ fi
 cat >"$FAKE_BIN/cursor-agent" <<'EOF'
 #!/bin/sh
 set -eu
-printf 'cursor-agent %s\n' "$*" >>"$CALLS"
+printf 'cursor-agent %s | %s\n' "$*" "$PWD" >>"$CALLS"
 case "$*" in
   'mcp login --help') exit 0 ;;
   'mcp login atlassian')
     printf '%s\n' healthy >"$XDG_CONFIG_HOME/fake-cursor-health"
     ;;
   'mcp list')
+    if [ "$PWD" = "$HOME" ]; then
+      printf '%s\n' 'atlassian: not loaded (needs approval)'
+      exit 0
+    fi
     health=$(sed -n '1p' "$XDG_CONFIG_HOME/fake-cursor-health" 2>/dev/null || :)
     case "$health" in
       healthy) printf '%s\n' 'atlassian: Ready' ;;
@@ -1228,6 +1232,21 @@ jq -e --arg url 'https://mcp.atlassian.com/v1/mcp/authv2' \
   fail 'Cursor setup did not add Atlassian MCP'
 assert_not_contains "$(cat "$CALLS")" 'claude '
 assert_not_contains "$(cat "$CALLS")" 'codex '
+
+printf '%s\n' auth-required >"$XDG_CONFIG_HOME/fake-cursor-health"
+: >"$CALLS"
+if output=$(cd "$HOME" &&
+  $CLI setup-connectors --client cursor --non-interactive 2>&1)
+then
+  fail 'Cursor HOME setup accepted missing authentication'
+fi
+assert_contains "$output" 'Result: ATLASSIAN_AUTH_REQUIRED'
+assert_not_contains "$output" 'CONNECTOR_HEALTH_UNAVAILABLE'
+if grep '^cursor-agent mcp ' "$CALLS" |
+  grep -Ev ' \| /$' >/dev/null
+then
+  fail 'governance ran Cursor MCP outside the neutral directory'
+fi
 
 printf '%s\n' '{"mcpServers":{"atlassian":{"url":"https://example.invalid/mcp"}}}' \
   >"$HOME/.cursor/mcp.json"
@@ -1324,6 +1343,7 @@ printf '%s\n' auth-required >"$XDG_CONFIG_HOME/fake-cursor-health"
 output=$(printf 'y\n' | script -qec "$CLI setup-connectors --client cursor" /dev/null 2>&1)
 assert_contains "$output" 'Result: PASS'
 assert_contains "$(cat "$CALLS")" 'cursor-agent mcp login atlassian'
+assert_contains "$(cat "$CALLS")" 'cursor-agent mcp login atlassian | /'
 
 RELEASE_VERSION=v9.9.9
 RELEASE_SOURCE=$TEST_ROOT/release-source
