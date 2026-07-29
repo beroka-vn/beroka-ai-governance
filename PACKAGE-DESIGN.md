@@ -22,7 +22,8 @@ Legacy tracked governance files are neither parsed nor changed. They remain unti
 ```
 
 The active release record and client enrollment are the source of installation
-state. No credential is stored there. `v1.0.0` is the current supported capability release.
+state. No credential is stored there.
+`v1.0.1` is the current supported capability release.
 
 The release catalog is keyed by normalized canonical GitHub slug. Its reviewed record supplies profile, Jira project and board, Confluence root, integration profile, and cross-repository policy. An unknown origin is standalone with `ROUTING_REQUIRED`: source-only work may continue, but routing-dependent writes remain blocked. Catalog changes require an explicitly authorized governance-repository task.
 
@@ -36,7 +37,10 @@ CLI hard-enforces installation, release integrity, catalog routing, connector, a
 
 ### Release launcher
 
-Each stable release publishes `bootstrap.sh` as a GitHub Release asset. The selected AI client and `gh` are workstation prerequisites. The compact install command is the only public install path:
+Each stable release publishes `bootstrap.sh` as a GitHub Release asset. `gh`
+and a selected Codex or Claude client are workstation prerequisites.
+Interactive Cursor bootstrap installs a missing Cursor Agent after one
+confirmation. The compact install command is the only public install path:
 
 ```bash
 bash -e -o pipefail -c '
@@ -53,7 +57,7 @@ bash -e -o pipefail -c '
 
 `gh auth setup-git --hostname github.com` reuses client-owned GitHub OAuth for the private HTTPS clone. No token is requested, printed, copied, logged, or stored. The downloaded release launcher clones the embedded annotated tag and invokes the package CLI only after tag type, peeled commit, and checked-out HEAD each equal the embedded commit. A mismatch returns `RELEASE_VERIFICATION_FAILED` before user-state changes.
 
-After verification, bootstrap installs the active release, enrolls the selected client, and configures only that client's connector. Bootstrap does not infer repository context from the current directory; callers run `beroka-governance context REPO` explicitly when governed repository work begins. Missing `jq` may be installed interactively with `apt-get`, `dnf`, or `brew`; declining returns `DEPENDENCY_MISSING`.
+After verification, bootstrap installs the active release, enrolls the selected client, and configures only that client's connector. Bootstrap does not infer repository context from the current directory; callers run `beroka-governance context REPO` explicitly when governed repository work begins. Missing `jq` or `curl` may be installed interactively with `apt-get`, `dnf`, or `brew`; declining returns `DEPENDENCY_MISSING`. Cursor Agent is downloaded only from `https://cursor.com/install`, staged completely, and executed with `bash`.
 
 ### Upgrade
 
@@ -98,6 +102,11 @@ bash -e -o pipefail -c '
 At a new session, resume, or compaction, run `beroka-governance context "$PWD"` before governed planning, implementation, or external actions. Immediately before an external write, run the matching operation preflight. The selected client owns OAuth. Governance does not accept, print, log, or store a developer API token.
 
 Connector health uses a 15-second total deadline. Missing, expired, or invalid Atlassian authentication returns `ATLASSIAN_AUTH_REQUIRED` with selected-client remediation. `CONNECTOR_HEALTH_UNAVAILABLE` is not authentication success or `PASS`. Interactive provider output stays attached to the terminal.
+
+Cursor MCP commands run from `/` while preserving the user's HOME and
+credentials. This keeps global `~/.cursor/mcp.json` separate from a
+project-local `.cursor/mcp.json`, including when bootstrap is invoked from
+HOME.
 
 Bootstrap invokes `setup-connectors` for its selected client. The selected
 client's connector inspection requires `jq` for every selected client.
