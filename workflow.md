@@ -88,9 +88,11 @@ the BF backlog after explicit confirmation as `Pending` with owner, but returns
 ### Step 2 — Decompose into GitHub Issues
 
 - Backend:
-  [cuongngo1801-beroka/Beroka_Backend](https://github.com/cuongngo1801-beroka/Beroka_Backend).
+  [beroka-vn/Beroka_Backend](https://github.com/beroka-vn/Beroka_Backend).
 - Frontend:
-  [cuongngo1801-beroka/Beroka_Frontend](https://github.com/cuongngo1801-beroka/Beroka_Frontend).
+  [beroka-vn/Beroka_Frontend](https://github.com/beroka-vn/Beroka_Frontend).
+- Use only the routed profiles allowed by the stored GitHub Team-verified role;
+  eligible preflights revalidate membership before writes.
 - Unrelated repositories require an exact catalog record.
 - Shared work uses one confirmed primary tracking repository.
 

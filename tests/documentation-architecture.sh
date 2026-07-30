@@ -122,6 +122,15 @@ require_text workflow.md 'standalone reason'
 reject_text runtime/integrations/beroka-be-fe.repositories \
   'hungnx77/Beroka_Backend'
 
+for file in README.md handbook.md PACKAGE-DESIGN.md governance.md workflow.md \
+  templates/ai-agent-assignment.md; do
+  reject_text "$file" 'cuongngo1801-beroka/Beroka_Backend'
+  reject_text "$file" 'cuongngo1801-beroka/Beroka_Frontend'
+done
+require_text handbook.md 'GITHUB_ROLE_REQUIRED'
+require_text runtime/rules/general.md 'ROLE_SCOPE_DENIED'
+require_text governance.md 'GitHub Team membership'
+
 require_text templates/jira-confluence.md \
   'Backend Capability Registry Template'
 require_text templates/jira-confluence.md \

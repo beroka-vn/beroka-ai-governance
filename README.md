@@ -136,8 +136,12 @@ origins have exact catalog records. The catalog selects the approved profile,
 integration, Jira project, board, and Confluence root; never infer one from a
 similar repository name.
 
-- Backend: `cuongngo1801-beroka/Beroka_Backend`.
-- Frontend: `cuongngo1801-beroka/Beroka_Frontend`.
+- Backend: `beroka-vn/Beroka_Backend`.
+- Frontend: `beroka-vn/Beroka_Frontend`.
+
+Bootstrap derives `FE`, `BE`, or `FULL_STACK` from exact `beroka-vn` GitHub
+Team membership. Context denies a routed profile outside that stored role, and
+eligible preflights revalidate membership before external writes.
 
 - Manager/coordinator: use the [operating workflow](workflow.md), then the
   [Jira and Confluence template](templates/jira-confluence.md) and [GitHub

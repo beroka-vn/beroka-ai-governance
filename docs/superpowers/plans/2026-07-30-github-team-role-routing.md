@@ -4,7 +4,7 @@
 
 **Goal:** Route canonical `beroka-vn` Backend and Frontend repositories while enforcing a GitHub Team-verified FE, BE, or Full-stack user role before governed external writes.
 
-**Architecture:** Reuse the exact file-backed repository catalog and existing `gh`/`jq` dependencies. Store one validated role in user scope, apply it locally when rendering Backend/Frontend contexts, and re-query exact `beroka-vn` Team membership before every preflight.
+**Architecture:** Reuse the exact file-backed repository catalog and existing `gh`/`jq` dependencies. Store one validated role in user scope, apply it locally when rendering Backend/Frontend contexts, and re-query exact `beroka-vn` Team membership after a preflight passes repository and operation routing.
 
 **Tech Stack:** POSIX shell, Git, GitHub CLI, jq, Markdown, existing shell test suite
 
@@ -12,12 +12,16 @@
 
 - Match only exact `beroka-vn/frontend` and `beroka-vn/backend` GitHub Teams.
 - Store exactly `FE`, `BE`, or `FULL_STACK`; never default to Full-stack.
-- Keep `context` offline by reading the stored role; revalidate membership before every preflight.
+- Keep `context` offline by reading the stored role; revalidate membership
+  after preflight routing passes and before connector login or an external
+  write.
 - Return `GITHUB_ROLE_REQUIRED`, `GITHUB_ROLE_SELECTION_REQUIRED`, `GITHUB_ROLE_UNAVAILABLE`, or `ROLE_SCOPE_DENIED` without broadening existing authority.
 - Add no service, daemon, wildcard routing, self-declaration path, or dependency.
 - Keep `cuongngo1801-beroka/Beroka_Backend` and `cuongngo1801-beroka/Beroka_Frontend` only for the `v1.0.4` transition.
 - Active documentation uses only `beroka-vn` URLs; historical plans remain unchanged.
 - Do not combine Issue #30 or Issue #31 with Issue #29.
+- Resolve GitHub's current default branch for PR and release operations; never
+  use a branch name as repository identity.
 - Do not merge, tag, or release without explicit human confirmation of the exact reviewed pull request and commit.
 
 ---
@@ -528,10 +532,12 @@ beroka-governance preflight "$PWD" \
 git push -u origin agent/issue-29-github-team-roles
 ```
 
-- [ ] **Step 4: Run fresh preflight and open a draft PR**
+- [ ] **Step 4: Resolve the default branch and open a draft PR**
 
-Create a draft PR targeting `main` with `Fixes #29`, the role matrix, alias
-window, full verification evidence, and explicit unverified release gates.
+Read `defaultBranchRef.name` from GitHub immediately before PR creation. Create
+a draft PR targeting that exact branch with `Fixes #29`, the role matrix,
+alias window, full verification evidence, and explicit unverified release
+gates.
 
 - [ ] **Step 5: Read back and review**
 
@@ -546,7 +552,7 @@ publish until the user confirms both exact values.
 - [ ] **Step 7: Merge and publish only the approved commit**
 
 After fresh GitHub preflights, merge the approved PR, fetch the exact
-`origin/main` merge commit, run the release readiness checks, create annotated
-tag `v1.0.4`, push that tag, and create the GitHub Release with the verified
-`bootstrap.sh` asset. Read back the tag target, release URL, asset digest, and
-non-draft/non-prerelease state.
+merge commit from the freshly resolved GitHub default branch, run the release
+readiness checks, create annotated tag `v1.0.4`, push that tag, and create the
+GitHub Release with the verified `bootstrap.sh` asset. Read back the tag
+target, release URL, asset digest, and non-draft/non-prerelease state.

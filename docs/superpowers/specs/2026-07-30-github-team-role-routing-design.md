@@ -88,8 +88,9 @@ Role scope applies only to routed Backend and Frontend profiles:
 Standalone profiles keep their existing behavior. A denied context emits no
 Backend/Frontend Jira, Confluence, or integration routing details.
 
-Every preflight re-queries GitHub Teams before any connector login, OAuth
-prompt, or external write is allowed. The stored role must still be eligible:
+Every preflight that passes repository and operation routing re-queries GitHub
+Teams before any connector login, OAuth prompt, or external write is allowed.
+The stored role must still be eligible:
 
 - `FE` requires current Frontend membership;
 - `BE` requires current Backend membership;
@@ -98,7 +99,7 @@ prompt, or external write is allowed. The stored role must still be eligible:
 Missing or stale eligibility returns `GITHUB_ROLE_REQUIRED` with bootstrap
 remediation. A repository/profile mismatch returns `ROLE_SCOPE_DENIED`.
 Cross-repository writes remain `explicit-only` and keep their existing
-`ROUTING_REQUIRED` gate.
+`ROUTING_REQUIRED` gate before client or membership inspection.
 
 ## Canonical repositories and transition aliases
 
