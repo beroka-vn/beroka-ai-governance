@@ -23,9 +23,15 @@ Legacy tracked governance files are neither parsed nor changed. They remain unti
 
 The active release record and client enrollment are the source of installation
 state. No credential is stored there.
-`v1.0.1` is the current supported capability release.
+`v1.0.2` is the current supported capability release.
 
 The release catalog is keyed by normalized canonical GitHub slug. Its reviewed record supplies profile, Jira project and board, Confluence root, integration profile, and cross-repository policy. An unknown origin is standalone with `ROUTING_REQUIRED`: source-only work may continue, but routing-dependent writes remain blocked. Catalog changes require an explicitly authorized governance-repository task.
+
+The supported BE/FE boundary contains only
+`cuongngo1801-beroka/Beroka_Backend` and
+`cuongngo1801-beroka/Beroka_Frontend`. Both select `beroka-be-fe`; this emits
+the compact shared work-item rules but does not authorize automatic
+cross-repository writes.
 
 ## Client adapters and enforcement
 
@@ -99,7 +105,7 @@ bash -e -o pipefail -c '
 
 ## Runtime, connector, and safety contract
 
-At a new session, resume, or compaction, run `beroka-governance context "$PWD"` before governed planning, implementation, or external actions. Immediately before an external write, run the matching operation preflight. The selected client owns OAuth. Governance does not accept, print, log, or store a developer API token.
+At a new session, resume, or compaction, run `beroka-governance context "$PWD"` before governed planning, implementation, or external actions. Rerun it when the IDE workspace or current Git repository changes, another repository enters scope, or planning becomes shared/full-stack; shared work resolves every exact target and one primary tracking repository. Immediately before an external write, run the matching operation preflight. The selected client owns OAuth. Governance does not accept, print, log, or store a developer API token.
 
 Connector health uses a 15-second total deadline. Missing, expired, or invalid Atlassian authentication returns `ATLASSIAN_AUTH_REQUIRED` with selected-client remediation. `CONNECTOR_HEALTH_UNAVAILABLE` is not authentication success or `PASS`. Interactive provider output stays attached to the terminal.
 
