@@ -597,7 +597,7 @@ cat >"$FAKE_BIN/gh" <<'EOF'
 set -eu
 printf 'gh %s\n' "$*" >>"$CALLS"
 case "$*" in
-  'auth status --help'|'auth login --help') exit 0 ;;
+  'auth status --help'|'auth login --help'|'api --help') exit 0 ;;
   'auth status --hostname github.com')
     case "$(sed -n '1p' "$XDG_CONFIG_HOME/fake-github-health" 2>/dev/null || :)" in
       healthy) exit 0 ;;
@@ -614,6 +614,24 @@ case "$*" in
   'auth login --hostname github.com --web')
     printf '%s\n' 'OAuth URL: https://github.com/login/device'
     printf '%s\n' healthy >"$XDG_CONFIG_HOME/fake-github-health"
+    ;;
+  'api --paginate /user/teams')
+    case "$(sed -n '1p' "$XDG_CONFIG_HOME/fake-github-teams" 2>/dev/null || :)" in
+      frontend)
+        printf '%s\n' \
+          '[{"slug":"frontend","organization":{"login":"beroka-vn"}}]'
+        ;;
+      backend)
+        printf '%s\n' \
+          '[{"slug":"backend","organization":{"login":"beroka-vn"}}]'
+        ;;
+      both)
+        printf '%s\n' \
+          '[{"slug":"frontend","organization":{"login":"beroka-vn"}},{"slug":"backend","organization":{"login":"beroka-vn"}}]'
+        ;;
+      neither) printf '%s\n' '[]' ;;
+      *) exit 1 ;;
+    esac
     ;;
   *) exit 1 ;;
 esac
@@ -811,6 +829,7 @@ if output=$($CLI context "$canonical_backend" 2>&1); then
 fi
 assert_contains "$output" 'Result: GITHUB_ROLE_REQUIRED'
 printf '%s\n' FULL_STACK >"$role_file"
+printf '%s\n' both >"$XDG_CONFIG_HOME/fake-github-teams"
 
 git -C "$consumer" remote set-url upstream \
   git@github.com-work:beroka-vn/routing-consumer.git
@@ -871,6 +890,39 @@ assert_contains "$output" 'Result: PASS'
 assert_not_contains "$(cat "$CALLS")" \
   'gh auth login --hostname github.com --web'
 
+printf '%s\n' FE >"$role_file"
+printf '%s\n' backend >"$XDG_CONFIG_HOME/fake-github-teams"
+: >"$CALLS"
+if output=$($CLI preflight "$canonical_frontend" --client codex \
+  --operation github-write --non-interactive 2>&1)
+then
+  fail 'GitHub preflight accepted stale FE eligibility'
+fi
+assert_contains "$output" 'Result: GITHUB_ROLE_REQUIRED'
+assert_not_contains "$(cat "$CALLS")" 'mcp '
+
+printf '%s\n' FULL_STACK >"$role_file"
+printf '%s\n' frontend >"$XDG_CONFIG_HOME/fake-github-teams"
+: >"$CALLS"
+if output=$($CLI preflight "$consumer" --client codex \
+  --operation github-write --non-interactive 2>&1)
+then
+  fail 'GitHub preflight accepted Full-stack without both Teams'
+fi
+assert_contains "$output" 'Result: GITHUB_ROLE_REQUIRED'
+
+printf '%s\n' unavailable >"$XDG_CONFIG_HOME/fake-github-teams"
+: >"$CALLS"
+if output=$($CLI preflight "$consumer" --client codex \
+  --operation github-write --non-interactive 2>&1)
+then
+  fail 'GitHub preflight accepted unavailable Team verification'
+fi
+assert_contains "$output" 'Result: GITHUB_ROLE_UNAVAILABLE'
+
+printf '%s\n' FULL_STACK >"$role_file"
+printf '%s\n' both >"$XDG_CONFIG_HOME/fake-github-teams"
+
 publish_routing() {
   pr_content=$1
   printf '%s\n' "$pr_content" >"$catalog/routing-consumer.conf"
@@ -927,7 +979,7 @@ printf '%s\n' healthy-all >"$XDG_CONFIG_HOME/fake-codex-health"
 output=$($CLI preflight "$consumer" \
   --client codex --operation jira-write --non-interactive)
 assert_contains "$output" 'Capability state: SUPPORTED'
-assert_not_contains "$(cat "$CALLS")" 'gh '
+assert_contains "$(cat "$CALLS")" 'gh api --paginate /user/teams'
 
 printf '%s\n' healthy-rpc-extensions \
   >"$XDG_CONFIG_HOME/fake-codex-health"
