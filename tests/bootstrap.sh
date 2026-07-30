@@ -131,6 +131,37 @@ case "$*" in
 esac
 EOF
 
+cat >"$FAKE_BIN/gh" <<'EOF'
+#!/bin/sh
+set -eu
+printf 'gh %s\n' "$*" >>"$CALLS"
+case "$*" in
+  'auth status --help'|'auth login --help'|'api --help') exit 0 ;;
+  'auth status --hostname github.com')
+    [ "$(sed -n '1p' "$XDG_CONFIG_HOME/fake-github-health")" = healthy ]
+    ;;
+  'api --paginate /user/teams')
+    case "$(sed -n '1p' "$XDG_CONFIG_HOME/fake-github-teams")" in
+      frontend)
+        printf '%s\n' \
+          '[{"slug":"frontend","organization":{"login":"beroka-vn"}}]'
+        ;;
+      backend)
+        printf '%s\n' \
+          '[{"slug":"backend","organization":{"login":"beroka-vn"}}]'
+        ;;
+      both)
+        printf '%s\n' \
+          '[{"slug":"frontend","organization":{"login":"beroka-vn"}},{"slug":"backend","organization":{"login":"beroka-vn"}}]'
+        ;;
+      neither) printf '%s\n' '[]' ;;
+      *) exit 1 ;;
+    esac
+    ;;
+  *) exit 1 ;;
+esac
+EOF
+
 cat >"$DISABLED_BIN/claude" <<'EOF'
 #!/bin/sh
 set -eu
@@ -156,8 +187,11 @@ case "$*" in
 esac
 EOF
 
-chmod 755 "$FAKE_BIN/sleep" "$FAKE_BIN/codex" "$DISABLED_BIN/claude"
+chmod 755 "$FAKE_BIN/sleep" "$FAKE_BIN/codex" "$FAKE_BIN/gh" \
+  "$DISABLED_BIN/claude"
 : >"$CALLS"
+printf '%s\n' healthy >"$XDG_CONFIG_HOME/fake-github-health"
+printf '%s\n' frontend >"$XDG_CONFIG_HOME/fake-github-teams"
 
 source_repo=$TEST_ROOT/governance-source
 mkdir -p "$source_repo/bin" "$source_repo/runtime" \
@@ -259,6 +293,8 @@ assert_contains "$output" 'Version: v1.0.3'
 [ "$compat_repo_before" = "$(snapshot_repo "$repo")" ] ||
   fail 'historical upgrade changed the application repository'
 $CLI uninstall --force >/dev/null
+[ ! -e "$XDG_CONFIG_HOME/beroka-ai-governance/github-role" ] ||
+  fail 'uninstall retained the managed GitHub role'
 rm -f "$XDG_CONFIG_HOME/fake-codex-configured"
 
 if output=$($CLI bootstrap "$repo" --version v1.1.0 \
@@ -326,7 +362,48 @@ assert_not_contains "$output" 'Repository:'
   fail 'repo-independent bootstrap omitted Codex enrollment'
 assert_separate_managed_block "$HOME/.codex/AGENTS.md"
 $CLI uninstall --force >/dev/null
+[ ! -e "$XDG_CONFIG_HOME/beroka-ai-governance/github-role" ] ||
+  fail 'uninstall retained the managed GitHub role'
 rm -f "$XDG_CONFIG_HOME/fake-codex-configured"
+
+role_file=$XDG_CONFIG_HOME/beroka-ai-governance/github-role
+printf '%s\n' backend >"$XDG_CONFIG_HOME/fake-github-teams"
+output=$($CLI bootstrap "$repo" --client codex \
+  --version v1.1.0 --non-interactive)
+[ "$(cat "$role_file")" = BE ] ||
+  fail 'Backend-only membership did not select BE'
+
+printf '%s\n' both >"$XDG_CONFIG_HOME/fake-github-teams"
+rm -f "$role_file"
+if output=$($CLI bootstrap "$repo" --client codex \
+  --version v1.1.0 --non-interactive 2>&1)
+then
+  fail 'dual membership defaulted a GitHub role'
+fi
+assert_contains "$output" 'Result: GITHUB_ROLE_SELECTION_REQUIRED'
+
+output=$(printf 'Full-stack\n' | script -qec \
+  "$CLI bootstrap $repo --client codex --version v1.1.0" \
+  /dev/null 2>&1)
+assert_contains "$output" 'GitHub role: FULL_STACK'
+[ "$(cat "$role_file")" = FULL_STACK ] ||
+  fail 'dual membership did not store the explicit Full-stack choice'
+
+printf '%s\n' FE >"$role_file"
+output=$($CLI bootstrap "$repo" --client codex \
+  --version v1.1.0 --non-interactive)
+[ "$(cat "$role_file")" = FE ] ||
+  fail 'dual membership discarded the stored FE choice'
+
+printf '%s\n' neither >"$XDG_CONFIG_HOME/fake-github-teams"
+if output=$($CLI bootstrap "$repo" --client codex \
+  --version v1.1.0 --non-interactive 2>&1)
+then
+  fail 'bootstrap accepted no eligible GitHub Team'
+fi
+assert_contains "$output" 'Result: GITHUB_ROLE_REQUIRED'
+
+printf '%s\n' frontend >"$XDG_CONFIG_HOME/fake-github-teams"
 
 : >"$CALLS"
 repo_before=$(snapshot_repo "$repo")

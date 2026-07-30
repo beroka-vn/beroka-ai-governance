@@ -39,41 +39,49 @@ reject_text() {
   fi
 }
 
-[ "$(cat "$ROOT/VERSION")" = v1.0.3 ] ||
-  fail 'VERSION is not v1.0.3'
+[ "$(cat "$ROOT/VERSION")" = v1.0.4 ] ||
+  fail 'VERSION is not v1.0.4'
 
-require_text README.md '`v1.0.3` is the current supported capability release.'
+require_text README.md '`v1.0.4` is the current supported capability release.'
 reject_text README.md '`v1.0.0` is the current supported capability release.'
 reject_text README.md '`v1.0.1` is the current supported capability release.'
 reject_text README.md '`v1.0.2` is the current supported capability release.'
+reject_text README.md '`v1.0.3` is the current supported capability release.'
 require_text handbook.md \
-  '`v1.0.3` là capability release được hỗ trợ hiện tại.'
+  '`v1.0.4` là capability release được hỗ trợ hiện tại.'
 reject_text handbook.md \
   '`v1.0.0` là capability release được hỗ trợ hiện tại.'
 reject_text handbook.md '`v1.0.1` là capability release được hỗ trợ hiện tại.'
 reject_text handbook.md '`v1.0.2` là capability release được hỗ trợ hiện tại.'
+reject_text handbook.md '`v1.0.3` là capability release được hỗ trợ hiện tại.'
 require_text PACKAGE-DESIGN.md \
-  '`v1.0.3` is the current supported capability release.'
+  '`v1.0.4` is the current supported capability release.'
 reject_text PACKAGE-DESIGN.md \
   '`v1.0.0` is the current supported capability release.'
 reject_text PACKAGE-DESIGN.md \
   '`v1.0.1` is the current supported capability release.'
 reject_text PACKAGE-DESIGN.md \
   '`v1.0.2` is the current supported capability release.'
+reject_text PACKAGE-DESIGN.md \
+  '`v1.0.3` is the current supported capability release.'
 require_text README.md \
   'Bootstrap installs a missing Cursor Agent after one confirmation.'
 require_text README.md \
-  'gh release download v1.0.3 --repo beroka-vn/beroka-ai-governance'
+  'gh release download v1.0.4 --repo beroka-vn/beroka-ai-governance'
 require_text README.md \
-  'upgrading from `v1.0.0`, `v1.0.1`, or `v1.0.2` run this once'
+  'upgrading from `v1.0.0` through `v1.0.3` run this once'
+require_text README.md '### v1.0.4 release'
+require_text README.md 'GitHub Team-verified roles'
+require_text README.md 'deprecated'
+require_text README.md 'aliases for this release only'
 require_text handbook.md \
   'Bootstrap tự cài Cursor Agent còn thiếu sau một lần xác nhận.'
 require_text PACKAGE-DESIGN.md 'Cursor MCP commands run from `/`'
 require_text README.md 'Backend and Frontend repositories'
-require_text README.md 'cuongngo1801-beroka/Beroka_Backend'
-require_text README.md 'cuongngo1801-beroka/Beroka_Frontend'
+require_text README.md 'beroka-vn/Beroka_Backend'
+require_text README.md 'beroka-vn/Beroka_Frontend'
 require_text README.md 'workspace or current Git repository changes'
-require_text handbook.md 'cuongngo1801-beroka/Beroka_Backend'
+require_text handbook.md 'beroka-vn/Beroka_Backend'
 reject_text handbook.md 'hungnx77/Beroka_Backend'
 require_text handbook.md 'Chuyển quyết định cho developer'
 require_text README.md 'gh release download'
@@ -83,6 +91,32 @@ require_text handbook.md 'CONNECTOR_HEALTH_UNAVAILABLE'
 require_text PACKAGE-DESIGN.md '15-second total deadline'
 [ -f "$ROOT/release/bootstrap.sh.in" ] ||
   fail 'missing release launcher template'
+
+version=$(sed -n '1p' "$ROOT/VERSION")
+case "$version" in
+  v1.0.4) expected_inventory_rows=4 ;;
+  *) expected_inventory_rows=2 ;;
+esac
+[ "$(sed '/^#/d;/^[[:space:]]*$/d' \
+  "$ROOT/runtime/integrations/beroka-be-fe.repositories" | wc -l | tr -d ' ')" = \
+  "$expected_inventory_rows" ] ||
+  fail "beroka-be-fe inventory does not contain $expected_inventory_rows repositories"
+for alias in Beroka_Backend Beroka_Frontend; do
+  alias_slug="cuongngo1801-beroka/$alias"
+  alias_record="runtime/repositories/$alias_slug.conf"
+  case "$version" in
+    v1.0.4)
+      require_text runtime/integrations/beroka-be-fe.repositories "$alias_slug"
+      [ -f "$ROOT/$alias_record" ] ||
+        fail "missing v1.0.4 transition alias record: $alias_record"
+      ;;
+    *)
+      reject_text runtime/integrations/beroka-be-fe.repositories "$alias_slug"
+      [ ! -e "$ROOT/$alias_record" ] ||
+        fail "expired transition alias record: $alias_record"
+      ;;
+  esac
+done
 
 interactive_launcher=$(cat <<'EOF'
 bash -e -o pipefail -c '

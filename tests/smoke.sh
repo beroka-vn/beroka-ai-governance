@@ -310,7 +310,12 @@ EOF
 cat >"$fake_bin/gh" <<'EOF'
 #!/bin/sh
 case "$*" in
-  'auth status --help'|'auth login --help'|'auth status --hostname github.com')
+  'auth status --help'|'auth login --help'|'api --help'|'auth status --hostname github.com')
+    exit 0
+    ;;
+  'api --paginate /user/teams')
+    printf '%s\n' \
+      '[{"slug":"frontend","organization":{"login":"beroka-vn"}},{"slug":"backend","organization":{"login":"beroka-vn"}}]'
     exit 0
     ;;
 esac
@@ -320,6 +325,8 @@ chmod 755 "$fake_bin/codex" "$fake_bin/gh"
 mkdir -p "$HOME/.codex"
 cp "$source_repo/templates/agent-entrypoints/AGENTS.md" \
   "$HOME/.codex/AGENTS.md"
+printf '%s\n' FULL_STACK \
+  >"$XDG_CONFIG_HOME/beroka-ai-governance/github-role"
 
 for preflight_repo in "$known_repo" "$unknown_repo"; do
   before=$(snapshot_repo_complete "$preflight_repo")

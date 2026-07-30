@@ -14,6 +14,7 @@ INSTRUCTION_BOUNDARY_MARKER='<!-- BEROKA-GOVERNANCE:BOUNDARY -->'
 ACTIVE_RELEASE=$CONFIG_ROOT/active-release
 CLIENTS_FILE=$CONFIG_ROOT/clients
 CURSOR_ACK_FILE=$CONFIG_ROOT/cursor-user-rule.sha256
+GITHUB_ROLE_FILE=$CONFIG_ROOT/github-role
 TX_DIR= TX_COMMITTED=0 TX_RELEASE_NEW=0 TX_RELEASE_TARGET=
 TX_RELEASE_STAGE= TX_RELEASE_OWNED=0
 TX_CLI_PATH= TX_CLI_SNAPSHOT=0 TX_ACTIVE_RELEASE_SNAPSHOT=0
@@ -22,6 +23,8 @@ ROUTE_SCHEMA_VERSION= ROUTE_PROFILE= ROUTE_JIRA_PROJECT_KEY=
 ROUTE_JIRA_BOARD_ID= ROUTE_CONFLUENCE_SPACE_KEY=
 ROUTE_CONFLUENCE_ROOT_CONTENT_ID= ROUTE_CONFLUENCE_ROOT_CONTENT_TYPE=
 ROUTE_INTEGRATION_PROFILE= ROUTE_CROSS_REPO_POLICY= DEPENDENCY_STATE=
+GITHUB_ROLE=
+GITHUB_FRONTEND_MEMBER=0 GITHUB_BACKEND_MEMBER=0
 CONNECTOR_PROBE_CLIENT= CONNECTOR_PROBE_OUTPUT= CONNECTOR_PROBE_STATUS=
 CONNECTOR_PROBE_STATE=
 CONNECTOR_PROBE_TOOLS=
@@ -224,6 +227,7 @@ resolve_repository_context() {
     DEPENDENCY_STATE=NO_DEPENDENCY_DECLARED
     ROUTING_STATE=ROUTING_REQUIRED
   fi
+  require_role_scope
 }
 
 clear_routing_values() {
@@ -816,6 +820,7 @@ assert_client_files() {
   assert_safe_user_path "$CONFIG_ROOT" config
   assert_safe_user_path "$CLIENTS_FILE" 'client enrollment'
   assert_safe_user_path "$CURSOR_ACK_FILE" 'Cursor acknowledgement'
+  assert_safe_user_path "$GITHUB_ROLE_FILE" 'GitHub role'
   [ ! -e "$CONFIG_ROOT" ] || [ -d "$CONFIG_ROOT" ] ||
     die GOVERNANCE_NOT_READY "Config root is not a directory: $CONFIG_ROOT"
   { [ ! -e "$CLIENTS_FILE" ] && [ ! -L "$CLIENTS_FILE" ]; } ||
@@ -824,6 +829,55 @@ assert_client_files() {
   { [ ! -e "$CURSOR_ACK_FILE" ] && [ ! -L "$CURSOR_ACK_FILE" ]; } ||
     { [ -f "$CURSOR_ACK_FILE" ] && [ ! -L "$CURSOR_ACK_FILE" ]; } ||
     die GOVERNANCE_NOT_READY 'Unsafe Cursor acknowledgement'
+  { [ ! -e "$GITHUB_ROLE_FILE" ] && [ ! -L "$GITHUB_ROLE_FILE" ]; } ||
+    { [ -f "$GITHUB_ROLE_FILE" ] && [ ! -L "$GITHUB_ROLE_FILE" ]; } ||
+    die GOVERNANCE_NOT_READY 'Unsafe GitHub role'
+}
+
+read_github_role() {
+  GITHUB_ROLE=
+  assert_client_files
+  [ -f "$GITHUB_ROLE_FILE" ] && [ ! -L "$GITHUB_ROLE_FILE" ] ||
+    return 1
+  GITHUB_ROLE=$(
+    awk '
+      NR == 1 { value=$0 }
+      NR > 1 { invalid=1 }
+      END {
+        if (NR != 1 || invalid) exit 1
+        print value
+      }
+    ' "$GITHUB_ROLE_FILE"
+  ) || return 1
+  case "$GITHUB_ROLE" in
+    FE|BE|FULL_STACK) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+load_github_role() {
+  read_github_role ||
+    die GITHUB_ROLE_REQUIRED \
+      'Remediation: rerun beroka-governance bootstrap with an enrolled client'
+}
+
+require_role_scope() {
+  case "$ROUTE_PROFILE" in
+    backend)
+      load_github_role
+      case "$GITHUB_ROLE" in
+        BE|FULL_STACK) ;;
+        *) die ROLE_SCOPE_DENIED 'GitHub role cannot govern Backend routing' ;;
+      esac
+      ;;
+    frontend)
+      load_github_role
+      case "$GITHUB_ROLE" in
+        FE|FULL_STACK) ;;
+        *) die ROLE_SCOPE_DENIED 'GitHub role cannot govern Frontend routing' ;;
+      esac
+      ;;
+  esac
 }
 
 client_list_contains() {
@@ -1183,6 +1237,7 @@ cmd_bootstrap() {
   else
     cmd_setup_connectors --client "$bs_client" --non-interactive
   fi
+  configure_github_role "$bs_client" "$bs_interactive"
 
   if [ -n "$bs_requested" ]; then
     cmd_context "$bs_requested"
@@ -1245,7 +1300,8 @@ cmd_uninstall() {
     die GOVERNANCE_NOT_READY 'Cannot remove uninstall stage'
   rm -f "$BIN_DIR/$PROGRAM" || die GOVERNANCE_NOT_READY 'Cannot remove the user CLI'
   rm -rf "$DATA_ROOT" || die GOVERNANCE_NOT_READY 'Cannot remove package data'
-  rm -f "$ACTIVE_RELEASE" "$CLIENTS_FILE" "$CURSOR_ACK_FILE" ||
+  rm -f "$ACTIVE_RELEASE" "$CLIENTS_FILE" "$CURSOR_ACK_FILE" \
+    "$GITHUB_ROLE_FILE" ||
     die GOVERNANCE_NOT_READY 'Cannot remove package configuration'
   rmdir "$CONFIG_ROOT" 2>/dev/null || :
   printf '%s\n' 'Result: PASS'
@@ -1316,7 +1372,8 @@ require_github_client() {
   command -v gh >/dev/null 2>&1 ||
     die DEPENDENCY_MISSING 'Missing dependency: gh'
   gh auth status --help >/dev/null 2>&1 &&
-    gh auth login --help >/dev/null 2>&1 ||
+    gh auth login --help >/dev/null 2>&1 &&
+    gh api --help >/dev/null 2>&1 ||
     die DEPENDENCY_MISSING 'GitHub CLI lacks required auth commands'
 }
 
@@ -1332,6 +1389,136 @@ github_auth_health() {
     END { exit !required }
   ' && return 1
   return 2
+}
+
+require_github_auth() {
+  rga_client=$1
+  require_github_client "$rga_client"
+  rga_health=0
+  github_auth_health || rga_health=$?
+  case "$rga_health" in
+    0) ;;
+    1) github_auth_required "$rga_client" ;;
+    *)
+      die GITHUB_ROLE_UNAVAILABLE \
+        'Cannot verify GitHub authentication health'
+      ;;
+  esac
+}
+
+github_team_memberships() {
+  GITHUB_FRONTEND_MEMBER=0
+  GITHUB_BACKEND_MEMBER=0
+  gtm_output=$(gh api --paginate /user/teams 2>/dev/null) ||
+    die GITHUB_ROLE_UNAVAILABLE \
+      'Cannot verify beroka-vn GitHub Team membership'
+  gtm_memberships=$(
+    printf '%s\n' "$gtm_output" |
+      jq -e -s -r '
+        if (all(.[]; type == "array") and
+            all(.[][];
+              (.slug | type) == "string" and
+              (.organization.login | type) == "string"))
+        then
+          [ .[][] |
+            select(.organization.login == "beroka-vn") |
+            select(.slug == "frontend" or .slug == "backend") |
+            .slug
+          ] | unique | join(",")
+        else
+          error("invalid team response")
+        end
+      '
+  ) || die GITHUB_ROLE_UNAVAILABLE \
+    'Invalid GitHub Team membership response'
+  case "$gtm_memberships" in
+    frontend) GITHUB_FRONTEND_MEMBER=1 ;;
+    backend) GITHUB_BACKEND_MEMBER=1 ;;
+    backend,frontend)
+      GITHUB_FRONTEND_MEMBER=1
+      GITHUB_BACKEND_MEMBER=1
+      ;;
+    '') ;;
+    *) die GITHUB_ROLE_UNAVAILABLE 'Invalid GitHub Team membership response' ;;
+  esac
+}
+
+github_role_is_eligible() {
+  case "$GITHUB_ROLE" in
+    FE) [ "$GITHUB_FRONTEND_MEMBER" -eq 1 ] ;;
+    BE) [ "$GITHUB_BACKEND_MEMBER" -eq 1 ] ;;
+    FULL_STACK)
+      [ "$GITHUB_FRONTEND_MEMBER" -eq 1 ] &&
+        [ "$GITHUB_BACKEND_MEMBER" -eq 1 ]
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+write_github_role() {
+  wgr_role=$1
+  PERSONAL_STAGE_ROOT=$(mktemp -d \
+    "${TMPDIR:-/tmp}/beroka-governance-role.XXXXXX") ||
+    die GOVERNANCE_NOT_READY 'Cannot stage GitHub role'
+  wgr_stage=$PERSONAL_STAGE_ROOT/github-role
+  printf '%s\n' "$wgr_role" >"$wgr_stage" ||
+    die GOVERNANCE_NOT_READY 'Cannot stage GitHub role'
+  apply_user_file "$wgr_stage" "$GITHUB_ROLE_FILE" 'GitHub role'
+  cleanup_personal_stage ||
+    die GOVERNANCE_NOT_READY 'Cannot finish GitHub role staging'
+}
+
+configure_github_role() {
+  cgr_client=$1 cgr_interactive=$2
+  require_github_auth "$cgr_client"
+  github_team_memberships
+  cgr_selected=
+  case "$GITHUB_FRONTEND_MEMBER:$GITHUB_BACKEND_MEMBER" in
+    1:0) cgr_selected=FE ;;
+    0:1) cgr_selected=BE ;;
+    0:0)
+      die GITHUB_ROLE_REQUIRED \
+        'No eligible beroka-vn GitHub Team membership'
+      ;;
+    1:1)
+      if read_github_role && github_role_is_eligible; then
+        cgr_selected=$GITHUB_ROLE
+      else
+        [ "$cgr_interactive" -eq 1 ] ||
+          die GITHUB_ROLE_SELECTION_REQUIRED \
+            'Choose FE, BE, or Full-stack in an interactive bootstrap'
+        printf 'Select GitHub role [FE/BE/Full-stack]: '
+        IFS= read -r cgr_answer || cgr_answer=
+        case "$cgr_answer" in
+          FE|fe) cgr_selected=FE ;;
+          BE|be) cgr_selected=BE ;;
+          Full-stack|full-stack|FULL_STACK) cgr_selected=FULL_STACK ;;
+          *)
+            die GITHUB_ROLE_SELECTION_REQUIRED \
+              'Choose FE, BE, or Full-stack'
+            ;;
+        esac
+      fi
+      ;;
+  esac
+  write_github_role "$cgr_selected"
+  GITHUB_ROLE=$cgr_selected
+  printf '%s\n' "GitHub role: $GITHUB_ROLE"
+}
+
+verify_github_role_membership() {
+  vgr_client=$1
+  github_team_memberships
+  load_github_role
+  github_role_is_eligible ||
+    die GITHUB_ROLE_REQUIRED \
+      "Remediation: beroka-governance bootstrap --client $vgr_client"
+}
+
+verify_github_role() {
+  vgr_client=$1
+  require_github_auth "$vgr_client"
+  verify_github_role_membership "$vgr_client"
 }
 
 connector_state() {
@@ -2998,7 +3185,7 @@ github_preflight() {
             0) ;;
             1) github_auth_required "$gp_client" ;;
             *)
-              die GOVERNANCE_NOT_READY \
+              die GITHUB_ROLE_UNAVAILABLE \
                 'Cannot verify GitHub authentication health'
               ;;
           esac
@@ -3007,10 +3194,11 @@ github_preflight() {
       esac
       ;;
     *)
-      die GOVERNANCE_NOT_READY \
+      die GITHUB_ROLE_UNAVAILABLE \
         'Cannot verify GitHub authentication health'
       ;;
   esac
+  verify_github_role_membership "$gp_client"
   printf '%s\n' \
     "Client: $gp_client" \
     'Provider: github' \
@@ -3116,6 +3304,8 @@ cmd_preflight() {
   done
   [ -n "$pf_client" ] && [ -n "$pf_operation" ] ||
     { usage >&2; exit 2; }
+  [ "$pf_operation" != cross-repo-write ] ||
+    require_operation_routing "$pf_operation"
 
   load_active_release
   resolve_repository_context "$pf_repo"
@@ -3135,6 +3325,7 @@ cmd_preflight() {
     *) die ROUTING_INVALID ;;
   esac
   require_operation_routing "$pf_operation"
+  verify_github_role "$pf_client"
 
   require_client "$pf_client"
   pf_connector=0

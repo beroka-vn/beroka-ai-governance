@@ -597,7 +597,7 @@ cat >"$FAKE_BIN/gh" <<'EOF'
 set -eu
 printf 'gh %s\n' "$*" >>"$CALLS"
 case "$*" in
-  'auth status --help'|'auth login --help') exit 0 ;;
+  'auth status --help'|'auth login --help'|'api --help') exit 0 ;;
   'auth status --hostname github.com')
     case "$(sed -n '1p' "$XDG_CONFIG_HOME/fake-github-health" 2>/dev/null || :)" in
       healthy) exit 0 ;;
@@ -614,6 +614,33 @@ case "$*" in
   'auth login --hostname github.com --web')
     printf '%s\n' 'OAuth URL: https://github.com/login/device'
     printf '%s\n' healthy >"$XDG_CONFIG_HOME/fake-github-health"
+    ;;
+  'api --paginate /user/teams')
+    case "$(sed -n '1p' "$XDG_CONFIG_HOME/fake-github-teams" 2>/dev/null || :)" in
+      frontend)
+        printf '%s\n' \
+          '[{"slug":"frontend","organization":{"login":"beroka-vn"}}]'
+        ;;
+      backend)
+        printf '%s\n' \
+          '[{"slug":"backend","organization":{"login":"beroka-vn"}}]'
+        ;;
+      both)
+        printf '%s\n' \
+          '[{"slug":"frontend","organization":{"login":"beroka-vn"}},{"slug":"backend","organization":{"login":"beroka-vn"}}]'
+        ;;
+      neither) printf '%s\n' '[]' ;;
+      malformed-json) printf '%s\n' '{' ;;
+      non-array) printf '%s\n' '{}' ;;
+      missing-login)
+        printf '%s\n' '[{"slug":"frontend","organization":{}}]'
+        ;;
+      non-string-login)
+        printf '%s\n' \
+          '[{"slug":"frontend","organization":{"login":29}}]'
+        ;;
+      *) exit 1 ;;
+    esac
     ;;
   *) exit 1 ;;
 esac
@@ -741,6 +768,8 @@ backend_repo=$TEST_ROOT/backend-repo
 new_repo "$backend_repo"
 git -C "$backend_repo" remote add origin \
   https://github.com/cuongngo1801-beroka/Beroka_Backend.git
+role_file=$XDG_CONFIG_HOME/beroka-ai-governance/github-role
+printf '%s\n' FULL_STACK >"$role_file"
 backend_output=$($CLI context "$backend_repo")
 assert_contains "$backend_output" \
   'Repository: cuongngo1801-beroka/Beroka_Backend'
@@ -766,6 +795,67 @@ assert_contains "$frontend_output" 'Jira board: 35'
 assert_contains "$frontend_output" 'Confluence space: Berokafron'
 assert_contains "$frontend_output" 'Confluence root content: 65831203'
 assert_contains "$frontend_output" '# BE/FE Work Items'
+
+canonical_backend=$TEST_ROOT/canonical-backend
+new_repo "$canonical_backend"
+git -C "$canonical_backend" remote add origin \
+  https://github.com/beroka-vn/Beroka_Backend.git
+canonical_backend_output=$($CLI context "$canonical_backend")
+assert_contains "$canonical_backend_output" \
+  'Repository: beroka-vn/Beroka_Backend'
+assert_contains "$canonical_backend_output" 'Routing: ROUTING_ACTIVE'
+assert_contains "$canonical_backend_output" 'Jira project: BB'
+
+canonical_frontend=$TEST_ROOT/canonical-frontend
+new_repo "$canonical_frontend"
+git -C "$canonical_frontend" remote add origin \
+  https://github.com/beroka-vn/Beroka_Frontend.git
+canonical_frontend_output=$($CLI context "$canonical_frontend")
+assert_contains "$canonical_frontend_output" \
+  'Repository: beroka-vn/Beroka_Frontend'
+assert_contains "$canonical_frontend_output" 'Routing: ROUTING_ACTIVE'
+assert_contains "$canonical_frontend_output" 'Jira project: BF'
+
+printf '%s\n' FE >"$role_file"
+if output=$($CLI context "$canonical_backend" 2>&1); then
+  fail 'FE role loaded Backend routing'
+fi
+assert_contains "$output" 'Result: ROLE_SCOPE_DENIED'
+assert_not_contains "$output" 'Jira project: BB'
+assert_contains "$($CLI context "$canonical_frontend")" 'Jira project: BF'
+
+printf '%s\n' BE >"$role_file"
+if output=$($CLI context "$canonical_frontend" 2>&1); then
+  fail 'BE role loaded Frontend routing'
+fi
+assert_contains "$output" 'Result: ROLE_SCOPE_DENIED'
+assert_not_contains "$output" 'Jira project: BF'
+assert_contains "$($CLI context "$canonical_backend")" 'Jira project: BB'
+
+rm -f "$role_file"
+if output=$($CLI context "$canonical_backend" 2>&1); then
+  fail 'Backend routing loaded without a GitHub role'
+fi
+assert_contains "$output" 'Result: GITHUB_ROLE_REQUIRED'
+
+for cross_repo_role in missing FE FULL_STACK; do
+  case "$cross_repo_role" in
+    missing) rm -f "$role_file" ;;
+    *) printf '%s\n' "$cross_repo_role" >"$role_file" ;;
+  esac
+  : >"$CALLS"
+  if output=$($CLI preflight "$canonical_backend" --client codex \
+    --operation cross-repo-write --non-interactive 2>&1)
+  then
+    fail "cross-repo write passed with $cross_repo_role role"
+  fi
+  assert_contains "$output" 'Result: ROUTING_REQUIRED'
+  [ ! -s "$CALLS" ] ||
+    fail "cross-repo routing inspected a client with $cross_repo_role role"
+done
+
+printf '%s\n' FULL_STACK >"$role_file"
+printf '%s\n' both >"$XDG_CONFIG_HOME/fake-github-teams"
 
 git -C "$consumer" remote set-url upstream \
   git@github.com-work:beroka-vn/routing-consumer.git
@@ -801,7 +891,7 @@ if output=$($CLI preflight "$consumer" --client codex \
 then
   fail 'GitHub preflight accepted unknown auth health'
 fi
-assert_contains "$output" 'Result: GOVERNANCE_NOT_READY'
+assert_contains "$output" 'Result: GITHUB_ROLE_UNAVAILABLE'
 
 rm -f "$XDG_CONFIG_HOME/fake-github-health"
 : >"$CALLS"
@@ -825,6 +915,55 @@ assert_contains "$output" 'Authentication: PASS'
 assert_contains "$output" 'Result: PASS'
 assert_not_contains "$(cat "$CALLS")" \
   'gh auth login --hostname github.com --web'
+
+printf '%s\n' FE >"$role_file"
+printf '%s\n' backend >"$XDG_CONFIG_HOME/fake-github-teams"
+: >"$CALLS"
+if output=$($CLI preflight "$canonical_frontend" --client codex \
+  --operation github-write --non-interactive 2>&1)
+then
+  fail 'GitHub preflight accepted stale FE eligibility'
+fi
+assert_contains "$output" 'Result: GITHUB_ROLE_REQUIRED'
+assert_not_contains "$(cat "$CALLS")" 'mcp '
+
+printf '%s\n' FULL_STACK >"$role_file"
+printf '%s\n' frontend >"$XDG_CONFIG_HOME/fake-github-teams"
+: >"$CALLS"
+if output=$($CLI preflight "$consumer" --client codex \
+  --operation github-write --non-interactive 2>&1)
+then
+  fail 'GitHub preflight accepted Full-stack without both Teams'
+fi
+assert_contains "$output" 'Result: GITHUB_ROLE_REQUIRED'
+
+printf '%s\n' unavailable >"$XDG_CONFIG_HOME/fake-github-teams"
+: >"$CALLS"
+if output=$($CLI preflight "$consumer" --client codex \
+  --operation github-write --non-interactive 2>&1)
+then
+  fail 'GitHub preflight accepted unavailable Team verification'
+fi
+assert_contains "$output" 'Result: GITHUB_ROLE_UNAVAILABLE'
+
+for malformed_team_response in \
+  malformed-json \
+  non-array \
+  missing-login \
+  non-string-login
+do
+  printf '%s\n' "$malformed_team_response" \
+    >"$XDG_CONFIG_HOME/fake-github-teams"
+  if output=$($CLI preflight "$consumer" --client codex \
+    --operation github-write --non-interactive 2>&1)
+  then
+    fail "$malformed_team_response Team response passed preflight"
+  fi
+  assert_contains "$output" 'Result: GITHUB_ROLE_UNAVAILABLE'
+done
+
+printf '%s\n' FULL_STACK >"$role_file"
+printf '%s\n' both >"$XDG_CONFIG_HOME/fake-github-teams"
 
 publish_routing() {
   pr_content=$1
@@ -882,7 +1021,7 @@ printf '%s\n' healthy-all >"$XDG_CONFIG_HOME/fake-codex-health"
 output=$($CLI preflight "$consumer" \
   --client codex --operation jira-write --non-interactive)
 assert_contains "$output" 'Capability state: SUPPORTED'
-assert_not_contains "$(cat "$CALLS")" 'gh '
+assert_contains "$(cat "$CALLS")" 'gh api --paginate /user/teams'
 
 printf '%s\n' healthy-rpc-extensions \
   >"$XDG_CONFIG_HOME/fake-codex-health"
@@ -1985,8 +2124,8 @@ grep -F 'beroka-governance preflight' "$ROOT/README.md" >/dev/null ||
 grep -F 'CONNECTOR_CAPABILITY_REQUIRED' "$ROOT/handbook.md" >/dev/null ||
   fail 'handbook does not document capability remediation'
 
-[ "$(sed -n '1p' "$ROOT/VERSION")" = v1.0.3 ] ||
-  fix_wave_fail 'root VERSION does not select v1.0.3'
+[ "$(sed -n '1p' "$ROOT/VERSION")" = v1.0.4 ] ||
+  fix_wave_fail 'root VERSION does not select v1.0.4'
 grep -F -- 'gh release download' "$ROOT/README.md" >/dev/null ||
   fix_wave_fail 'README does not select the authenticated release launcher'
 

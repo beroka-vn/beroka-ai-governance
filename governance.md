@@ -347,9 +347,12 @@ Jira reassignment does not transfer a branch owned by another writer.
 ## GitHub repository routing
 
 - Backend Issues/PRs:
-  [cuongngo1801-beroka/Beroka_Backend](https://github.com/cuongngo1801-beroka/Beroka_Backend).
+  [beroka-vn/Beroka_Backend](https://github.com/beroka-vn/Beroka_Backend).
 - Frontend Issues/PRs:
-  [cuongngo1801-beroka/Beroka_Frontend](https://github.com/cuongngo1801-beroka/Beroka_Frontend).
+  [beroka-vn/Beroka_Frontend](https://github.com/beroka-vn/Beroka_Frontend).
+- Bootstrap derives the stored `FE`, `BE`, or `FULL_STACK` role from exact
+  `beroka-vn` GitHub Team membership. A routed profile outside that role
+  returns `ROLE_SCOPE_DENIED`; eligible preflights revalidate membership.
 - Unrelated repositories are outside this boundary and require an exact
   catalog record; never infer one from the current workspace.
 - Shared work uses one confirmed primary tracking repository; never duplicate

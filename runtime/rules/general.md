@@ -13,6 +13,10 @@
   does not require Atlassian OAuth.
 - Every routing-dependent external write requires a fresh successful
   `beroka-governance preflight`.
+- Routed Backend and Frontend profiles must match the stored GitHub
+  Team-verified role; a mismatch returns `ROLE_SCOPE_DENIED`.
+- An eligible preflight revalidates that role before connector login or an
+  external write.
 - AI may not approve or merge without explicit human confirmation for the exact
   pull request and reviewed commit.
 - Report failed or unverified checks as blocked for their dependent scope;

@@ -55,17 +55,23 @@ governed repository work begins.
 
 Tracked legacy governance files remain until a repository owner explicitly
 authorizes a separate cleanup. The new CLI ignores them for release selection
-and routing. `v1.0.3` is the current supported capability release. Every
+and routing. `v1.0.4` is the current supported capability release. Every
 published tag is immutable.
 
-### v1.0.3 upgrade
+### v1.0.4 release
+
+This release adds canonical `beroka-vn` Backend and Frontend routing, enforces
+GitHub Team-verified roles, and retains the prior catalog slugs as deprecated
+aliases for this release only.
+
+### v1.0.4 upgrade
 
 Bootstrap installs a missing Cursor Agent after one confirmation. Developers
-upgrading from `v1.0.0`, `v1.0.1`, or `v1.0.2` run this once; installation and
+upgrading from `v1.0.0` through `v1.0.3` run this once; installation and
 Atlassian connector setup continue in the same process:
 
 ```bash
-bash -e -o pipefail -c 'gh release download v1.0.3 --repo beroka-vn/beroka-ai-governance --pattern bootstrap.sh --output - | sh -s -- --client cursor --upgrade'
+bash -e -o pipefail -c 'gh release download v1.0.4 --repo beroka-vn/beroka-ai-governance --pattern bootstrap.sh --output - | sh -s -- --client cursor --upgrade'
 ```
 
 ### Upgrade
@@ -136,8 +142,12 @@ origins have exact catalog records. The catalog selects the approved profile,
 integration, Jira project, board, and Confluence root; never infer one from a
 similar repository name.
 
-- Backend: `cuongngo1801-beroka/Beroka_Backend`.
-- Frontend: `cuongngo1801-beroka/Beroka_Frontend`.
+- Backend: `beroka-vn/Beroka_Backend`.
+- Frontend: `beroka-vn/Beroka_Frontend`.
+
+Bootstrap derives `FE`, `BE`, or `FULL_STACK` from exact `beroka-vn` GitHub
+Team membership. Context denies a routed profile outside that stored role, and
+eligible preflights revalidate membership before external writes.
 
 - Manager/coordinator: use the [operating workflow](workflow.md), then the
   [Jira and Confluence template](templates/jira-confluence.md) and [GitHub

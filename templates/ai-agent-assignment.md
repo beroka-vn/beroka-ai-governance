@@ -63,8 +63,10 @@ agent. Repository-specific instructions and the linked issue take precedence.
   Epic or a coordination item. Jira reassignment does not transfer an active
   Git branch; branch handoff remains required.
 - Route Backend GitHub Issues and Pull Requests to
-  https://github.com/cuongngo1801-beroka/Beroka_Backend and Frontend work to
-  https://github.com/cuongngo1801-beroka/Beroka_Frontend.
+  https://github.com/beroka-vn/Beroka_Backend and Frontend work to
+  https://github.com/beroka-vn/Beroka_Frontend.
+- Stay within the stored GitHub Team-verified `FE`, `BE`, or `FULL_STACK` role;
+  `ROLE_SCOPE_DENIED` blocks a mismatched repository profile.
 - Unrelated repositories require an exact catalog record. For shared work,
   confirm one primary tracking repository instead of duplicating the Issue.
 - Route Frontend documentation to
