@@ -478,7 +478,9 @@ Run:
 ```bash
 sh -n bin/beroka-governance release/bootstrap.sh.in
 for test_script in tests/*.sh; do sh "$test_script"; done
-git diff --check origin/main...HEAD
+default_branch=$(gh repo view --json defaultBranchRef \
+  --jq '.defaultBranchRef.name')
+git diff --check "origin/$default_branch"...HEAD
 ```
 
 Expected: every command exits `0`.
@@ -498,7 +500,7 @@ git commit -m "chore(release): prepare v1.0.4"
 - Create after reviewed-commit approval: annotated tag and GitHub Release `v1.0.4`
 
 **Interfaces:**
-- Consumes: the four verified implementation commits and full-suite evidence.
+- Consumes: the verified branch commits and full-suite evidence.
 - Produces: one traceable Issue #29 PR and, after exact human approval, immutable release `v1.0.4`.
 
 - [ ] **Step 1: Run fresh GitHub preflight before the issue comment**

@@ -167,6 +167,8 @@ routing, and smoke suites must pass before review.
 - Comment on Issue #29 with the confirmed `v1.0.3` evidence, design/plan links,
   regression results, and pull request.
 - Do not combine Issue #30 or Issue #31 with this release.
+- Resolve GitHub's current default branch immediately before PR and release
+  operations; branch names never participate in repository identity.
 - Merge only after explicit human confirmation of the exact pull request and
   reviewed commit.
 - Create an annotated `v1.0.4` tag and GitHub Release only from the verified

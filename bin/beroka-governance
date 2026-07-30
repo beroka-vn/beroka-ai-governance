@@ -3185,7 +3185,7 @@ github_preflight() {
             0) ;;
             1) github_auth_required "$gp_client" ;;
             *)
-              die GOVERNANCE_NOT_READY \
+              die GITHUB_ROLE_UNAVAILABLE \
                 'Cannot verify GitHub authentication health'
               ;;
           esac
@@ -3194,7 +3194,7 @@ github_preflight() {
       esac
       ;;
     *)
-      die GOVERNANCE_NOT_READY \
+      die GITHUB_ROLE_UNAVAILABLE \
         'Cannot verify GitHub authentication health'
       ;;
   esac
@@ -3304,6 +3304,8 @@ cmd_preflight() {
   done
   [ -n "$pf_client" ] && [ -n "$pf_operation" ] ||
     { usage >&2; exit 2; }
+  [ "$pf_operation" != cross-repo-write ] ||
+    require_operation_routing "$pf_operation"
 
   load_active_release
   resolve_repository_context "$pf_repo"

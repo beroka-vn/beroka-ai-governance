@@ -630,6 +630,15 @@ case "$*" in
           '[{"slug":"frontend","organization":{"login":"beroka-vn"}},{"slug":"backend","organization":{"login":"beroka-vn"}}]'
         ;;
       neither) printf '%s\n' '[]' ;;
+      malformed-json) printf '%s\n' '{' ;;
+      non-array) printf '%s\n' '{}' ;;
+      missing-login)
+        printf '%s\n' '[{"slug":"frontend","organization":{}}]'
+        ;;
+      non-string-login)
+        printf '%s\n' \
+          '[{"slug":"frontend","organization":{"login":29}}]'
+        ;;
       *) exit 1 ;;
     esac
     ;;
@@ -828,6 +837,23 @@ if output=$($CLI context "$canonical_backend" 2>&1); then
   fail 'Backend routing loaded without a GitHub role'
 fi
 assert_contains "$output" 'Result: GITHUB_ROLE_REQUIRED'
+
+for cross_repo_role in missing FE FULL_STACK; do
+  case "$cross_repo_role" in
+    missing) rm -f "$role_file" ;;
+    *) printf '%s\n' "$cross_repo_role" >"$role_file" ;;
+  esac
+  : >"$CALLS"
+  if output=$($CLI preflight "$canonical_backend" --client codex \
+    --operation cross-repo-write --non-interactive 2>&1)
+  then
+    fail "cross-repo write passed with $cross_repo_role role"
+  fi
+  assert_contains "$output" 'Result: ROUTING_REQUIRED'
+  [ ! -s "$CALLS" ] ||
+    fail "cross-repo routing inspected a client with $cross_repo_role role"
+done
+
 printf '%s\n' FULL_STACK >"$role_file"
 printf '%s\n' both >"$XDG_CONFIG_HOME/fake-github-teams"
 
@@ -865,7 +891,7 @@ if output=$($CLI preflight "$consumer" --client codex \
 then
   fail 'GitHub preflight accepted unknown auth health'
 fi
-assert_contains "$output" 'Result: GOVERNANCE_NOT_READY'
+assert_contains "$output" 'Result: GITHUB_ROLE_UNAVAILABLE'
 
 rm -f "$XDG_CONFIG_HOME/fake-github-health"
 : >"$CALLS"
@@ -919,6 +945,22 @@ then
   fail 'GitHub preflight accepted unavailable Team verification'
 fi
 assert_contains "$output" 'Result: GITHUB_ROLE_UNAVAILABLE'
+
+for malformed_team_response in \
+  malformed-json \
+  non-array \
+  missing-login \
+  non-string-login
+do
+  printf '%s\n' "$malformed_team_response" \
+    >"$XDG_CONFIG_HOME/fake-github-teams"
+  if output=$($CLI preflight "$consumer" --client codex \
+    --operation github-write --non-interactive 2>&1)
+  then
+    fail "$malformed_team_response Team response passed preflight"
+  fi
+  assert_contains "$output" 'Result: GITHUB_ROLE_UNAVAILABLE'
+done
 
 printf '%s\n' FULL_STACK >"$role_file"
 printf '%s\n' both >"$XDG_CONFIG_HOME/fake-github-teams"
