@@ -561,7 +561,6 @@ validate_release_checkout() {
       die VERSION_MISMATCH 'Unsupported routing schema in installed release'
     for vrc_routing_file in \
       runtime/rules/general.md \
-      runtime/rules/work-items.md \
       runtime/profiles/standalone.md runtime/profiles/backend.md \
       runtime/profiles/frontend.md runtime/integrations/beroka-be-fe.md \
       runtime/integrations/beroka-be-fe.repositories \
@@ -569,6 +568,9 @@ validate_release_checkout() {
     do
       assert_release_file "$vrc_checkout" "$vrc_routing_file"
     done
+    if semver_not_older v1.0.2 "$vrc_version"; then
+      assert_release_file "$vrc_checkout" runtime/rules/work-items.md
+    fi
     atlassian_compatibility_schema \
       "$vrc_checkout/runtime/compatibility/atlassian.tsv" >/dev/null ||
       die VERSION_MISMATCH 'Unsupported Atlassian compatibility schema'

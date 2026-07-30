@@ -171,11 +171,31 @@ for release_file in \
 do
   cp "$ROOT/$release_file" "$source_repo/$release_file"
 done
-printf '%s\n' v1.1.0 >"$source_repo/VERSION"
+rm "$source_repo/runtime/rules/work-items.md"
+printf '%s\n' v1.0.1 >"$source_repo/VERSION"
 git -C "$source_repo" init -q
 git -C "$source_repo" config user.name bootstrap-release
 git -C "$source_repo" config user.email release@example.invalid
 git -C "$source_repo" add .
+git -C "$source_repo" commit -qm 'test: historical release v1.0.1'
+git -C "$source_repo" tag -a v1.0.1 -m v1.0.1
+v1_0_1_commit=$(git -C "$source_repo" rev-parse v1.0.1^{commit})
+
+printf '%s\n' v1.0.2 >"$source_repo/VERSION"
+git -C "$source_repo" add VERSION
+git -C "$source_repo" commit -qm 'test: invalid release v1.0.2'
+git -C "$source_repo" tag -a v1.0.2 -m v1.0.2
+
+cp "$ROOT/runtime/rules/work-items.md" \
+  "$source_repo/runtime/rules/work-items.md"
+printf '%s\n' v1.0.3 >"$source_repo/VERSION"
+git -C "$source_repo" add VERSION runtime/rules/work-items.md
+git -C "$source_repo" commit -qm 'test: release v1.0.3'
+git -C "$source_repo" tag -a v1.0.3 -m v1.0.3
+v1_0_3_commit=$(git -C "$source_repo" rev-parse v1.0.3^{commit})
+
+printf '%s\n' v1.1.0 >"$source_repo/VERSION"
+git -C "$source_repo" add VERSION
 git -C "$source_repo" commit -qm 'test: release v1.1.0'
 git -C "$source_repo" tag -a v1.1.0 -m v1.1.0
 v1_1_commit=$(git -C "$source_repo" rev-parse v1.1.0^{commit})
@@ -210,6 +230,36 @@ git config --global \
 
 repo=$TEST_ROOT/application
 new_repo "$repo" bootstrap-application
+
+if output=$($CLI bootstrap "$repo" --client codex \
+  --version v1.0.2 --non-interactive 2>&1)
+then
+  fail 'bootstrap accepted v1.0.2 without work-item rules'
+fi
+assert_contains "$output" 'Result: GOVERNANCE_NOT_READY'
+assert_contains "$output" \
+  'Missing release file: runtime/rules/work-items.md'
+[ ! -e "$XDG_CONFIG_HOME/beroka-ai-governance/active-release" ] ||
+  fail 'invalid v1.0.2 changed active-release state'
+
+compat_repo_before=$(snapshot_repo "$repo")
+output=$($CLI bootstrap "$repo" --client codex \
+  --version v1.0.1 --non-interactive)
+assert_contains "$output" 'Version: v1.0.1'
+[ "$(cat "$XDG_CONFIG_HOME/beroka-ai-governance/active-release")" = \
+  "$(printf '%s\n%s' 'VERSION=v1.0.1' "COMMIT=$v1_0_1_commit")" ] ||
+  fail 'historical install activated the wrong verified commit'
+
+output=$($CLI bootstrap "$repo" --client codex \
+  --version v1.0.3 --upgrade --non-interactive)
+assert_contains "$output" 'Version: v1.0.3'
+[ "$(cat "$XDG_CONFIG_HOME/beroka-ai-governance/active-release")" = \
+  "$(printf '%s\n%s' 'VERSION=v1.0.3' "COMMIT=$v1_0_3_commit")" ] ||
+  fail 'historical upgrade activated the wrong verified commit'
+[ "$compat_repo_before" = "$(snapshot_repo "$repo")" ] ||
+  fail 'historical upgrade changed the application repository'
+$CLI uninstall --force >/dev/null
+rm -f "$XDG_CONFIG_HOME/fake-codex-configured"
 
 if output=$($CLI bootstrap "$repo" --version v1.1.0 \
   --non-interactive 2>&1)
