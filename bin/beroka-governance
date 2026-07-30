@@ -5,6 +5,8 @@ PROGRAM=beroka-governance
 SOURCE_SLUG=beroka-vn/beroka-ai-governance
 DATA_ROOT=${XDG_DATA_HOME:-$HOME/.local/share}/beroka-ai-governance
 CONFIG_ROOT=${XDG_CONFIG_HOME:-$HOME/.config}/beroka-ai-governance
+STATE_ROOT=${XDG_STATE_HOME:-$HOME/.local/state}/beroka-ai-governance
+CURSOR_STATE_ROOT=$STATE_ROOT/cursor
 BIN_DIR=${BEROKA_GOV_BIN_DIR:-$HOME/.local/bin}
 REMOTE_URL=https://github.com/beroka-vn/beroka-ai-governance.git
 ATLASSIAN_MCP_URL=https://mcp.atlassian.com/v1/mcp/authv2
@@ -65,6 +67,7 @@ usage() {
     '  beroka-governance doctor REPO [--client codex|claude|cursor]' \
     '  beroka-governance preflight REPO --client codex|claude|cursor --operation OPERATION [--non-interactive]' \
     '  beroka-governance context REPO' \
+    '  beroka-governance cursor-hook sessionStart|beforeSubmitPrompt|preCompact|beforeMCPExecution|beforeShellExecution' \
     '  beroka-governance show REPO governance|handbook|workflow' \
     '  beroka-governance show REPO template ai-agent-assignment|github-issue|jira-confluence|pull-request' \
     'Retired commands: register, update, rollback, unregister'
@@ -3574,6 +3577,273 @@ cmd_show() {
   cat "$RELEASE_DIR/$file" || die GOVERNANCE_NOT_READY "Cannot read package file: $file"
 }
 
+cursor_require_jq() {
+  command -v jq >/dev/null 2>&1 ||
+    die GOVERNANCE_NOT_READY 'cursor-hook requires jq'
+}
+
+cursor_read_request() {
+  cursor_require_jq
+  CURSOR_REQUEST=$(cat) || return 1
+  printf '%s\n' "$CURSOR_REQUEST" | jq -se '
+    length == 1 and (.[] |
+      type == "object" and
+      (.conversation_id | type == "string" and length > 0) and
+      (.generation_id | type == "string" and length > 0) and
+      (.workspace_roots | type == "array" and length == 1 and
+        (.[0] | type == "string" and length > 0)))
+  ' >/dev/null 2>&1 || return 1
+  CURSOR_CONVERSATION=$(printf '%s\n' "$CURSOR_REQUEST" | jq -r .conversation_id) || return 1
+  CURSOR_GENERATION=$(printf '%s\n' "$CURSOR_REQUEST" | jq -r .generation_id) || return 1
+  CURSOR_WORKSPACE=$(printf '%s\n' "$CURSOR_REQUEST" | jq -r '.workspace_roots[0]') || return 1
+  CURSOR_WORKSPACE=$(git -C "$CURSOR_WORKSPACE" rev-parse --show-toplevel 2>/dev/null) || return 1
+  CURSOR_WORKSPACE=$(CDPATH= cd -- "$CURSOR_WORKSPACE" && pwd -P) || return 1
+}
+
+cursor_receipt_path() {
+  cursor_hash=$(printf '%s' "$CURSOR_CONVERSATION" | sha256sum 2>/dev/null | awk '{print $1}') || return 1
+  printf '%s\n' "$cursor_hash" | grep -Eq '^[0-9a-f]{64}$' || return 1
+  printf '%s\n' "$CURSOR_STATE_ROOT/$cursor_hash.json"
+}
+
+cursor_write_receipt() {
+  cursor_language=$1
+  mkdir -p "$CURSOR_STATE_ROOT" || die GOVERNANCE_NOT_READY 'Cannot create Cursor state directory'
+  chmod 700 "$CURSOR_STATE_ROOT" || die GOVERNANCE_NOT_READY 'Cannot secure Cursor state directory'
+  cursor_receipt=$(cursor_receipt_path) || die GOVERNANCE_NOT_READY 'Cannot derive Cursor receipt path'
+  cursor_tmp=$(umask 077; mktemp "$CURSOR_STATE_ROOT/.receipt.XXXXXX") ||
+    die GOVERNANCE_NOT_READY 'Cannot create Cursor receipt'
+  if ! jq -nc \
+    --arg workspace "$CURSOR_WORKSPACE" \
+    --arg repository "$REPOSITORY_SLUG" \
+    --arg generation "$CURSOR_GENERATION" \
+    --arg version "$ACTIVE_VERSION" \
+    --arg commit "$ACTIVE_COMMIT" \
+    --arg language "$cursor_language" \
+    '{workspace:$workspace,repository:$repository,generation:$generation,version:$version,commit:$commit,language:$language}' \
+    >"$cursor_tmp" || ! chmod 600 "$cursor_tmp" || ! mv "$cursor_tmp" "$cursor_receipt"; then
+    rm -f "$cursor_tmp" || :
+    die GOVERNANCE_NOT_READY 'Cannot write Cursor receipt'
+  fi
+}
+
+cursor_receipt_matches() {
+  cursor_generation_required=$1
+  cursor_receipt=$(cursor_receipt_path) || return 1
+  [ -f "$cursor_receipt" ] && [ ! -L "$cursor_receipt" ] || return 1
+  if [ "$cursor_generation_required" -eq 1 ]; then
+    jq -e \
+      --arg workspace "$CURSOR_WORKSPACE" \
+      --arg repository "$REPOSITORY_SLUG" \
+      --arg generation "$CURSOR_GENERATION" \
+      --arg version "$ACTIVE_VERSION" \
+      --arg commit "$ACTIVE_COMMIT" \
+      '.workspace == $workspace and .repository == $repository and
+       .generation == $generation and .version == $version and .commit == $commit and
+       (.language | type == "string" and length > 0)' "$cursor_receipt" >/dev/null 2>&1 || return 1
+  else
+    jq -e \
+      --arg workspace "$CURSOR_WORKSPACE" \
+      --arg repository "$REPOSITORY_SLUG" \
+      --arg version "$ACTIVE_VERSION" \
+      --arg commit "$ACTIVE_COMMIT" \
+      '.workspace == $workspace and .repository == $repository and
+       .version == $version and .commit == $commit and
+       (.language | type == "string" and length > 0)' "$cursor_receipt" >/dev/null 2>&1 || return 1
+  fi
+  CURSOR_LANGUAGE=$(jq -r .language "$cursor_receipt") || return 1
+}
+
+cursor_deny() {
+  cursor_code=$1 cursor_message=$2
+  jq -nc --arg code "$cursor_code" --arg message "$cursor_message" \
+    '{permission:"deny",user_message:("Result: " + $code),agent_message:$message}'
+}
+
+cursor_allow() {
+  jq -nc '{permission:"allow"}'
+}
+
+cursor_language_from_prompt() {
+  cursor_prompt=$1
+  printf '%s\n' "$cursor_prompt" | awk '
+    function lower(value) { return tolower(value) }
+    {
+      candidate=$0
+      if (lower(candidate) ~ /^work-item language:/) {
+        value=candidate
+        sub(/^[^:]*:[[:space:]]*/, "", value)
+        normalized=lower(value)
+        if (normalized == "english") normalized="en"
+        else if (normalized == "vietnamese") normalized="vi"
+        else if (normalized !~ /^[a-z][a-z0-9-]{1,31}$/) invalid=1
+        if (seen++ || invalid) exit 42
+        language=normalized
+      }
+    }
+    END { if (invalid || seen > 1) exit 42; if (seen == 1) print language }
+  '
+}
+
+cursor_context() {
+  load_active_release
+  resolve_repository_context "$CURSOR_WORKSPACE"
+}
+
+cmd_cursor_session_start() {
+  cursor_read_request || die GOVERNANCE_CONTEXT_REQUIRED 'Cursor hook input requires one Git workspace'
+  cursor_context
+  cursor_context_output=$(cmd_context "$CURSOR_WORKSPACE") || die GOVERNANCE_CONTEXT_REQUIRED
+  cursor_write_receipt en
+  jq -nc --arg context "$cursor_context_output" \
+    '{env:{BEROKA_GOVERNANCE_CONTEXT:"PASS"},additional_context:$context}'
+}
+
+cmd_cursor_before_submit_prompt() {
+  cursor_read_request || die GOVERNANCE_CONTEXT_REQUIRED 'Cursor hook input requires one Git workspace'
+  cursor_context
+  cursor_receipt_matches 0 || die GOVERNANCE_CONTEXT_REQUIRED 'Run cursor-hook sessionStart first'
+  cursor_prompt=$(printf '%s\n' "$CURSOR_REQUEST" | jq -er '.prompt // "" | if type == "string" then . else error("prompt") end') ||
+    die WORK_ITEM_LANGUAGE_REQUIRED 'Prompt must be text'
+  cursor_language=$(cursor_language_from_prompt "$cursor_prompt") ||
+    die WORK_ITEM_LANGUAGE_REQUIRED 'Use a complete Work-item language directive'
+  [ -n "$cursor_language" ] || cursor_language=en
+  cursor_write_receipt "$cursor_language"
+  jq -nc '{}'
+}
+
+cmd_cursor_pre_compact() {
+  cursor_read_request || die GOVERNANCE_CONTEXT_REQUIRED 'Cursor hook input requires one Git workspace'
+  cursor_receipt=$(cursor_receipt_path) || die GOVERNANCE_CONTEXT_REQUIRED
+  rm -f "$cursor_receipt" || die GOVERNANCE_NOT_READY 'Cannot remove Cursor receipt'
+  jq -nc '{}'
+}
+
+cursor_tool_provider() {
+  CURSOR_TOOL_NAME=$(printf '%s\n' "$CURSOR_REQUEST" | jq -r '.tool_name // .name // ""') || return 1
+  CURSOR_TOOL_URL=$(printf '%s\n' "$CURSOR_REQUEST" | jq -r '.url // ""') || return 1
+  CURSOR_TOOL_COMMAND=$(printf '%s\n' "$CURSOR_REQUEST" | jq -r '.command // ""') || return 1
+  CURSOR_TOOL_INPUT=$(printf '%s\n' "$CURSOR_REQUEST" | jq -c '.tool_input // {} | select(type == "object")') || return 1
+  CURSOR_TOOL_TEXT=$(printf '%s %s %s' "$CURSOR_TOOL_NAME" "$CURSOR_TOOL_URL" "$CURSOR_TOOL_COMMAND" | tr '[:upper:]' '[:lower:]')
+  case "$CURSOR_TOOL_TEXT" in
+    *github.com*|*github*) CURSOR_PROVIDER=github ;;
+    *atlassian.net*|*jira*) CURSOR_PROVIDER=jira ;;
+    *) CURSOR_PROVIDER= ;;
+  esac
+  case "$CURSOR_TOOL_TEXT" in
+    *create*|*update*|*edit*|*comment*|*issue*|*pull*) CURSOR_TOOL_WRITE=1 ;;
+    *) CURSOR_TOOL_WRITE=0 ;;
+  esac
+}
+
+cursor_has_nonempty_field() {
+  printf '%s\n' "$CURSOR_TOOL_INPUT" | jq -e --arg field "$1" \
+    '.. | objects | .[$field]? | strings | select(length > 0)' >/dev/null 2>&1
+}
+
+cursor_language_label() {
+  case "$CURSOR_LANGUAGE" in en) printf '%s\n' English ;; vi) printf '%s\n' Vietnamese ;; *) printf '%s\n' "$CURSOR_LANGUAGE" ;; esac
+}
+
+cursor_validate_template() {
+  cursor_marker="Work-item language: $(cursor_language_label)"
+  printf '%s\n' "$CURSOR_TOOL_INPUT" | grep -F "$cursor_marker" >/dev/null || return 1
+  case "$CURSOR_TOOL_TEXT" in
+    *update*|*edit*|*comment*)
+      cursor_has_nonempty_field body || cursor_has_nonempty_field content || return 1
+      return 0
+      ;;
+  esac
+  case "$CURSOR_PROVIDER" in
+    github)
+      cursor_has_nonempty_field owner || cursor_has_nonempty_field assignee || return 1
+      cursor_labels=$(printf '%s\n' "$CURSOR_TOOL_INPUT" | jq -r '.. | objects | .labels? | arrays | .[]? | strings')
+      printf '%s\n' "$cursor_labels" | grep -Eq '^area:' || return 2
+      [ "$(printf '%s\n' "$cursor_labels" | grep -Ec '^priority:')" -eq 1 ] || return 2
+      cursor_has_nonempty_field type || printf '%s\n' "$cursor_labels" | grep -Eq '^type:' || return 2
+      cursor_has_nonempty_field jira || printf '%s\n' "$CURSOR_TOOL_INPUT" | grep -F 'N/A' >/dev/null || return 1
+      ;;
+    jira)
+      cursor_has_nonempty_field project || return 1
+      cursor_has_nonempty_field issue_type || return 1
+      cursor_has_nonempty_field assignee || cursor_has_nonempty_field owner || return 1
+      cursor_has_nonempty_field priority || return 1
+      cursor_has_nonempty_field parent || cursor_has_nonempty_field standalone_reason || return 1
+      cursor_has_nonempty_field github || printf '%s\n' "$CURSOR_TOOL_INPUT" | grep -F 'N/A' >/dev/null || return 1
+      ;;
+  esac
+}
+
+cmd_cursor_before_mcp_execution() {
+  if ! cursor_read_request; then
+    cursor_deny GOVERNANCE_CONTEXT_REQUIRED 'Provide one recognized Git workspace and start a new governance session.'
+    return
+  fi
+  cursor_context
+  cursor_receipt_matches 1 || {
+    cursor_deny GOVERNANCE_CONTEXT_REQUIRED 'Run cursor-hook sessionStart again for this generation and workspace.'
+    return
+  }
+  cursor_tool_provider || {
+    cursor_deny WORK_ITEM_TEMPLATE_REQUIRED 'Provide structured tool input for the governed write.'
+    return
+  }
+  [ -n "$CURSOR_PROVIDER" ] && [ "$CURSOR_TOOL_WRITE" -eq 1 ] || { cursor_allow; return; }
+  cursor_template_state=0
+  cursor_validate_template || cursor_template_state=$?
+  case "$cursor_template_state" in
+    0) ;;
+    2) cursor_deny LABEL_CONFIGURATION_REQUIRED 'Use one configured type label, one area label, and one priority label.'; return ;;
+    *) cursor_deny WORK_ITEM_TEMPLATE_REQUIRED 'Include the language marker and all required governed work-item fields.'; return ;;
+  esac
+  case "$CURSOR_PROVIDER" in github) cursor_operation=github-write ;; jira) cursor_operation=jira-write ;; esac
+  if cursor_preflight=$(cmd_preflight "$CURSOR_WORKSPACE" --client cursor --operation "$cursor_operation" --non-interactive 2>&1) &&
+     printf '%s\n' "$cursor_preflight" | grep -F 'Result: PASS' >/dev/null; then
+    cursor_allow
+  else
+    cursor_result=$(printf '%s\n' "$cursor_preflight" | awk '/^Result: / { result=$0 } END { sub(/^Result: /, "", result); print result }')
+    [ -n "$cursor_result" ] || cursor_result=GOVERNANCE_CONTEXT_REQUIRED
+    cursor_deny "$cursor_result" "$cursor_preflight"
+  fi
+}
+
+cmd_cursor_before_shell_execution() {
+  cursor_require_jq
+  CURSOR_REQUEST=$(cat) || die GOVERNANCE_CONTEXT_REQUIRED
+  cursor_command=$(printf '%s\n' "$CURSOR_REQUEST" | jq -er '.command | if type == "string" then . else error("command") end') || {
+    cursor_deny GOVERNANCE_CONTEXT_REQUIRED 'Provide a shell command.'
+    return
+  }
+  case " $cursor_command " in
+    *gh\ issue\ create\ *|*gh\ issue\ edit\ *|*gh\ pr\ create\ *|*gh\ pr\ edit\ *)
+      cursor_deny WORK_ITEM_TEMPLATE_REQUIRED 'Create or edit GitHub work items through a governed MCP write.'
+      return
+      ;;
+  esac
+  cursor_upper=$(printf '%s' "$cursor_command" | tr '[:lower:]' '[:upper:]')
+  case " $cursor_command " in
+    *gh\ api\ *)
+      if printf '%s\n' "$cursor_upper" | grep -Eq '(^|[[:space:]])(-X|--METHOD)([[:space:]]|=)(POST|PUT|PATCH|DELETE)' &&
+         printf '%s\n' "$cursor_command" | grep -Eq '/(issues|pulls|comments)(/|[[:space:]]|$)'; then
+        cursor_deny WORK_ITEM_TEMPLATE_REQUIRED 'Create or edit GitHub work items through a governed MCP write.'
+        return
+      fi
+      ;;
+  esac
+  cursor_allow
+}
+
+cmd_cursor_hook() {
+  case "$1" in
+    sessionStart) cmd_cursor_session_start ;;
+    beforeSubmitPrompt) cmd_cursor_before_submit_prompt ;;
+    preCompact) cmd_cursor_pre_compact ;;
+    beforeMCPExecution) cmd_cursor_before_mcp_execution ;;
+    beforeShellExecution) cmd_cursor_before_shell_execution ;;
+    *) die GOVERNANCE_CONTEXT_REQUIRED 'Unknown Cursor hook event' ;;
+  esac
+}
+
 legacy_repository_state() {
   lrs_repo=$1
   for lrs_path in \
@@ -3609,6 +3879,7 @@ main() {
       cmd_preflight "$pf_repo" "$@"
       ;;
     context) [ "$#" -eq 2 ] || { usage >&2; exit 2; }; cmd_context "$2" ;;
+    cursor-hook) [ "$#" -eq 2 ] || { usage >&2; exit 2; }; cmd_cursor_hook "$2" ;;
     show) [ "$#" -ge 3 ] && [ "$#" -le 4 ] || { usage >&2; exit 2; }; cmd_show "$2" "$3" "${4:-}" ;;
     *) usage >&2; exit 2 ;;
   esac
