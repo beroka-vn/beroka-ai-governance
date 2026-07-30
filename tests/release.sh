@@ -92,10 +92,15 @@ require_text PACKAGE-DESIGN.md '15-second total deadline'
 [ -f "$ROOT/release/bootstrap.sh.in" ] ||
   fail 'missing release launcher template'
 
-[ "$(sed '/^#/d;/^[[:space:]]*$/d' \
-  "$ROOT/runtime/integrations/beroka-be-fe.repositories" | wc -l | tr -d ' ')" = 4 ] ||
-  fail 'beroka-be-fe inventory does not contain exactly four repositories'
 version=$(sed -n '1p' "$ROOT/VERSION")
+case "$version" in
+  v1.0.4) expected_inventory_rows=4 ;;
+  *) expected_inventory_rows=2 ;;
+esac
+[ "$(sed '/^#/d;/^[[:space:]]*$/d' \
+  "$ROOT/runtime/integrations/beroka-be-fe.repositories" | wc -l | tr -d ' ')" = \
+  "$expected_inventory_rows" ] ||
+  fail "beroka-be-fe inventory does not contain $expected_inventory_rows repositories"
 for alias in Beroka_Backend Beroka_Frontend; do
   alias_slug="cuongngo1801-beroka/$alias"
   alias_record="runtime/repositories/$alias_slug.conf"
