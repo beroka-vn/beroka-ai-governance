@@ -1,8 +1,8 @@
 # Cursor First-Run Global MCP Design
 
-Status: Review requested
+Status: Approved
 
-**Issue:** #30  
+**Issue:** #30
 **Target release:** `v1.0.4`
 
 ## Problem
@@ -158,5 +158,5 @@ The complete shell suite and release gate must pass.
 - Editing Cursor's undocumented database or IDE settings.
 - Changing GitHub Team role resolution from #29.
 - Relaxing connector health or capability gates.
-- Publishing `v1.0.4` before #29 and #30 are merged and the final release gate
-  passes.
+- Publishing `v1.0.4` before #29, #30, and #31 are merged and the final
+  release gate passes.
