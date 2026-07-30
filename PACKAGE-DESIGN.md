@@ -41,7 +41,17 @@ eligible preflights revalidate membership before external writes.
 
 Bootstrap enrolls exactly one of `codex`, `claude`, or `cursor`. Codex and Claude receive marker-delimited managed blocks in their user instruction files; content outside those blocks is preserved. Existing healthy client setup is left unchanged.
 
-Cursor Individual uses a one-time User Rule acknowledgement instead of an undocumented settings-database edit. Interactive bootstrap prints the stable rule, asks the user to add it in **Cursor Settings > Rules**, and records the acknowledgement. Non-interactive setup without acknowledgement returns `CURSOR_USER_RULE_REQUIRED`; Doctor reports `USER_CONFIRMED`, not verified runtime behavior.
+Cursor bootstrap uses an atomic JSON merge for documented global local hooks;
+personal hooks are preserved. Cursor Individual still confirms the printed User
+Rule in **Cursor Settings > Rules**; non-interactive setup without confirmation
+returns `CURSOR_USER_RULE_REQUIRED`. Doctor separately reports `Instruction:
+USER_CONFIRMED`, `Runtime hook: INSTALLED`, and `Runtime enforcement: PASS`.
+Security hooks fail closed for governed MCP and shell write events. Receipts at
+`XDG_STATE_HOME/beroka-ai-governance/cursor` use a hashed conversation filename
+and contain only workspace, repository, generation, release identity, and
+language. The runtime-enforcement canary verifies the installed hook boundary.
+The local-agent threat model covers Cursor-initiated actions only; it does not
+protect a compromised user account or unrelated local processes.
 
 CLI hard-enforces installation, release integrity, catalog routing, connector, authentication, and operation preflight. Agent instructions govern workflow behavior unless CI, hooks, branch protection, or platform policy provides hard enforcement.
 
@@ -136,6 +146,7 @@ sh -n bin/beroka-governance
 sh tests/smoke.sh
 sh tests/connectors.sh
 sh tests/bootstrap.sh
+sh tests/cursor-hooks.sh
 sh tests/documentation-architecture.sh
 sh tests/release.sh
 ```

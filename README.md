@@ -31,8 +31,11 @@ client-owned GitHub OAuth for the launcher's private HTTPS clone. No token is re
 Replace `codex` with `claude` or `cursor` to enroll exactly that client.
 Existing healthy client setup is preserved. Cursor Individual requires a
 one-time confirmation: add the printed User Rule in **Cursor Settings > Rules**
-and confirm it when bootstrap asks. Governance never edits Cursor's internal
-settings database.
+and confirm it when bootstrap asks. Cursor bootstrap atomically installs
+documented global local hooks while preserving personal hooks; Governance never
+edits Cursor's internal settings database. For Cursor, Doctor reports
+`Instruction: USER_CONFIRMED`, `Runtime hook: INSTALLED`, and `Runtime
+enforcement: PASS`.
 
 Run setup for one client on each execution environment, then repeat it only
 when you want to enroll another client there.

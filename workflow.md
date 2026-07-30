@@ -11,7 +11,9 @@ The Central repository catalog supplies exact routing for the user-owned active 
 Legacy tracked governance files remain ignored until repository owners request
 separate cleanup. Cursor Individual uses a one-time User Rule confirmation in
 Cursor Settings > Rules. CLI hard-enforces installation, release integrity,
-catalog routing, connector, authentication, and operation preflight. Agent instructions govern workflow behavior unless CI, hooks, branch protection, or platform policy provides hard enforcement.
+catalog routing, connector, authentication, and operation preflight. Technical artifacts default to English across clients; chat language does not select artifact language, and another language requires `Work-item language:
+<language>` for the current generation. Run a fresh operation-specific
+preflight immediately before each write. Agent instructions govern workflow behavior unless CI, hooks, branch protection, or platform policy provides hard enforcement.
 
 ## 1. System responsibilities
 

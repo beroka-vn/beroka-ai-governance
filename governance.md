@@ -12,7 +12,7 @@ Legacy tracked governance files stay untouched and have no effect on active
 release selection or routing. Repository cleanup is separate owner-authorized
 work. Cursor Individual users add the printed rule once in Cursor Settings > Rules and confirm it; the CLI does not edit Cursor's internal settings.
 
-CLI hard-enforces installation, release integrity, catalog routing, connector, authentication, and operation preflight. Agent instructions govern workflow behavior unless CI, hooks, branch protection, or platform policy provides hard enforcement.
+CLI hard-enforces installation, release integrity, catalog routing, connector, authentication, and operation preflight. Technical artifacts default to English across clients; chat language does not select artifact language, and another language requires `Work-item language: <language>` for the current generation. Run a fresh operation-specific preflight immediately before each write. Agent instructions govern workflow behavior unless CI, hooks, branch protection, or platform policy provides hard enforcement.
 
 ## Roles and accountability
 

@@ -89,6 +89,9 @@ require_text README.md 'one client on each execution environment'
 require_text handbook.md 'AUTH_PENDING'
 require_text handbook.md 'CONNECTOR_HEALTH_UNAVAILABLE'
 require_text PACKAGE-DESIGN.md '15-second total deadline'
+[ -x "$ROOT/tests/cursor-hooks.sh" ] || fail 'cursor hook runtime test is not executable'
+require_text handbook.md 'sh tests/cursor-hooks.sh'
+require_text PACKAGE-DESIGN.md 'sh tests/cursor-hooks.sh'
 [ -f "$ROOT/release/bootstrap.sh.in" ] ||
   fail 'missing release launcher template'
 
