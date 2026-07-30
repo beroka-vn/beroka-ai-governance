@@ -54,6 +54,19 @@ assert_separate_managed_block() {
     fail "instruction markers are not separately delimited in $asmb_file"
 }
 
+assert_cursor_hook() {
+  ach_file=$1 ach_event=$2 ach_command=$3 ach_fail_closed=$4
+  ach_count=$(jq --arg event "$ach_event" --arg command "$ach_command" \
+    '[.hooks[$event][] | select(.command == $command)] | length' "$ach_file")
+  [ "$ach_count" -eq 1 ] ||
+    fail "expected one managed Cursor hook for $ach_event"
+  ach_expected=$(jq -nc --arg command "$ach_command" --argjson fail_closed "$ach_fail_closed" \
+    'if $fail_closed then {command:$command,failClosed:true} else {command:$command} end')
+  jq -e --arg event "$ach_event" --argjson expected "$ach_expected" \
+    '.hooks[$event] | any(. == $expected)' "$ach_file" >/dev/null ||
+    fail "Cursor hook has the wrong security setting for $ach_event"
+}
+
 new_repo() {
   nr_path=$1 nr_name=$2
   mkdir -p "$nr_path"
@@ -713,10 +726,39 @@ printf '%s\n' codex,claude,cursor \
   >"$XDG_CONFIG_HOME/beroka-ai-governance/clients"
 printf '%s\n' "$cursor_hash" \
   >"$XDG_CONFIG_HOME/beroka-ai-governance/cursor-user-rule.sha256"
+cursor_hooks=$HOME/.cursor/hooks.json
+installed_cursor_cli=$BEROKA_GOV_BIN_DIR/beroka-governance
+mkdir -p "$(dirname -- "$cursor_hooks")"
+cat >"$cursor_hooks" <<'EOF'
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      {
+        "command": "/tmp/personal-hook",
+        "timeout": 5
+      }
+    ]
+  },
+  "personal": {
+    "preserved": true
+  }
+}
+EOF
 output=$(cd "$cursor_sha1_cwd" &&
   $CLI bootstrap --client cursor --version v1.1.0 --non-interactive)
 assert_contains "$output" 'Instruction: USER_CONFIRMED'
+assert_contains "$output" 'Runtime hook: INSTALLED'
 assert_contains "$output" 'Result: PASS'
+assert_contains "$(jq -r '.personal.preserved' "$cursor_hooks")" true
+assert_contains "$(jq -r '.hooks.sessionStart[0].command' "$cursor_hooks")" /tmp/personal-hook
+assert_cursor_hook "$cursor_hooks" sessionStart "$installed_cursor_cli cursor-hook sessionStart" false
+assert_cursor_hook "$cursor_hooks" beforeSubmitPrompt "$installed_cursor_cli cursor-hook beforeSubmitPrompt" false
+assert_cursor_hook "$cursor_hooks" preCompact "$installed_cursor_cli cursor-hook preCompact" false
+assert_cursor_hook "$cursor_hooks" beforeMCPExecution "$installed_cursor_cli cursor-hook beforeMCPExecution" true
+assert_cursor_hook "$cursor_hooks" beforeShellExecution "$installed_cursor_cli cursor-hook beforeShellExecution" true
+cursor_hooks_before_repeat=$TEST_ROOT/cursor-hooks-before-repeat
+cp "$cursor_hooks" "$cursor_hooks_before_repeat"
 cursor_ack_before_format_change=$TEST_ROOT/cursor-ack-before-format-change
 cp "$XDG_CONFIG_HOME/beroka-ai-governance/cursor-user-rule.sha256" \
   "$cursor_ack_before_format_change"
@@ -727,20 +769,86 @@ then
   fail "SHA-256 cwd invalidated Cursor acknowledgement: $output"
 fi
 assert_contains "$output" 'Instruction: USER_CONFIRMED'
+assert_contains "$output" 'Runtime hook: INSTALLED'
 assert_contains "$output" 'Result: PASS'
 cmp -s "$cursor_ack_before_format_change" \
   "$XDG_CONFIG_HOME/beroka-ai-governance/cursor-user-rule.sha256" ||
   fail 'caller repository format changed Cursor acknowledgement'
+cmp -s "$cursor_hooks_before_repeat" "$cursor_hooks" ||
+  fail 'repeat Cursor bootstrap changed hooks configuration'
 
 : >"$CALLS"
 doctor_output=$(cd "$cursor_sha256_cwd" &&
   $CLI doctor "$repo" --client cursor)
 assert_contains "$doctor_output" 'Instruction: USER_CONFIRMED'
+assert_contains "$doctor_output" 'Runtime hook: INSTALLED'
+assert_contains "$doctor_output" 'Runtime enforcement: PASS'
 assert_contains "$doctor_output" 'Connector: PASS'
 assert_contains "$doctor_output" 'Result: PASS'
 cmp -s "$cursor_ack_before_format_change" \
   "$XDG_CONFIG_HOME/beroka-ai-governance/cursor-user-rule.sha256" ||
   fail 'Doctor changed Cursor acknowledgement across repository formats'
+
+cursor_hooks_healthy=$TEST_ROOT/cursor-hooks-healthy
+cp "$cursor_hooks" "$cursor_hooks_healthy"
+jq 'del(.hooks.beforeMCPExecution)' "$cursor_hooks_healthy" >"$cursor_hooks"
+if output=$($CLI doctor "$repo" --client cursor 2>&1); then
+  fail 'Cursor Doctor accepted missing security hook'
+fi
+assert_not_contains "$output" 'Runtime enforcement: PASS'
+cp "$cursor_hooks_healthy" "$cursor_hooks"
+if output=$(jq '(.hooks.beforeMCPExecution[] | select(.command == $command) | .failClosed) = false' \
+  --arg command "$installed_cursor_cli cursor-hook beforeMCPExecution" \
+  "$cursor_hooks_healthy" >"$cursor_hooks" &&
+  $CLI doctor "$repo" --client cursor 2>&1)
+then
+  fail 'Cursor Doctor accepted conflicting security hook'
+fi
+assert_not_contains "$output" 'Runtime enforcement: PASS'
+cp "$cursor_hooks_healthy" "$cursor_hooks"
+
+mv "$cursor_hooks" "$cursor_hooks_healthy"
+ln -s "$cursor_hooks_healthy" "$cursor_hooks"
+if output=$($CLI bootstrap --client cursor --version v1.1.0 --non-interactive 2>&1); then
+  fail 'Cursor bootstrap accepted a symlinked hooks file'
+fi
+assert_contains "$output" 'Result: GOVERNANCE_NOT_READY'
+cmp -s "$cursor_hooks_healthy" "$(readlink "$cursor_hooks")" ||
+  fail 'symlinked Cursor hooks target changed'
+rm "$cursor_hooks"
+mv "$cursor_hooks_healthy" "$cursor_hooks"
+
+cursor_hooks_invalid=$TEST_ROOT/cursor-hooks-invalid
+printf '%s\n' '{' >"$cursor_hooks"
+cp "$cursor_hooks" "$cursor_hooks_invalid"
+if output=$($CLI bootstrap --client cursor --version v1.1.0 --non-interactive 2>&1); then
+  fail 'Cursor bootstrap accepted invalid hooks JSON'
+fi
+assert_contains "$output" 'Result: GOVERNANCE_NOT_READY'
+cmp -s "$cursor_hooks_invalid" "$cursor_hooks" ||
+  fail 'invalid Cursor hooks JSON changed during bootstrap'
+cp "$cursor_hooks_before_repeat" "$cursor_hooks"
+
+cursor_hooks_conflict=$TEST_ROOT/cursor-hooks-conflict
+jq '(.hooks.beforeMCPExecution[] | select(.command == $command) | .failClosed) = false' \
+  --arg command "$installed_cursor_cli cursor-hook beforeMCPExecution" \
+  "$cursor_hooks" >"$cursor_hooks_conflict"
+cp "$cursor_hooks_conflict" "$cursor_hooks"
+if output=$($CLI bootstrap --client cursor --version v1.1.0 --non-interactive 2>&1); then
+  fail 'Cursor bootstrap accepted a conflicting managed hook'
+fi
+assert_contains "$output" 'Result: GOVERNANCE_NOT_READY'
+cmp -s "$cursor_hooks_conflict" "$cursor_hooks" ||
+  fail 'conflicting Cursor hooks changed during bootstrap'
+cp "$cursor_hooks_before_repeat" "$cursor_hooks"
+
+mv "$cursor_hooks" "$cursor_hooks_healthy"
+if output=$($CLI doctor "$repo" --client cursor 2>&1); then
+  fail 'Cursor Doctor accepted an acknowledgement without hooks'
+fi
+assert_not_contains "$output" 'Runtime hook: INSTALLED'
+assert_not_contains "$output" 'Runtime enforcement: PASS'
+mv "$cursor_hooks_healthy" "$cursor_hooks"
 rm -rf "$HOME/.cursor"
 
 printf '%s\n' 0000000000000000000000000000000000000000 \

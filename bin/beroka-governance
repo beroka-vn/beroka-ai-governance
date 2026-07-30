@@ -975,6 +975,90 @@ cursor_rule_identity() {
   git --git-dir=/dev/null hash-object --no-filters "$1"
 }
 
+cursor_hooks_expected() {
+  case "$BIN_DIR" in
+    /*) ;;
+    *) die GOVERNANCE_NOT_READY 'Cursor hook CLI path is not absolute' ;;
+  esac
+  che_cli=$BIN_DIR/$PROGRAM
+  jq -nc --arg cli "$che_cli" '[
+    {event:"sessionStart",command:($cli + " cursor-hook sessionStart"),security:false},
+    {event:"beforeSubmitPrompt",command:($cli + " cursor-hook beforeSubmitPrompt"),security:false},
+    {event:"preCompact",command:($cli + " cursor-hook preCompact"),security:false},
+    {event:"beforeMCPExecution",command:($cli + " cursor-hook beforeMCPExecution"),security:true},
+    {event:"beforeShellExecution",command:($cli + " cursor-hook beforeShellExecution"),security:true}
+  ]' || die GOVERNANCE_NOT_READY 'Cannot define Cursor security hooks'
+}
+
+install_cursor_hooks() {
+  ich_dir=$HOME/.cursor ich_file=$HOME/.cursor/hooks.json
+  assert_safe_user_path "$ich_dir" 'Cursor hooks directory'
+  assert_safe_user_path "$ich_file" 'Cursor hooks config'
+  [ ! -e "$ich_file" ] || { [ -f "$ich_file" ] && [ ! -L "$ich_file" ]; } ||
+    die GOVERNANCE_NOT_READY 'Unsafe Cursor hooks config'
+  mkdir -p "$ich_dir" || die GOVERNANCE_NOT_READY 'Cannot create Cursor hooks directory'
+  ich_expected=$(cursor_hooks_expected)
+  ich_temp=$(mktemp "$ich_dir/.beroka-hooks.XXXXXX") ||
+    die GOVERNANCE_NOT_READY 'Cannot stage Cursor hooks config'
+  if [ -e "$ich_file" ]; then
+    if ! jq --argjson managed "$ich_expected" '
+      if type != "object" or (has("hooks") and (.hooks | type != "object")) then error("invalid hooks") else
+        .hooks = (.hooks // {}) |
+        reduce $managed[] as $item (
+          .;
+          ($item | {command} + (if .security then {failClosed:true} else {} end)) as $expected |
+          (.hooks[$item.event] // []) as $entries |
+          if ((.hooks | has($item.event)) and (.hooks[$item.event] | type != "array")) then error("invalid hook event")
+          elif any($entries[]; .command == $expected.command and . != $expected) then error("conflicting hook")
+          elif any($entries[]; . == $expected) then .
+          else .hooks[$item.event] = $entries + [$expected]
+          end
+        )
+      end
+    ' "$ich_file" >"$ich_temp" 2>/dev/null
+    then
+      rm -f "$ich_temp" || :
+      die GOVERNANCE_NOT_READY 'Cursor hooks config is invalid or conflicts with managed hooks'
+    fi
+  elif ! printf '%s\n' '{}' | jq --argjson managed "$ich_expected" '
+      .hooks = {} |
+      reduce $managed[] as $item (
+        .;
+        ($item | {command} + (if .security then {failClosed:true} else {} end)) as $expected |
+        .hooks[$item.event] = [$expected]
+      )
+    ' >"$ich_temp" 2>/dev/null
+  then
+    rm -f "$ich_temp" || :
+    die GOVERNANCE_NOT_READY 'Cannot stage Cursor hooks config'
+  fi
+  chmod 600 "$ich_temp" || { rm -f "$ich_temp" || :; die GOVERNANCE_NOT_READY 'Cannot secure Cursor hooks config'; }
+  mv "$ich_temp" "$ich_file" || { rm -f "$ich_temp" || :; die GOVERNANCE_NOT_READY 'Cannot replace Cursor hooks config'; }
+}
+
+verify_cursor_hooks() {
+  vch_file=$HOME/.cursor/hooks.json
+  [ -f "$vch_file" ] && [ ! -L "$vch_file" ] || return 1
+  vch_expected=$(cursor_hooks_expected) || return 1
+  jq -e --argjson managed "$vch_expected" '
+    type == "object" and (.hooks | type == "object") and
+    (. as $config |
+    all($managed[];
+      (. as $item |
+       ($item | {command} + (if .security then {failClosed:true} else {} end)) as $expected |
+       ($config.hooks[$item.event] | type == "array") and
+       ([$config.hooks[$item.event][] | select(. == $expected)] | length == 1))))
+  ' "$vch_file" >/dev/null 2>&1
+}
+
+verify_cursor_runtime() {
+  vcr_output=$(printf '%s\n' '{}' | "$BIN_DIR/$PROGRAM" \
+    cursor-hook beforeMCPExecution 2>&1) || return 1
+  printf '%s\n' "$vcr_output" | jq -e \
+    '.permission == "deny" and (.user_message | contains("GOVERNANCE_CONTEXT_REQUIRED"))' \
+    >/dev/null 2>&1
+}
+
 verify_client_instruction() {
   verify_instruction_client=$1
   case "$verify_instruction_client" in
@@ -1229,6 +1313,11 @@ cmd_bootstrap() {
   fi
   [ "$bs_selected_instruction_installed" -eq 1 ] ||
     install_client_instruction "$bs_client" "$bs_interactive"
+  if [ "$bs_client" = cursor ]; then
+    install_cursor_hooks
+    verify_cursor_hooks || die GOVERNANCE_NOT_READY 'Cursor hooks installation verification failed'
+    printf '%s\n' 'Runtime hook: INSTALLED'
+  fi
   enable_client "$bs_client"
   printf '%s\n' \
     'Release: PASS' \
@@ -3485,6 +3574,14 @@ cmd_doctor() {
   if [ -n "$doctor_client" ]; then
     require_enrolled_client "$doctor_client"
     verify_client_instruction "$doctor_client"
+    if [ "$doctor_client" = cursor ]; then
+      verify_cursor_hooks || die GOVERNANCE_NOT_READY \
+        'Remediation: beroka-governance bootstrap --client cursor'
+      printf '%s\n' 'Runtime hook: INSTALLED'
+      verify_cursor_runtime || die GOVERNANCE_NOT_READY \
+        'Cursor runtime enforcement canary failed'
+      printf '%s\n' 'Runtime enforcement: PASS'
+    fi
     require_client "$doctor_client"
     doctor_state=0
     connector_state "$doctor_client" || doctor_state=$?
