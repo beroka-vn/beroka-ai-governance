@@ -14,6 +14,7 @@ INSTRUCTION_BOUNDARY_MARKER='<!-- BEROKA-GOVERNANCE:BOUNDARY -->'
 ACTIVE_RELEASE=$CONFIG_ROOT/active-release
 CLIENTS_FILE=$CONFIG_ROOT/clients
 CURSOR_ACK_FILE=$CONFIG_ROOT/cursor-user-rule.sha256
+GITHUB_ROLE_FILE=$CONFIG_ROOT/github-role
 TX_DIR= TX_COMMITTED=0 TX_RELEASE_NEW=0 TX_RELEASE_TARGET=
 TX_RELEASE_STAGE= TX_RELEASE_OWNED=0
 TX_CLI_PATH= TX_CLI_SNAPSHOT=0 TX_ACTIVE_RELEASE_SNAPSHOT=0
@@ -22,6 +23,7 @@ ROUTE_SCHEMA_VERSION= ROUTE_PROFILE= ROUTE_JIRA_PROJECT_KEY=
 ROUTE_JIRA_BOARD_ID= ROUTE_CONFLUENCE_SPACE_KEY=
 ROUTE_CONFLUENCE_ROOT_CONTENT_ID= ROUTE_CONFLUENCE_ROOT_CONTENT_TYPE=
 ROUTE_INTEGRATION_PROFILE= ROUTE_CROSS_REPO_POLICY= DEPENDENCY_STATE=
+GITHUB_ROLE=
 CONNECTOR_PROBE_CLIENT= CONNECTOR_PROBE_OUTPUT= CONNECTOR_PROBE_STATUS=
 CONNECTOR_PROBE_STATE=
 CONNECTOR_PROBE_TOOLS=
@@ -224,6 +226,7 @@ resolve_repository_context() {
     DEPENDENCY_STATE=NO_DEPENDENCY_DECLARED
     ROUTING_STATE=ROUTING_REQUIRED
   fi
+  require_role_scope
 }
 
 clear_routing_values() {
@@ -816,6 +819,7 @@ assert_client_files() {
   assert_safe_user_path "$CONFIG_ROOT" config
   assert_safe_user_path "$CLIENTS_FILE" 'client enrollment'
   assert_safe_user_path "$CURSOR_ACK_FILE" 'Cursor acknowledgement'
+  assert_safe_user_path "$GITHUB_ROLE_FILE" 'GitHub role'
   [ ! -e "$CONFIG_ROOT" ] || [ -d "$CONFIG_ROOT" ] ||
     die GOVERNANCE_NOT_READY "Config root is not a directory: $CONFIG_ROOT"
   { [ ! -e "$CLIENTS_FILE" ] && [ ! -L "$CLIENTS_FILE" ]; } ||
@@ -824,6 +828,49 @@ assert_client_files() {
   { [ ! -e "$CURSOR_ACK_FILE" ] && [ ! -L "$CURSOR_ACK_FILE" ]; } ||
     { [ -f "$CURSOR_ACK_FILE" ] && [ ! -L "$CURSOR_ACK_FILE" ]; } ||
     die GOVERNANCE_NOT_READY 'Unsafe Cursor acknowledgement'
+  { [ ! -e "$GITHUB_ROLE_FILE" ] && [ ! -L "$GITHUB_ROLE_FILE" ]; } ||
+    { [ -f "$GITHUB_ROLE_FILE" ] && [ ! -L "$GITHUB_ROLE_FILE" ]; } ||
+    die GOVERNANCE_NOT_READY 'Unsafe GitHub role'
+}
+
+load_github_role() {
+  assert_client_files
+  [ -f "$GITHUB_ROLE_FILE" ] && [ ! -L "$GITHUB_ROLE_FILE" ] ||
+    die GITHUB_ROLE_REQUIRED \
+      'Remediation: rerun beroka-governance bootstrap with an enrolled client'
+  GITHUB_ROLE=$(
+    awk '
+      NR == 1 { value=$0 }
+      NR > 1 { invalid=1 }
+      END {
+        if (NR != 1 || invalid) exit 1
+        print value
+      }
+    ' "$GITHUB_ROLE_FILE"
+  ) || die GITHUB_ROLE_REQUIRED 'Invalid stored GitHub role'
+  case "$GITHUB_ROLE" in
+    FE|BE|FULL_STACK) ;;
+    *) die GITHUB_ROLE_REQUIRED 'Invalid stored GitHub role' ;;
+  esac
+}
+
+require_role_scope() {
+  case "$ROUTE_PROFILE" in
+    backend)
+      load_github_role
+      case "$GITHUB_ROLE" in
+        BE|FULL_STACK) ;;
+        *) die ROLE_SCOPE_DENIED 'GitHub role cannot govern Backend routing' ;;
+      esac
+      ;;
+    frontend)
+      load_github_role
+      case "$GITHUB_ROLE" in
+        FE|FULL_STACK) ;;
+        *) die ROLE_SCOPE_DENIED 'GitHub role cannot govern Frontend routing' ;;
+      esac
+      ;;
+  esac
 }
 
 client_list_contains() {
@@ -1245,7 +1292,8 @@ cmd_uninstall() {
     die GOVERNANCE_NOT_READY 'Cannot remove uninstall stage'
   rm -f "$BIN_DIR/$PROGRAM" || die GOVERNANCE_NOT_READY 'Cannot remove the user CLI'
   rm -rf "$DATA_ROOT" || die GOVERNANCE_NOT_READY 'Cannot remove package data'
-  rm -f "$ACTIVE_RELEASE" "$CLIENTS_FILE" "$CURSOR_ACK_FILE" ||
+  rm -f "$ACTIVE_RELEASE" "$CLIENTS_FILE" "$CURSOR_ACK_FILE" \
+    "$GITHUB_ROLE_FILE" ||
     die GOVERNANCE_NOT_READY 'Cannot remove package configuration'
   rmdir "$CONFIG_ROOT" 2>/dev/null || :
   printf '%s\n' 'Result: PASS'

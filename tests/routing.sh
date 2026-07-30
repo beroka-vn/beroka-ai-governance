@@ -741,6 +741,8 @@ backend_repo=$TEST_ROOT/backend-repo
 new_repo "$backend_repo"
 git -C "$backend_repo" remote add origin \
   https://github.com/cuongngo1801-beroka/Beroka_Backend.git
+role_file=$XDG_CONFIG_HOME/beroka-ai-governance/github-role
+printf '%s\n' FULL_STACK >"$role_file"
 backend_output=$($CLI context "$backend_repo")
 assert_contains "$backend_output" \
   'Repository: cuongngo1801-beroka/Beroka_Backend'
@@ -766,6 +768,49 @@ assert_contains "$frontend_output" 'Jira board: 35'
 assert_contains "$frontend_output" 'Confluence space: Berokafron'
 assert_contains "$frontend_output" 'Confluence root content: 65831203'
 assert_contains "$frontend_output" '# BE/FE Work Items'
+
+canonical_backend=$TEST_ROOT/canonical-backend
+new_repo "$canonical_backend"
+git -C "$canonical_backend" remote add origin \
+  https://github.com/beroka-vn/Beroka_Backend.git
+canonical_backend_output=$($CLI context "$canonical_backend")
+assert_contains "$canonical_backend_output" \
+  'Repository: beroka-vn/Beroka_Backend'
+assert_contains "$canonical_backend_output" 'Routing: ROUTING_ACTIVE'
+assert_contains "$canonical_backend_output" 'Jira project: BB'
+
+canonical_frontend=$TEST_ROOT/canonical-frontend
+new_repo "$canonical_frontend"
+git -C "$canonical_frontend" remote add origin \
+  https://github.com/beroka-vn/Beroka_Frontend.git
+canonical_frontend_output=$($CLI context "$canonical_frontend")
+assert_contains "$canonical_frontend_output" \
+  'Repository: beroka-vn/Beroka_Frontend'
+assert_contains "$canonical_frontend_output" 'Routing: ROUTING_ACTIVE'
+assert_contains "$canonical_frontend_output" 'Jira project: BF'
+
+printf '%s\n' FE >"$role_file"
+if output=$($CLI context "$canonical_backend" 2>&1); then
+  fail 'FE role loaded Backend routing'
+fi
+assert_contains "$output" 'Result: ROLE_SCOPE_DENIED'
+assert_not_contains "$output" 'Jira project: BB'
+assert_contains "$($CLI context "$canonical_frontend")" 'Jira project: BF'
+
+printf '%s\n' BE >"$role_file"
+if output=$($CLI context "$canonical_frontend" 2>&1); then
+  fail 'BE role loaded Frontend routing'
+fi
+assert_contains "$output" 'Result: ROLE_SCOPE_DENIED'
+assert_not_contains "$output" 'Jira project: BF'
+assert_contains "$($CLI context "$canonical_backend")" 'Jira project: BB'
+
+rm -f "$role_file"
+if output=$($CLI context "$canonical_backend" 2>&1); then
+  fail 'Backend routing loaded without a GitHub role'
+fi
+assert_contains "$output" 'Result: GITHUB_ROLE_REQUIRED'
+printf '%s\n' FULL_STACK >"$role_file"
 
 git -C "$consumer" remote set-url upstream \
   git@github.com-work:beroka-vn/routing-consumer.git
