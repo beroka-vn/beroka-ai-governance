@@ -829,6 +829,17 @@ cmp -s "$cursor_hooks_invalid" "$cursor_hooks" ||
   fail 'invalid Cursor hooks JSON changed during bootstrap'
 cp "$cursor_hooks_before_repeat" "$cursor_hooks"
 
+cursor_hooks_multi=$TEST_ROOT/cursor-hooks-multi
+printf '%s\n%s\n' '{"version":1}' '{"version":1}' >"$cursor_hooks"
+cp "$cursor_hooks" "$cursor_hooks_multi"
+if output=$($CLI bootstrap --client cursor --version v1.1.0 --non-interactive 2>&1); then
+  fail 'Cursor bootstrap accepted multi-document hooks JSON'
+fi
+assert_contains "$output" 'Result: GOVERNANCE_NOT_READY'
+cmp -s "$cursor_hooks_multi" "$cursor_hooks" ||
+  fail 'multi-document Cursor hooks JSON changed during bootstrap'
+cp "$cursor_hooks_before_repeat" "$cursor_hooks"
+
 cursor_hooks_conflict=$TEST_ROOT/cursor-hooks-conflict
 jq '(.hooks.beforeMCPExecution[] | select(.command == $command) | .failClosed) = false' \
   --arg command "$installed_cursor_cli cursor-hook beforeMCPExecution" \

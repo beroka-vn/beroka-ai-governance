@@ -1001,8 +1001,10 @@ install_cursor_hooks() {
   ich_temp=$(mktemp "$ich_dir/.beroka-hooks.XXXXXX") ||
     die GOVERNANCE_NOT_READY 'Cannot stage Cursor hooks config'
   if [ -e "$ich_file" ]; then
-    if ! jq --argjson managed "$ich_expected" '
-      if type != "object" or (has("hooks") and (.hooks | type != "object")) then error("invalid hooks") else
+    if ! jq -s --argjson managed "$ich_expected" '
+      if length != 1 or (.[0] | type != "object") then error("invalid hooks") else
+        .[0] |
+      if has("hooks") and (.hooks | type != "object") then error("invalid hooks") else
         .hooks = (.hooks // {}) |
         reduce $managed[] as $item (
           .;
@@ -1015,18 +1017,21 @@ install_cursor_hooks() {
           end
         )
       end
+      end
     ' "$ich_file" >"$ich_temp" 2>/dev/null
     then
       rm -f "$ich_temp" || :
       die GOVERNANCE_NOT_READY 'Cursor hooks config is invalid or conflicts with managed hooks'
     fi
-  elif ! printf '%s\n' '{}' | jq --argjson managed "$ich_expected" '
-      .hooks = {} |
+  elif ! printf '%s\n' '{}' | jq -s --argjson managed "$ich_expected" '
+      if length != 1 or (.[0] | type != "object") then error("invalid hooks") else
+      .[0] | .hooks = {} |
       reduce $managed[] as $item (
         .;
         ($item | {command} + (if .security then {failClosed:true} else {} end)) as $expected |
         .hooks[$item.event] = [$expected]
       )
+      end
     ' >"$ich_temp" 2>/dev/null
   then
     rm -f "$ich_temp" || :
@@ -1040,14 +1045,15 @@ verify_cursor_hooks() {
   vch_file=$HOME/.cursor/hooks.json
   [ -f "$vch_file" ] && [ ! -L "$vch_file" ] || return 1
   vch_expected=$(cursor_hooks_expected) || return 1
-  jq -e --argjson managed "$vch_expected" '
-    type == "object" and (.hooks | type == "object") and
+  jq -se --argjson managed "$vch_expected" '
+    length == 1 and (.[0] | type == "object") and
+    (.[0] | (.hooks | type == "object") and
     (. as $config |
     all($managed[];
       (. as $item |
        ($item | {command} + (if .security then {failClosed:true} else {} end)) as $expected |
        ($config.hooks[$item.event] | type == "array") and
-       ([$config.hooks[$item.event][] | select(. == $expected)] | length == 1))))
+       ([$config.hooks[$item.event][] | select(. == $expected)] | length == 1)))))
   ' "$vch_file" >/dev/null 2>&1
 }
 
