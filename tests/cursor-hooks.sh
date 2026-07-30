@@ -83,6 +83,11 @@ done
 
 hook sessionStart "$base_input" >/dev/null
 github_write=$(printf '%s\n' "$base_input" | jq -c '. + {tool_name:"github.create_issue",url:"https://github.com",tool_input:{body:"Work-item language: English"}}')
+github_read=$(printf '%s\n' "$base_input" | jq -c '. + {tool_name:"github.get_issue",url:"https://github.com",tool_input:{}}')
+assert_contains "$(hook beforeMCPExecution "$github_read")" '"permission":"allow"'
+hook beforeSubmitPrompt "$prompt_vi" >/dev/null
+assert_denied "$(hook beforeMCPExecution "$github_write")" WORK_ITEM_LANGUAGE_REQUIRED
+hook beforeSubmitPrompt "$base_input" >/dev/null
 for invalid in \
   "$(printf '%s\n' "$github_write" | jq -c '.generation_id="other"')" \
   "$(printf '%s\n' "$github_write" | jq -c '.workspace_roots=["/tmp/other"]')"; do

@@ -3731,7 +3731,7 @@ cursor_tool_provider() {
     *) CURSOR_PROVIDER= ;;
   esac
   case "$CURSOR_TOOL_TEXT" in
-    *create*|*update*|*edit*|*comment*|*issue*|*pull*) CURSOR_TOOL_WRITE=1 ;;
+    *create*|*update*|*edit*|*comment*) CURSOR_TOOL_WRITE=1 ;;
     *) CURSOR_TOOL_WRITE=0 ;;
   esac
 }
@@ -3747,7 +3747,7 @@ cursor_language_label() {
 
 cursor_validate_template() {
   cursor_marker="Work-item language: $(cursor_language_label)"
-  printf '%s\n' "$CURSOR_TOOL_INPUT" | grep -F "$cursor_marker" >/dev/null || return 1
+  printf '%s\n' "$CURSOR_TOOL_INPUT" | grep -F "$cursor_marker" >/dev/null || return 3
   case "$CURSOR_TOOL_TEXT" in
     *update*|*edit*|*comment*)
       cursor_has_nonempty_field body || cursor_has_nonempty_field content || return 1
@@ -3794,6 +3794,7 @@ cmd_cursor_before_mcp_execution() {
   case "$cursor_template_state" in
     0) ;;
     2) cursor_deny LABEL_CONFIGURATION_REQUIRED 'Use one configured type label, one area label, and one priority label.'; return ;;
+    3) cursor_deny WORK_ITEM_LANGUAGE_REQUIRED 'Use the current Work-item language marker in the structured payload.'; return ;;
     *) cursor_deny WORK_ITEM_TEMPLATE_REQUIRED 'Include the language marker and all required governed work-item fields.'; return ;;
   esac
   case "$CURSOR_PROVIDER" in github) cursor_operation=github-write ;; jira) cursor_operation=jira-write ;; esac
