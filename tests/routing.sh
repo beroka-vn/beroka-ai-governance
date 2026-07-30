@@ -1985,8 +1985,8 @@ grep -F 'beroka-governance preflight' "$ROOT/README.md" >/dev/null ||
 grep -F 'CONNECTOR_CAPABILITY_REQUIRED' "$ROOT/handbook.md" >/dev/null ||
   fail 'handbook does not document capability remediation'
 
-[ "$(sed -n '1p' "$ROOT/VERSION")" = v1.0.2 ] ||
-  fix_wave_fail 'root VERSION does not select v1.0.2'
+[ "$(sed -n '1p' "$ROOT/VERSION")" = v1.0.3 ] ||
+  fix_wave_fail 'root VERSION does not select v1.0.3'
 grep -F -- 'gh release download' "$ROOT/README.md" >/dev/null ||
   fix_wave_fail 'README does not select the authenticated release launcher'
 
