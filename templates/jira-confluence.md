@@ -26,6 +26,9 @@ belong in the GitHub Issue. Confluence does not replace Jira status or PR eviden
   and wait. Never select a parent, create an orphan, or duplicate across projects.
 - Before a new Epic, show duplicates and require an initial Feature/Story/Task/Bug.
   Never create a direct Subtask under an Epic.
+- A truly unrelated one-off or hotfix may be standalone only after explicit
+  confirmation. Record `Parent Epic: N/A`, the standalone reason, reviewed
+  active Epic candidates, owner, priority, and GitHub issue.
 - BF creation scans BB after BF duplicate checks; BB creation scans BF. Similar
   names are candidates only and never authorize links.
 - A BF child needs BB mapping only for a BE dependency or paired Epic. Pure FE
@@ -48,7 +51,7 @@ Active Epic confirmation required
   1. <key> — <summary> — <status> — <owner> — <URL> — <why related>
   2. <key> — <summary> — <status> — <owner> — <URL> — <why related>
 - Proposed parent: <key | none>
-- Developer decision: choose an Epic | create a new Epic | cancel
+- Developer decision: choose an Epic | create a new Epic | confirm standalone | cancel
 ```
 
 If Jira cannot be read, report access failure. Never invent an Epic list.
@@ -77,6 +80,7 @@ Jira creation verification
 - Created item: <key and URL>
 - Project / issue type: <expected> — PASS | FAIL
 - Parent Epic: <expected> — PASS | FAIL | N/A
+- Standalone reason and reviewed Epic candidates: <evidence | N/A> — PASS | FAIL
 - Initial child: <key/type/summary> — PASS | FAIL | N/A
 - Sprint: <unset | requested Sprint> — PASS | FAIL
 - Assignee: <expected accountId> — PASS | FAIL

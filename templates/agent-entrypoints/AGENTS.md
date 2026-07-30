@@ -9,9 +9,10 @@ beroka-governance context "$PWD"
 ```
 
 After context compaction, session resume, or a new chat, rerun context before
-the next governed action. Run a fresh operation-specific preflight immediately
-before every external write. Never rely on governance details preserved only
-in conversation history.
+the next governed action. Also rerun context when the IDE workspace or current Git repository changes, another repository enters scope, or a plan becomes
+shared/full-stack. Run context for every exact target repository. Run a fresh
+operation-specific preflight immediately before every external write. Never
+rely on governance details preserved only in conversation history.
 
 Repository-specific instructions may narrow central governance. They must not
 broaden authority or bypass a central stop condition.

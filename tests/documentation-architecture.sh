@@ -87,6 +87,14 @@ require_text runtime/rules/general.md 'Create once, then read back the returned 
 require_text runtime/rules/general.md 'never retry automatically'
 require_text runtime/entrypoint.md 'sole routing source'
 require_text runtime/entrypoint.md 'authorized governance-repository task'
+require_text runtime/entrypoint.md \
+  'IDE workspace or current Git repository changes'
+require_text templates/agent-entrypoints/CURSOR-USER-RULE.txt \
+  'IDE workspace or current Git repository changes'
+require_text templates/agent-entrypoints/AGENTS.md \
+  'IDE workspace or current Git repository changes'
+require_text templates/agent-entrypoints/CLAUDE.md \
+  'IDE workspace or current Git repository changes'
 reject_text runtime/entrypoint.md 'default-branch routing'
 reject_text runtime/entrypoint.md 'Pending local routing'
 reject_text runtime/rules/general.md 'registered repository'
@@ -107,6 +115,12 @@ require_text runtime/profiles/backend.md 'globally unique Folder'
 require_text runtime/profiles/frontend.md 'Capability Index'
 require_text runtime/integrations/beroka-be-fe.md 'Registry rows'
 require_text runtime/integrations/beroka-be-fe.md 'Integration Hub'
+require_text runtime/rules/work-items.md 'LABEL_CONFIGURATION_REQUIRED'
+require_text runtime/rules/work-items.md 'Parent Epic: N/A'
+require_text governance.md 'native Issue Type'
+require_text workflow.md 'standalone reason'
+reject_text runtime/integrations/beroka-be-fe.repositories \
+  'hungnx77/Beroka_Backend'
 
 require_text templates/jira-confluence.md \
   'Backend Capability Registry Template'
