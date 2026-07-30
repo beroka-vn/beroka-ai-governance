@@ -1286,12 +1286,17 @@ list_line=$(nl -ba "$CALLS" |
 
 printf '%s\n' '{"other":{"preserved":true}}' >"$global_cursor_file"
 printf '%s\n' first-run-unknown >"$XDG_CONFIG_HOME/fake-cursor-health"
+: >"$CALLS"
+decline_before=$(cat "$global_cursor_file")
 if decline_output=$(printf 'n\n' |
   script -qec "$CLI setup-connectors --client cursor" /dev/null 2>&1)
 then
   fail 'Cursor first-run accepted declined global MCP installation'
 fi
 assert_contains "$decline_output" 'Result: ATLASSIAN_AUTH_REQUIRED'
+[ "$(cat "$global_cursor_file")" = "$decline_before" ] ||
+  fail 'declined Cursor first-run changed global MCP'
+assert_not_contains "$(cat "$CALLS")" 'mcp login atlassian'
 
 printf '%s\n' '{invalid JSON' >"$global_cursor_file"
 if invalid_output=$($CLI setup-connectors --client cursor --non-interactive 2>&1)
@@ -1299,6 +1304,55 @@ then
   fail 'Cursor first-run accepted invalid global JSON'
 fi
 assert_contains "$invalid_output" 'Result: GOVERNANCE_NOT_READY'
+
+printf '%s\n%s\n' '{"other":{"first":true}}' '{"other":{"second":true}}' \
+  >"$global_cursor_file"
+multi_object_before=$(cat "$global_cursor_file")
+if multi_object_output=$(
+  $CLI setup-connectors --client cursor --non-interactive 2>&1
+)
+then
+  fix_wave_fail 'Cursor first-run accepted multiple top-level JSON objects'
+fi
+fix_wave_contains "$multi_object_output" 'Result: GOVERNANCE_NOT_READY'
+[ "$(cat "$global_cursor_file")" = "$multi_object_before" ] ||
+  fix_wave_fail 'multi-object Cursor config changed before rejection'
+
+printf '%s\n' '{"other":{"preserved":true}}' >"$global_cursor_file"
+printf '%s\n' first-run-unknown >"$XDG_CONFIG_HOME/fake-cursor-health"
+: >"$CALLS"
+race_input=$TEST_ROOT/cursor-race-input
+race_output=$TEST_ROOT/cursor-race-output
+mkfifo "$race_input"
+script -qec "$CLI setup-connectors --client cursor" /dev/null \
+  <"$race_input" >"$race_output" 2>&1 &
+race_pid=$!
+exec 3>"$race_input"
+race_waits=0
+while ! grep -F \
+  'Install global Atlassian MCP and start OAuth now? [y/N]' \
+  "$race_output" >/dev/null 2>&1
+do
+  [ "$race_waits" -lt 100 ] ||
+    fail 'Cursor first-run mutation test did not reach its prompt'
+  /bin/sleep 0.01
+  race_waits=$((race_waits + 1))
+done
+printf '%s\n' \
+  '{"mcpServers":{"atlassian":{"url":"https://example.invalid/race"}}}' \
+  >"$global_cursor_file"
+race_before=$(cat "$global_cursor_file")
+printf 'y\n' >&3
+exec 3>&-
+race_status=0
+wait "$race_pid" || race_status=$?
+race_output_text=$(cat "$race_output")
+[ "$race_status" -ne 0 ] ||
+  fix_wave_fail 'Cursor first-run overwrote a mutation-time conflict'
+fix_wave_contains "$race_output_text" 'Result: CONNECTOR_MISSING'
+[ "$(cat "$global_cursor_file")" = "$race_before" ] ||
+  fix_wave_fail 'Cursor first-run changed a mutation-time conflict'
+fix_wave_not_contains "$(cat "$CALLS")" 'mcp login atlassian'
 
 printf '%s\n' '{"other":{"preserved":true}}' >"$global_cursor_file"
 printf '%s\n' login-failed >"$XDG_CONFIG_HOME/fake-cursor-health"

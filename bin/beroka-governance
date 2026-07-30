@@ -1587,6 +1587,22 @@ cursor_configure_atlassian() {
   assert_safe_user_path "$cuca_file" 'Cursor MCP config'
   mkdir -p "$cuca_dir" ||
     die GOVERNANCE_NOT_READY 'Cannot create Cursor config directory'
+  if [ -f "$cuca_file" ]; then
+    jq -e -s 'length == 1 and (.[0] | type == "object")' \
+      "$cuca_file" >/dev/null 2>&1 ||
+      die GOVERNANCE_NOT_READY 'Cursor MCP config is invalid JSON'
+    cuca_state=0
+    connector_state cursor || cuca_state=$?
+    case "$cuca_state" in
+      0) return 0 ;;
+      1) ;;
+      2)
+        die CONNECTOR_MISSING \
+          'Existing atlassian connector has an unexpected URL for cursor'
+        ;;
+      *) die GOVERNANCE_NOT_READY 'Cannot inspect cursor Atlassian connector' ;;
+    esac
+  fi
   cuca_temp=$(mktemp "$cuca_dir/.beroka-mcp.XXXXXX") ||
     die GOVERNANCE_NOT_READY 'Cannot stage Cursor MCP config'
   if [ -f "$cuca_file" ]; then
@@ -1634,7 +1650,8 @@ cursor_first_run_setup() {
   assert_safe_user_path "$cfr_file" 'Cursor MCP config'
   if [ -e "$cfr_file" ]; then
     [ -f "$cfr_file" ] && [ ! -L "$cfr_file" ] &&
-      jq -e 'type == "object"' "$cfr_file" >/dev/null 2>&1 ||
+      jq -e -s 'length == 1 and (.[0] | type == "object")' \
+        "$cfr_file" >/dev/null 2>&1 ||
       die GOVERNANCE_NOT_READY 'Cursor MCP config is invalid JSON'
   fi
   cursor_project_mcp_notice
