@@ -22,6 +22,6 @@
   developer confirmation. Record `Parent Epic: N/A`, the standalone reason,
   reviewed Epic candidates, owner, priority, and GitHub issue.
 - After creation, read back GitHub owner, type or fallback label, area,
-  priority, and Jira link; read back Jira project, type, parent or approved
+  priority, and primary Jira linkage; read back Jira project, type, parent or approved
   standalone reason, assignee, and GitHub link. A failed readback is not
   `PASS`.
