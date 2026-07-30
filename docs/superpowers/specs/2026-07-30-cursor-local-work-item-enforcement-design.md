@@ -200,4 +200,3 @@ Issue #31 lands through its own branch and pull request. `v1.0.4` may be tagged
 and published only after the required issue pull requests are merged and the
 human confirms the exact reviewed pull requests and commits. Existing release
 tags remain immutable.
-
