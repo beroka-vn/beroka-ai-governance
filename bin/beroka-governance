@@ -561,6 +561,7 @@ validate_release_checkout() {
       die VERSION_MISMATCH 'Unsupported routing schema in installed release'
     for vrc_routing_file in \
       runtime/rules/general.md \
+      runtime/rules/work-items.md \
       runtime/profiles/standalone.md runtime/profiles/backend.md \
       runtime/profiles/frontend.md runtime/integrations/beroka-be-fe.md \
       runtime/integrations/beroka-be-fe.repositories \
@@ -3352,6 +3353,10 @@ render_routing_context() {
     "Cross-repository policy: $ROUTE_CROSS_REPO_POLICY"
   cat "$RELEASE_DIR/runtime/profiles/$ROUTE_PROFILE.md" ||
     die GOVERNANCE_NOT_READY 'Cannot read repository profile'
+  if [ "$ROUTE_INTEGRATION_PROFILE" = beroka-be-fe ]; then
+    cat "$RELEASE_DIR/runtime/rules/work-items.md" ||
+      die GOVERNANCE_NOT_READY 'Cannot read BE/FE work-item rules'
+  fi
   if [ "$ROUTE_INTEGRATION_PROFILE" != none ]; then
     cat "$RELEASE_DIR/runtime/integrations/$ROUTE_INTEGRATION_PROFILE.md" ||
       die GOVERNANCE_NOT_READY 'Cannot read integration profile'

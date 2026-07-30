@@ -8,14 +8,14 @@ Release đã verify cùng client setup thuộc workstation; repository ứng d�
 
 | Hệ thống | Target cần truy cập |
 | --- | --- |
-| GitHub Backend | [`hungnx77/Beroka_Backend`](https://github.com/hungnx77/Beroka_Backend) |
-| GitHub Frontend | Exact repository theo task trong [`cuongngo1801-beroka`](https://github.com/cuongngo1801-beroka?tab=repositories) |
+| GitHub Backend | [`cuongngo1801-beroka/Beroka_Backend`](https://github.com/cuongngo1801-beroka/Beroka_Backend) |
+| GitHub Frontend | [`cuongngo1801-beroka/Beroka_Frontend`](https://github.com/cuongngo1801-beroka/Beroka_Frontend) |
 | Jira Backend | Project `BB`, board `34` |
 | Jira Frontend | Project `BF`, board `35` |
 | Confluence Backend | Space [`Beroka-backend`](https://beroka.atlassian.net/wiki/spaces/Berokaback/overview) |
 | Confluence Frontend | Space [`Beroka-frontend`](https://beroka.atlassian.net/wiki/spaces/Berokafron) |
 
-Read/write access chỉ dùng cho selected profile, requested operation và integration profile. Nếu Frontend repository chưa resolve thành exact URL, agent dừng external write và hỏi developer.
+Read/write access chỉ dùng cho selected profile, requested operation và integration profile. Repository ngoài boundary BE/FE cần exact catalog record; agent không suy đoán từ IDE workspace.
 Nếu target hoặc scope chưa rõ, **Chuyển quyết định cho developer**; không suy đoán từ thông tin gần giống.
 
 ## Quy tắc chung
@@ -36,7 +36,7 @@ Legacy tracked files không bị CLI parse, sửa, hay xóa. Repository owner c�
 
 - Có POSIX shell, `gh`, `jq`, và selected Codex/Claude client. Interactive Cursor bootstrap tự cài Cursor Agent nếu còn thiếu. Native Windows PowerShell không thuộc V1; dùng WSL trên Windows.
 - `gh` phải authenticate để download private release. Không yêu cầu, in, sao chép, ghi log hoặc lưu token.
-- `v1.0.1` là capability release được hỗ trợ hiện tại.
+- `v1.0.2` là capability release được hỗ trợ hiện tại.
 
 ### Bootstrap và install
 
@@ -101,7 +101,7 @@ bash -e -o pipefail -c '
 
 ## Context, routing, và preflight
 
-Trong fresh session, chạy `beroka-governance context "$PWD"` trước planning, implementation, hoặc external action. Chạy operation-specific preflight ngay trước mỗi external write. Unknown repository có thể source-only nhưng external routing write trả `ROUTING_REQUIRED`.
+Trong fresh session, chạy `beroka-governance context "$PWD"` trước planning, implementation, hoặc external action. Chạy lại context khi IDE workspace hoặc current Git repository thay đổi, task thêm repository khác, hoặc plan chuyển thành shared/full-stack; shared plan cần exact targets, context riêng cho từng target, và một primary tracking repository. Chạy operation-specific preflight ngay trước mỗi external write. Unknown repository có thể source-only nhưng external routing write trả `ROUTING_REQUIRED`.
 
 Active release tìm exact record trong Central repository catalog theo canonical origin. Repository-local metadata không override catalog. Catalog change là governance-repository task được authorize rõ ràng, không phải application repository task.
 

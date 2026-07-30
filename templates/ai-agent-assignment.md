@@ -11,6 +11,12 @@ agent. Repository-specific instructions and the linked issue take precedence.
 - Do not invent requirements, priority, ownership, dependencies, or labels.
 - Add issue/PR labels when the mapping is clear. If classification is confusing,
   ask the human/manager and wait for the decision.
+- Classify work as Frontend, Backend, or shared before planning. Shared work
+  requires exact targets, one primary tracking repository, and fresh governance
+  context for each target.
+- Every GitHub issue needs one primary human owner. An explicit assignee wins;
+  otherwise use the requesting developer when known, then the authenticated
+  human creator. Never default to a bot or service account.
 - If any requirement, scope, ownership, dependency, label, or documentation
   destination is confusing, ask the developer and wait instead of guessing.
 - Route Backend Jira items to project `BB` at
@@ -26,6 +32,9 @@ agent. Repository-specific instructions and the linked issue take precedence.
   `Task`, or `Bug` before any external write. Never parent a `Subtask` directly under an Epic.
   Create/read back the Epic first, then create the child with the returned Epic
   key as parent and leave Sprint unset unless requested.
+- A truly unrelated one-off or hotfix may be standalone only after explicit
+  confirmation. Record `Parent Epic: N/A`, standalone reason, reviewed Epic
+  candidates, owner, priority, and GitHub issue.
 - After the same-project duplicate check, scan the other Jira project for a
   real dependency or the same capability: BF creation scans BB and BB creation
   scans BF. Similar titles are candidates only; show evidence and wait for the
@@ -54,13 +63,10 @@ agent. Repository-specific instructions and the linked issue take precedence.
   Epic or a coordination item. Jira reassignment does not transfer an active
   Git branch; branch handoff remains required.
 - Route Backend GitHub Issues and Pull Requests to
-  https://github.com/hungnx77/Beroka_Backend. Route Frontend work to the
-  task-specific repository listed at
-  https://github.com/cuongngo1801-beroka?tab=repositories.
-- The Frontend URL is a repository list. If the task does not identify the exact
-  repository, ask the developer before creating an Issue or Pull Request. For
-  shared/cross-repository work, confirm one primary tracking repository instead
-  of duplicating the Issue.
+  https://github.com/cuongngo1801-beroka/Beroka_Backend and Frontend work to
+  https://github.com/cuongngo1801-beroka/Beroka_Frontend.
+- Unrelated repositories require an exact catalog record. For shared work,
+  confirm one primary tracking repository instead of duplicating the Issue.
 - Route Frontend documentation to
   https://beroka.atlassian.net/wiki/spaces/Berokafron and Backend documentation
   to https://beroka.atlassian.net/wiki/spaces/Berokaback/overview. Durable
@@ -278,9 +284,11 @@ DOCUMENTATION ROUTING
 - Cross-space access: <pass | CROSS_SPACE_ACCESS_REQUIRED | N/A>
 
 CLASSIFICATION
-- Required type label: <type:feature | type:bug | type:technical>
+- Repository owner: <organization | personal account>
+- Required type: <native Feature/Bug/Task | type:feature/type:bug/type:technical fallback>
 - Required area label(s): <area:frontend | area:backend | area:shared>
 - Required priority label: <priority:p0 | priority:p1 | priority:p2 | priority:p3>
+- Primary human owner: <explicit assignee | requesting developer | authenticated creator>
 - PR must copy these labels: yes
 
 ACCEPTANCE CRITERIA

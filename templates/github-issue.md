@@ -4,16 +4,24 @@
 
 - Choose exactly one variant: Feature, Bug, or Technical Task.
 - Each issue has one primary Jira item, owner, branch, and PR.
+- An explicit human assignee wins. Otherwise assign the requesting developer
+  when known, then the authenticated human creator. Never default to a bot or
+  service account; unresolved ownership blocks creation.
 - Complete Scope, Acceptance criteria, and Validation before accepting work.
-- Apply exactly one `type:*`, at least one `area:*`, and one `priority:*` label.
-- AI applies labels only when mapping is clear; otherwise ask the human/manager.
+- In an organization repository use native Issue Type `Feature`, `Bug`, or
+  `Task` without a duplicate `type:*` label. In a personal repository use
+  exactly one configured fallback `type:*` label.
+- Apply at least one `area:*` and exactly one `priority:*` label.
+- If fallback labels are missing, return `LABEL_CONFIGURATION_REQUIRED`; never
+  create labels silently. Ask the human/manager when mapping is unclear.
 - If FE consumes BE output, link the FE issue and Hub; FE never reconstructs
   the contract from multiple issue descriptions.
 
 ## Labels
 
 ```text
-Type:     type:feature | type:bug | type:technical
+Native organization type: Feature | Bug | Task
+Personal fallback type:   type:feature | type:bug | type:technical
 Area:     area:frontend | area:backend | area:shared
 Priority: priority:p0 | priority:p1 | priority:p2 | priority:p3
 State:    status:blocked (only while blocked)
@@ -81,7 +89,8 @@ content ID; never create a replacement because its title or FE consumer changed.
 
 ## Classification
 
-- Labels: type:feature, area:<frontend|backend|shared>, priority:<p0-p3>
+- Type: native Feature (organization) | type:feature (personal fallback)
+- Labels: area:<frontend|backend|shared>, priority:<p0-p3>
 - Primary owner:
 - Branch: feature/<issue-number>-<slug>
 - AI involvement: none | implement | assist | review | validate
@@ -170,7 +179,8 @@ As a <persona>, I want <capability> so that <value>.
 
 ## Classification
 
-- Labels: type:bug, area:<frontend|backend|shared>, priority:<p0-p3>
+- Type: native Bug (organization) | type:bug (personal fallback)
+- Labels: area:<frontend|backend|shared>, priority:<p0-p3>
 - Primary owner:
 - Branch: fix/<issue-number>-<slug>
 - AI involvement: none | diagnose | implement | assist | review | validate
@@ -269,7 +279,8 @@ As a <persona>, I want <capability> so that <value>.
 
 ## Classification
 
-- Labels: type:technical, area:<frontend|backend|shared>, priority:<p0-p3>
+- Type: native Task (organization) | type:technical (personal fallback)
+- Labels: area:<frontend|backend|shared>, priority:<p0-p3>
 - Primary owner:
 - Branch: <docs|refactor|test|chore|ci>/<issue-number>-<slug>
 - AI involvement: none | implement | assist | review | validate

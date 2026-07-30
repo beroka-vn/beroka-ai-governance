@@ -735,6 +735,37 @@ unknown_output=$($CLI context "$unknown_repo")
 assert_contains "$unknown_output" 'Routing: ROUTING_REQUIRED'
 assert_contains "$unknown_output" 'Dependency state: NO_DEPENDENCY_DECLARED'
 assert_contains "$unknown_output" 'Cross-repository policy: explicit-only'
+assert_not_contains "$unknown_output" '# BE/FE Work Items'
+
+backend_repo=$TEST_ROOT/backend-repo
+new_repo "$backend_repo"
+git -C "$backend_repo" remote add origin \
+  https://github.com/cuongngo1801-beroka/Beroka_Backend.git
+backend_output=$($CLI context "$backend_repo")
+assert_contains "$backend_output" \
+  'Repository: cuongngo1801-beroka/Beroka_Backend'
+assert_contains "$backend_output" 'Routing: ROUTING_ACTIVE'
+assert_contains "$backend_output" 'Profile: backend'
+assert_contains "$backend_output" 'Jira project: BB'
+assert_contains "$backend_output" 'Jira board: 34'
+assert_contains "$backend_output" 'Confluence space: Berokaback'
+assert_contains "$backend_output" 'Confluence root content: 65962274'
+assert_contains "$backend_output" '# BE/FE Work Items'
+
+frontend_repo=$TEST_ROOT/frontend-repo
+new_repo "$frontend_repo"
+git -C "$frontend_repo" remote add origin \
+  https://github.com/cuongngo1801-beroka/Beroka_Frontend.git
+frontend_output=$($CLI context "$frontend_repo")
+assert_contains "$frontend_output" \
+  'Repository: cuongngo1801-beroka/Beroka_Frontend'
+assert_contains "$frontend_output" 'Routing: ROUTING_ACTIVE'
+assert_contains "$frontend_output" 'Profile: frontend'
+assert_contains "$frontend_output" 'Jira project: BF'
+assert_contains "$frontend_output" 'Jira board: 35'
+assert_contains "$frontend_output" 'Confluence space: Berokafron'
+assert_contains "$frontend_output" 'Confluence root content: 65831203'
+assert_contains "$frontend_output" '# BE/FE Work Items'
 
 git -C "$consumer" remote set-url upstream \
   git@github.com-work:beroka-vn/routing-consumer.git
@@ -1954,8 +1985,8 @@ grep -F 'beroka-governance preflight' "$ROOT/README.md" >/dev/null ||
 grep -F 'CONNECTOR_CAPABILITY_REQUIRED' "$ROOT/handbook.md" >/dev/null ||
   fail 'handbook does not document capability remediation'
 
-[ "$(sed -n '1p' "$ROOT/VERSION")" = v1.0.1 ] ||
-  fix_wave_fail 'root VERSION does not select v1.0.1'
+[ "$(sed -n '1p' "$ROOT/VERSION")" = v1.0.2 ] ||
+  fix_wave_fail 'root VERSION does not select v1.0.2'
 grep -F -- 'gh release download' "$ROOT/README.md" >/dev/null ||
   fix_wave_fail 'README does not select the authenticated release launcher'
 

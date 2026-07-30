@@ -45,6 +45,10 @@ scope, acceptance criteria, repository, or validation already recorded.
 ## Ownership and concurrency
 
 - One issue has one primary owner, one branch, and one PR.
+- An explicit human assignee wins. Otherwise assign the requesting developer
+  when their GitHub identity is known, then the authenticated human creator.
+  Never default ownership to a bot or service account; unresolved ownership
+  blocks creation.
 - One branch has one primary writer at a time.
 - Another contributor or agent becomes writer only after explicit handoff.
 - A reviewer does not edit the branch unless the owner asks; edits invalidate
@@ -62,7 +66,9 @@ scope, acceptance criteria, repository, or validation already recorded.
 - [ ] Dependencies and expected inputs/outputs.
 - [ ] Pass/fail acceptance criteria.
 - [ ] Appropriate automated and manual validation plan.
-- [ ] Exactly one `type:*`, at least one `area:*`, and exactly one `priority:*` label.
+- [ ] Native Issue Type for an organization repository, or exactly one
+      configured `type:*` fallback for a personal repository.
+- [ ] At least one `area:*` and exactly one `priority:*` label.
 - [ ] Branch name.
 - [ ] AI allowed actions, approval-required actions, and stop conditions.
 - [ ] For executable Jira work, the assignee is the requesting developer.
@@ -220,16 +226,22 @@ Human authorization must name PR, full reviewed SHA, agent, allowed action,
 merge method, conditions, authorizer, and timestamp. Otherwise AI may only
 review/comment.
 
-## Label governance
+## Issue classification governance
 
-- Type: exactly one of `type:feature`, `type:bug`, `type:technical`.
+- Organization repository type: native Issue Type `Feature`, `Bug`, or `Task`;
+  do not duplicate it with a `type:*` label.
+- Personal repository type: exactly one configured fallback label:
+  `type:feature`, `type:bug`, or `type:technical`.
 - Area: at least one of `area:frontend`, `area:backend`, `area:shared`.
 - Priority: exactly one of `priority:p0`, `priority:p1`, `priority:p2`, `priority:p3`.
 - Exception: `status:blocked` only while genuinely blocked.
 
-Read Jira, objective, and owned scope before labeling. If more than one mapping
-is plausible, show candidate values and evidence and ask the human/manager.
-Never guess or create labels that duplicate native Issue/PR states.
+Read repository ownership, Jira, objective, and owned scope before
+classification. If required fallback labels are missing, return
+`LABEL_CONFIGURATION_REQUIRED`; never create them silently. If more than one
+mapping is plausible, show candidate values and evidence and ask the
+human/manager. Read back owner, type, area, priority, and Jira linkage before
+reporting success.
 
 ## Jira routing and creation clarification
 
@@ -249,6 +261,9 @@ Never guess or create labels that duplicate native Issue/PR states.
 - Before creating a new Epic, show similar active Epics and require one initial
   `Feature`, `Story`, `Task`, or `Bug`. Never parent a `Subtask` directly under
   an Epic.
+- A truly unrelated one-off or hotfix may be standalone only after explicit
+  developer confirmation. Record `Parent Epic: N/A`, the standalone reason,
+  reviewed active Epic candidates, owner, priority, and GitHub issue.
 - A valid active key or one exact unique summary does not need redundant
   confirmation.
 - If Jira cannot be read, report access failure; never invent an Epic list from
@@ -331,11 +346,12 @@ Jira reassignment does not transfer a branch owned by another writer.
 
 ## GitHub repository routing
 
-- Backend Issues/PRs: [hungnx77/Beroka_Backend](https://github.com/hungnx77/Beroka_Backend).
-- Frontend Issues/PRs: the exact task-specific repository in
-  [cuongngo1801-beroka](https://github.com/cuongngo1801-beroka?tab=repositories).
-- The Frontend URL is only a repository list. If no exact repository is given,
-  ask before creating an Issue/PR.
+- Backend Issues/PRs:
+  [cuongngo1801-beroka/Beroka_Backend](https://github.com/cuongngo1801-beroka/Beroka_Backend).
+- Frontend Issues/PRs:
+  [cuongngo1801-beroka/Beroka_Frontend](https://github.com/cuongngo1801-beroka/Beroka_Frontend).
+- Unrelated repositories are outside this boundary and require an exact
+  catalog record; never infer one from the current workspace.
 - Shared work uses one confirmed primary tracking repository; never duplicate
   the same issue across repositories.
 

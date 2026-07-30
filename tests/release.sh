@@ -39,30 +39,36 @@ reject_text() {
   fi
 }
 
-[ "$(cat "$ROOT/VERSION")" = v1.0.1 ] ||
-  fail 'VERSION is not v1.0.1'
+[ "$(cat "$ROOT/VERSION")" = v1.0.2 ] ||
+  fail 'VERSION is not v1.0.2'
 
-require_text README.md '`v1.0.1` is the current supported capability release.'
+require_text README.md '`v1.0.2` is the current supported capability release.'
 reject_text README.md '`v1.0.0` is the current supported capability release.'
-reject_text README.md '`v1.0.0` and `v1.0.1`'
+reject_text README.md '`v1.0.1` is the current supported capability release.'
 require_text handbook.md \
-  '`v1.0.1` là capability release được hỗ trợ hiện tại.'
+  '`v1.0.2` là capability release được hỗ trợ hiện tại.'
 reject_text handbook.md \
   '`v1.0.0` là capability release được hỗ trợ hiện tại.'
-reject_text handbook.md '`v1.0.0` và `v1.0.1`'
+reject_text handbook.md '`v1.0.1` là capability release được hỗ trợ hiện tại.'
 require_text PACKAGE-DESIGN.md \
-  '`v1.0.1` is the current supported capability release.'
+  '`v1.0.2` is the current supported capability release.'
 reject_text PACKAGE-DESIGN.md \
   '`v1.0.0` is the current supported capability release.'
-reject_text PACKAGE-DESIGN.md '`v1.0.0` and `v1.0.1`'
+reject_text PACKAGE-DESIGN.md \
+  '`v1.0.1` is the current supported capability release.'
 require_text README.md \
   'Bootstrap installs a missing Cursor Agent after one confirmation.'
 require_text README.md \
-  'gh release download v1.0.1 --repo beroka-vn/beroka-ai-governance'
+  'gh release download v1.0.2 --repo beroka-vn/beroka-ai-governance'
 require_text handbook.md \
   'Bootstrap tự cài Cursor Agent còn thiếu sau một lần xác nhận.'
 require_text PACKAGE-DESIGN.md 'Cursor MCP commands run from `/`'
 require_text README.md 'Backend and Frontend repositories'
+require_text README.md 'cuongngo1801-beroka/Beroka_Backend'
+require_text README.md 'cuongngo1801-beroka/Beroka_Frontend'
+require_text README.md 'workspace or current Git repository changes'
+require_text handbook.md 'cuongngo1801-beroka/Beroka_Backend'
+reject_text handbook.md 'hungnx77/Beroka_Backend'
 require_text handbook.md 'Chuyển quyết định cho developer'
 require_text README.md 'gh release download'
 require_text README.md 'one client on each execution environment'

@@ -53,6 +53,9 @@ one question. Do not request information already present in linked records.
 - Before a new Epic, show same-project duplicate candidates and require at least
   one initial `Feature`, `Story`, `Task`, or `Bug`. Never create a direct
   `Subtask` under an Epic.
+- A truly unrelated one-off or hotfix may be standalone only after explicit
+  confirmation. Record `Parent Epic: N/A`, the standalone reason, reviewed
+  Epic candidates, owner, priority, and GitHub issue.
 - For a new BF Epic, scan active BB Epics after the BF duplicate check. For a
   new BB Epic, scan BF the same way. Candidates require developer confirmation;
   fuzzy titles never authorize rename or links.
@@ -84,16 +87,19 @@ the BF backlog after explicit confirmation as `Pending` with owner, but returns
 
 ### Step 2 — Decompose into GitHub Issues
 
-- Backend: [hungnx77/Beroka_Backend](https://github.com/hungnx77/Beroka_Backend).
-- Frontend: exact task-specific repository under
-  [cuongngo1801-beroka](https://github.com/cuongngo1801-beroka?tab=repositories).
-  Ask if no exact repository is known.
+- Backend:
+  [cuongngo1801-beroka/Beroka_Backend](https://github.com/cuongngo1801-beroka/Beroka_Backend).
+- Frontend:
+  [cuongngo1801-beroka/Beroka_Frontend](https://github.com/cuongngo1801-beroka/Beroka_Frontend).
+- Unrelated repositories require an exact catalog record.
 - Shared work uses one confirmed primary tracking repository.
 
 Use [GitHub Issue Templates](templates/github-issue.md). Every issue links one
 primary Jira item; states objective, scope, unchanged behavior, dependencies,
 acceptance criteria, validation, owner, labels, AI authority, and stop
 conditions. Keep independently deployable FE and BE work in separate issues.
+An explicit assignee wins; otherwise use the requesting developer, then the
+authenticated human creator. Unresolved human ownership blocks creation.
 
 For an outcome requiring both teams:
 
@@ -112,15 +118,20 @@ Duplicate Registry rows, one ID assigned to different capabilities, or
 conflicting links are `MAPPING_CONFLICT` and block the dependent scope. Never
 use a shared GitHub Issue or duplicate Hub to bypass cross-project handoff.
 
-### Step 3 — Apply labels and Definition of Ready
+### Step 3 — Apply classification and Definition of Ready
 
-- Exactly one `type:feature`, `type:bug`, or `type:technical`.
+- Organization repositories use native Issue Type `Feature`, `Bug`, or `Task`
+  without a duplicate `type:*` label.
+- Personal repositories use exactly one configured fallback:
+  `type:feature`, `type:bug`, or `type:technical`.
 - At least one `area:frontend`, `area:backend`, or `area:shared`.
 - Exactly one `priority:p0`, `priority:p1`, `priority:p2`, or `priority:p3`.
 - `status:blocked` only while actually blocked.
 
-Apply labels automatically only when evidence has one clear mapping. Ask when
-scope, priority, or type is ambiguous. Check
+Apply classification only when evidence has one clear mapping. Missing
+fallback labels return `LABEL_CONFIGURATION_REQUIRED`; do not create them
+silently. Ask when scope, priority, or type is ambiguous. Read back owner,
+type, area, priority, and Jira link, then check
 [Definition of Ready](governance.md#definition-of-ready). FE dependent scope is
 Ready only after `READY_FOR_FE`, an exact contract version, and FE
 `ACKNOWLEDGED`. Independent FE scope may continue.
