@@ -58,11 +58,11 @@ authorizes a separate cleanup. The new CLI ignores them for release selection
 and routing. `v1.0.3` is the current supported capability release. Every
 published tag is immutable.
 
-### Upgrade hotfix
+### v1.0.3 upgrade
 
 Bootstrap installs a missing Cursor Agent after one confirmation. Developers
-upgrading from `v1.0.0` or `v1.0.1` run this once; installation and Atlassian
-connector setup continue in the same process:
+upgrading from `v1.0.0`, `v1.0.1`, or `v1.0.2` run this once; installation and
+Atlassian connector setup continue in the same process:
 
 ```bash
 bash -e -o pipefail -c 'gh release download v1.0.3 --repo beroka-vn/beroka-ai-governance --pattern bootstrap.sh --output - | sh -s -- --client cursor --upgrade'

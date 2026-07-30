@@ -57,7 +57,7 @@ bash -e -o pipefail -c '
 
 `gh auth setup-git --hostname github.com` dùng lại client-owned GitHub OAuth cho private HTTPS clone. Thay `codex` bằng `claude` hoặc `cursor`; mỗi run chỉ enroll đúng client đã chọn và giữ nguyên healthy setup của các client khác.
 
-Bootstrap có thể hỏi cài `jq` hoặc `curl` bằng `apt-get`, `dnf`, hoặc `brew`. Từ chối trả `DEPENDENCY_MISSING`. Bootstrap tự cài Cursor Agent còn thiếu sau một lần xác nhận. Developer đang ở `v1.0.0` hoặc `v1.0.1` dùng đúng một lệnh trong [Upgrade hotfix](README.md#upgrade-hotfix). Atlassian OAuth vẫn do client đã chọn sở hữu. Thiếu OAuth trả remediation của client đó; `AUTH_PENDING` không làm mất user setup.
+Bootstrap có thể hỏi cài `jq` hoặc `curl` bằng `apt-get`, `dnf`, hoặc `brew`. Từ chối trả `DEPENDENCY_MISSING`. Bootstrap tự cài Cursor Agent còn thiếu sau một lần xác nhận. Developer đang ở `v1.0.0`, `v1.0.1`, hoặc `v1.0.2` dùng đúng một lệnh trong [v1.0.3 upgrade](README.md#v103-upgrade). Atlassian OAuth vẫn do client đã chọn sở hữu. Thiếu OAuth trả remediation của client đó; `AUTH_PENDING` không làm mất user setup.
 
 Cursor Individual không có supported CLI để ghi User Rules. Với `cursor`, copy User Rule được in ra vào **Cursor Settings > Rules** một lần, rồi xác nhận khi bootstrap hỏi. Non-interactive thiếu xác nhận trả `CURSOR_USER_RULE_REQUIRED`; Doctor báo `USER_CONFIRMED`, không phải runtime verification.
 

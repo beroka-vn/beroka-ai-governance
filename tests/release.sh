@@ -64,7 +64,8 @@ require_text README.md \
   'Bootstrap installs a missing Cursor Agent after one confirmation.'
 require_text README.md \
   'gh release download v1.0.3 --repo beroka-vn/beroka-ai-governance'
-require_text README.md 'upgrading from `v1.0.0` or `v1.0.1` run this once'
+require_text README.md \
+  'upgrading from `v1.0.0`, `v1.0.1`, or `v1.0.2` run this once'
 require_text handbook.md \
   'Bootstrap tự cài Cursor Agent còn thiếu sau một lần xác nhận.'
 require_text PACKAGE-DESIGN.md 'Cursor MCP commands run from `/`'
