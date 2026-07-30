@@ -1183,7 +1183,14 @@ printf 'cursor-agent %s | %s\n' "$*" "$PWD" >>"$CALLS"
 case "$*" in
   'mcp login --help') exit 0 ;;
   'mcp login atlassian')
-    printf '%s\n' healthy >"$XDG_CONFIG_HOME/fake-cursor-health"
+    printf '%s\n' \
+      'OAuth URL: https://auth.example.test/cursor-first-run'
+    case "$(sed -n '1p' \
+      "$XDG_CONFIG_HOME/fake-cursor-health" 2>/dev/null || :)" in
+      login-failed) exit 1 ;;
+      post-login-unknown) ;;
+      *) printf '%s\n' healthy >"$XDG_CONFIG_HOME/fake-cursor-health" ;;
+    esac
     ;;
   'mcp list')
     if [ "$PWD" = "$HOME" ]; then
@@ -1196,6 +1203,7 @@ case "$*" in
       ready-tools-failed) printf '%s\n' 'atlassian: Ready' ;;
       auth-required|'') printf '%s\n' 'atlassian: Authentication required' ;;
       failed) printf '%s\n' 'atlassian: Failed' ;;
+      first-run-unknown|post-login-unknown) ;;
     esac
     ;;
   'mcp list-tools atlassian')
@@ -1218,18 +1226,103 @@ esac
 EOF
 chmod 755 "$FAKE_BIN/cursor-agent"
 mkdir -p "$HOME/.cursor"
-printf '%s\n' '{"other":{"preserved":true}}' >"$HOME/.cursor/mcp.json"
+global_cursor_file=$HOME/.cursor/mcp.json
+printf '%s\n' '{"other":{"preserved":true}}' >"$global_cursor_file"
+global_before=$(cat "$global_cursor_file")
 : >"$CALLS"
 
-if output=$($CLI setup-connectors --client cursor --non-interactive 2>&1); then
-  fail 'non-interactive Cursor setup accepted missing authentication'
+if output=$($CLI setup-connectors --client cursor \
+  --non-interactive 2>&1)
+then
+  fail 'non-interactive Cursor first-run passed without global MCP'
 fi
-assert_contains "$output" 'Remediation: cursor-agent mcp login atlassian'
-jq -e '.other.preserved == true' "$HOME/.cursor/mcp.json" >/dev/null ||
-  fail 'Cursor setup discarded existing JSON'
+assert_contains "$output" \
+  'Remediation: beroka-governance setup-connectors --client cursor'
+[ "$(cat "$global_cursor_file")" = "$global_before" ] ||
+  fail 'non-interactive Cursor first-run changed global MCP'
+assert_not_contains "$(cat "$CALLS")" 'mcp login atlassian'
+
+CURSOR_PROJECT=$TEST_ROOT/cursor-project
+mkdir -p "$CURSOR_PROJECT/.cursor"
+git init -q "$CURSOR_PROJECT"
+project_cursor_file=$CURSOR_PROJECT/.cursor/mcp.json
+printf '%s\n' \
+  '{"mcpServers":{"atlassian":{"url":"https://mcp.atlassian.com/v1/mcp/authv2"}}}' \
+  >"$project_cursor_file"
+project_before=$(cat "$project_cursor_file")
+: >"$CALLS"
+if output=$(cd "$CURSOR_PROJECT" &&
+  $CLI setup-connectors --client cursor --non-interactive 2>&1)
+then
+  fail 'project Cursor MCP passed without a global MCP'
+fi
+assert_contains "$output" 'Project MCP: PRESENT_IGNORED'
+[ "$(cat "$project_cursor_file")" = "$project_before" ] ||
+  fail 'Cursor setup changed project MCP'
+[ "$(cat "$global_cursor_file")" = "$global_before" ] ||
+  fail 'project MCP caused a global write'
+
+printf '%s\n' first-run-unknown >"$XDG_CONFIG_HOME/fake-cursor-health"
+: >"$CALLS"
+output=$(printf 'y\n' |
+  script -qec "$CLI setup-connectors --client cursor" /dev/null 2>&1)
+assert_contains "$output" \
+  'Install global Atlassian MCP and start OAuth now? [y/N]'
+assert_contains "$output" \
+  'OAuth URL: https://auth.example.test/cursor-first-run'
+assert_contains "$output" 'Result: PASS'
+jq -e '.other.preserved == true' "$global_cursor_file" >/dev/null ||
+  fail 'Cursor first-run discarded unrelated global JSON'
 jq -e --arg url 'https://mcp.atlassian.com/v1/mcp/authv2' \
-  '.mcpServers.atlassian.url == $url' "$HOME/.cursor/mcp.json" >/dev/null ||
-  fail 'Cursor setup did not add Atlassian MCP'
+  '.mcpServers.atlassian.url == $url' "$global_cursor_file" >/dev/null ||
+  fail 'Cursor first-run omitted the global Atlassian MCP'
+login_line=$(nl -ba "$CALLS" |
+  awk '/cursor-agent mcp login atlassian/{print $1; exit}')
+list_line=$(nl -ba "$CALLS" |
+  awk '/cursor-agent mcp list( \||$)/{print $1; exit}')
+[ -n "$login_line" ] && [ -n "$list_line" ] &&
+  [ "$login_line" -lt "$list_line" ] ||
+  fail 'Cursor first-run checked health before OAuth'
+
+printf '%s\n' '{"other":{"preserved":true}}' >"$global_cursor_file"
+printf '%s\n' first-run-unknown >"$XDG_CONFIG_HOME/fake-cursor-health"
+if decline_output=$(printf 'n\n' |
+  script -qec "$CLI setup-connectors --client cursor" /dev/null 2>&1)
+then
+  fail 'Cursor first-run accepted declined global MCP installation'
+fi
+assert_contains "$decline_output" 'Result: ATLASSIAN_AUTH_REQUIRED'
+
+printf '%s\n' '{invalid JSON' >"$global_cursor_file"
+if invalid_output=$($CLI setup-connectors --client cursor --non-interactive 2>&1)
+then
+  fail 'Cursor first-run accepted invalid global JSON'
+fi
+assert_contains "$invalid_output" 'Result: GOVERNANCE_NOT_READY'
+
+printf '%s\n' '{"other":{"preserved":true}}' >"$global_cursor_file"
+printf '%s\n' login-failed >"$XDG_CONFIG_HOME/fake-cursor-health"
+if login_failed_output=$(printf 'y\n' |
+  script -qec "$CLI setup-connectors --client cursor" /dev/null 2>&1)
+then
+  fail 'Cursor first-run accepted failed OAuth login'
+fi
+assert_contains "$login_failed_output" 'Result: AUTH_PENDING'
+
+printf '%s\n' '{"other":{"preserved":true}}' >"$global_cursor_file"
+printf '%s\n' post-login-unknown >"$XDG_CONFIG_HOME/fake-cursor-health"
+if post_login_output=$(printf 'y\n' |
+  script -qec "$CLI setup-connectors --client cursor" /dev/null 2>&1)
+then
+  fail 'Cursor first-run accepted unknown post-login health'
+fi
+assert_contains "$post_login_output" \
+  'Result: CONNECTOR_HEALTH_UNAVAILABLE'
+
+printf '%s\n' \
+  '{"mcpServers":{"atlassian":{"url":"https://mcp.atlassian.com/v1/mcp/authv2"}}}' \
+  >"$global_cursor_file"
+
 assert_not_contains "$(cat "$CALLS")" 'claude '
 assert_not_contains "$(cat "$CALLS")" 'codex '
 
@@ -1249,12 +1342,12 @@ then
 fi
 
 printf '%s\n' '{"mcpServers":{"atlassian":{"url":"https://example.invalid/mcp"}}}' \
-  >"$HOME/.cursor/mcp.json"
+  >"$global_cursor_file"
 if output=$($CLI setup-connectors --client cursor --non-interactive 2>&1); then
   fail 'Cursor setup overwrote a conflicting connector'
 fi
 assert_contains "$output" 'Result: CONNECTOR_MISSING'
-assert_contains "$(cat "$HOME/.cursor/mcp.json")" 'https://example.invalid/mcp'
+assert_contains "$(cat "$global_cursor_file")" 'https://example.invalid/mcp'
 
 rm -f "$XDG_CONFIG_HOME/fake-codex-configured"
 printf '%s\n' auth-required >"$XDG_CONFIG_HOME/fake-codex-health"

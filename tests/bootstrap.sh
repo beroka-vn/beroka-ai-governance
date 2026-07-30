@@ -713,6 +713,10 @@ printf '%s\n' codex,claude,cursor \
   >"$XDG_CONFIG_HOME/beroka-ai-governance/clients"
 printf '%s\n' "$cursor_hash" \
   >"$XDG_CONFIG_HOME/beroka-ai-governance/cursor-user-rule.sha256"
+mkdir -p "$HOME/.cursor"
+printf '%s\n' \
+  '{"mcpServers":{"atlassian":{"url":"https://mcp.atlassian.com/v1/mcp/authv2"}}}' \
+  >"$HOME/.cursor/mcp.json"
 output=$(cd "$cursor_sha1_cwd" &&
   $CLI bootstrap --client cursor --version v1.1.0 --non-interactive)
 assert_contains "$output" 'Instruction: USER_CONFIRMED'
