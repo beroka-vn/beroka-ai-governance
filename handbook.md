@@ -66,7 +66,14 @@ chọn role ở non-interactive mode trả `GITHUB_ROLE_SELECTION_REQUIRED`.
 Preflight hợp lệ xác minh lại membership và trả `ROLE_SCOPE_DENIED` nếu role
 không cho phép profile của repository.
 
-Cursor Individual không có supported CLI để ghi User Rules. Với `cursor`, copy User Rule được in ra vào **Cursor Settings > Rules** một lần, rồi xác nhận khi bootstrap hỏi. Non-interactive thiếu xác nhận trả `CURSOR_USER_RULE_REQUIRED`; Doctor báo `USER_CONFIRMED`, không phải runtime verification.
+Cursor Individual không có supported CLI để ghi User Rules. Với `cursor`, copy
+User Rule được in ra vào **Cursor Settings > Rules** một lần, rồi xác nhận khi
+bootstrap hỏi. Bootstrap also atomically installs documented global local hooks
+and preserves personal hooks. Doctor reports `Instruction: USER_CONFIRMED`,
+`Runtime hook: INSTALLED`, and `Runtime enforcement: PASS`. Technical artifacts
+default to English across clients; chat language does not select artifact
+language. Use another language only with `Work-item language: <language>` for
+the current generation.
 
 ### Upgrade
 
@@ -151,6 +158,7 @@ sh tests/documentation-architecture.sh
 sh tests/release.sh
 sh tests/bootstrap.sh
 sh tests/connectors.sh
+sh tests/cursor-hooks.sh
 ```
 
 Release gate cũng cần evidence fresh sessions cho Codex, Claude Code, và Cursor trên supported environments. Việc publish catalog/release là central governance-repository work và cần authorization riêng.

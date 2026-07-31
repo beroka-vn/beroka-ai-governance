@@ -15,3 +15,5 @@ rely on governance details preserved only in conversation history.
 
 Repository-specific instructions may narrow central governance. They must not
 broaden authority or bypass a central stop condition.
+
+Technical artifacts default to English; chat language does not select artifact language. Use another language only when the user explicitly supplies `Work-item language: <language>` for the current generation. Governed Jira and GitHub writes must use the configured MCP tools and never direct `gh` write commands.

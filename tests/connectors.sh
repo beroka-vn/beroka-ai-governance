@@ -1544,6 +1544,16 @@ cp "$RELEASE_DIR/templates/agent-entrypoints/AGENTS.md" \
 git --git-dir=/dev/null hash-object --no-filters \
   "$RELEASE_DIR/templates/agent-entrypoints/CURSOR-USER-RULE.txt" \
   >"$XDG_CONFIG_HOME/beroka-ai-governance/cursor-user-rule.sha256"
+cp "$CLI" "$BEROKA_GOV_BIN_DIR/beroka-governance"
+chmod 755 "$BEROKA_GOV_BIN_DIR/beroka-governance"
+jq -nc --arg cli "$BEROKA_GOV_BIN_DIR/beroka-governance" '
+  {hooks:{
+    sessionStart:[{command:($cli + " cursor-hook sessionStart")}],
+    beforeSubmitPrompt:[{command:($cli + " cursor-hook beforeSubmitPrompt")}],
+    preCompact:[{command:($cli + " cursor-hook preCompact")}],
+    beforeMCPExecution:[{command:($cli + " cursor-hook beforeMCPExecution"),failClosed:true}],
+    beforeShellExecution:[{command:($cli + " cursor-hook beforeShellExecution"),failClosed:true}]
+  }}' >"$HOME/.cursor/hooks.json"
 
 git -C "$CONSUMER" init -q
 git -C "$CONSUMER" config user.name 'Beroka Test'
