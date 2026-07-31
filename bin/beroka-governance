@@ -1587,6 +1587,10 @@ configure_github_role() {
             'Choose FE, BE, or Full-stack in an interactive bootstrap'
         printf 'Select GitHub role [FE/BE/Full-stack]: '
         IFS= read -r cgr_answer || cgr_answer=
+        cgr_answer=$(
+          printf '%s\n' "$cgr_answer" |
+            sed 's/^[[:space:]]*//;s/[[:space:]]*$//'
+        )
         case "$cgr_answer" in
           FE|fe) cgr_selected=FE ;;
           BE|be) cgr_selected=BE ;;

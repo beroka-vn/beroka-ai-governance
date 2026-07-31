@@ -395,12 +395,40 @@ then
 fi
 assert_contains "$output" 'Result: GITHUB_ROLE_SELECTION_REQUIRED'
 
-output=$(printf 'Full-stack\n' | script -qec \
-  "$CLI bootstrap $repo --client codex --version v1.1.0" \
-  /dev/null 2>&1)
-assert_contains "$output" 'GitHub role: FULL_STACK'
-[ "$(cat "$role_file")" = FULL_STACK ] ||
-  fail 'dual membership did not store the explicit Full-stack choice'
+role_tab=$(printf '\t')
+for role_case in \
+  '  Full-stack  |FULL_STACK' \
+  "${role_tab}Full-stack${role_tab}|FULL_STACK" \
+  'FE|FE' 'fe|FE' \
+  'BE|BE' 'be|BE' \
+  'Full-stack|FULL_STACK' 'full-stack|FULL_STACK' 'FULL_STACK|FULL_STACK'
+do
+  role_input=${role_case%%|*}
+  expected_role=${role_case#*|}
+  rm -f "$role_file"
+  if ! output=$(printf '%s\n' "$role_input" | script -qec \
+    "$CLI bootstrap $repo --client codex --version v1.1.0" \
+    /dev/null 2>&1)
+  then
+    fail "interactive [$role_input] was rejected"
+  fi
+  assert_contains "$output" "GitHub role: $expected_role"
+  [ "$(cat "$role_file")" = "$expected_role" ] ||
+    fail "interactive [$role_input] stored the wrong GitHub role"
+done
+
+for role_input in '' '   ' "$role_tab" unknown 'Full stack'; do
+  rm -f "$role_file"
+  if output=$(printf '%s\n' "$role_input" | script -qec \
+    "$CLI bootstrap $repo --client codex --version v1.1.0" \
+    /dev/null 2>&1)
+  then
+    fail "interactive [$role_input] bypassed role validation"
+  fi
+  assert_contains "$output" 'Result: GITHUB_ROLE_SELECTION_REQUIRED'
+  [ ! -e "$role_file" ] ||
+    fail "invalid interactive [$role_input] stored a GitHub role"
+done
 
 printf '%s\n' FE >"$role_file"
 output=$($CLI bootstrap "$repo" --client codex \
