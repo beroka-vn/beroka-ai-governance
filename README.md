@@ -40,13 +40,35 @@ enforcement: PASS`.
 Run setup for one client on each execution environment, then repeat it only
 when you want to enroll another client there.
 
-Bootstrap runs `setup-connectors` for the selected client. If authentication
-is still pending, rerun
-`beroka-governance setup-connectors --client codex`; interactive login streams
-provider OAuth output directly, while `--non-interactive` returns the exact
-client-owned remediation without opening a browser.
+Bootstrap runs `setup-connectors` for the selected client. Once Atlassian
+authentication is known to be missing, expired, or invalid, interactive
+setup, bootstrap, and preflight start the selected producer's
+re-authentication immediately and wait for it to finish:
 
-On an interactive Cursor first-run, `setup-connectors` asks `Install global Atlassian MCP and start OAuth now?`. After confirmation, it writes only the global entry, streams OAuth, then health-checks. Non-interactive Cursor first-run does not write global MCP configuration or start OAuth; it returns the interactive resume command.
+```text
+Codex:  codex mcp login atlassian
+Claude: claude mcp login atlassian --no-browser
+Cursor: cursor-agent mcp login atlassian
+```
+
+Interactive authentication treats producer output as opaque and passes
+provider OAuth output directly to the terminal so the user receives its
+one-time login URL.
+
+Claude checks `claude mcp login --help` for `--no-browser` only at this OAuth
+boundary. Without it, governance returns `DEPENDENCY_MISSING` with
+`Remediation: claude update`. Non-interactive setup, bootstrap, and preflight
+and all Doctor paths never invoke login; Cursor hooks retain non-interactive
+preflight. Interactive Cursor first-run still asks
+`Install global Atlassian MCP and start OAuth now?` before writing the global
+MCP configuration, then starts OAuth without another confirmation.
+
+An active agent receiving `ATLASSIAN_AUTH_REQUIRED` stops the dependent write,
+runs the selected command in an interactive terminal, streams producer output
+so the user receives the one-time login URL, and waits for completion. It
+never synthesizes, parses, persists, or copies that URL or credentials into an
+issue, commit, or durable log. It then runs a fresh operation-specific
+preflight and continues only on `Result: PASS`.
 
 The launcher verifies its embedded annotated tag and commit before it executes
 package code. It installs the active release and selected-client adapter in

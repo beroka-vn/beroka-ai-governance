@@ -110,6 +110,8 @@ case "$*" in
     printf '%s\n' '{"name":"atlassian","url":"https://mcp.atlassian.com/v1/mcp/authv2"}'
     ;;
   'mcp login atlassian')
+    printf '%s\n' \
+      'OAuth URL: https://auth.example.test/authorize?state=one-time'
     printf '%s\n' "${FAKE_CODEX_OAUTH_HEALTH:-healthy-all}" \
       >"$XDG_CONFIG_HOME/fake-codex-health"
     ;;
@@ -424,6 +426,16 @@ case "$*" in
               '{"method":"mcpServer/startupStatus/updated","params":{"name":"atlassian","failureReason":"reauthenticationRequired"}}' \
               '{"id":1,"result":{"data":[{"name":"atlassian","tools":{},"authStatus":"oAuth"}]}}'
             ;;
+          refresh-token-invalid)
+            printf '%s\n' \
+              '2026-07-31T03:04:05.000Z ERROR codex_rmcp_client::oauth::refresh_transaction: error=failed to refresh OAuth tokens for server atlassian: OAuth token refresh failed: Server returned error response: unauthorized_client: refresh_token is invalid' \
+              '{"id":1,"result":{"data":[{"name":"atlassian","tools":{},"authStatus":"oAuth"}]}}'
+            ;;
+          refresh-token-invalid-other-server)
+            printf '%s\n' \
+              '2026-07-31T03:04:05.000Z ERROR codex_rmcp_client::oauth::refresh_transaction: error=failed to refresh OAuth tokens for server github: OAuth token refresh failed: Server returned error response: unauthorized_client: refresh_token is invalid' \
+              '{"id":1,"result":{"data":[{"name":"atlassian","tools":{},"authStatus":"oAuth"}]}}'
+            ;;
           auth-401) printf '%s\n' 'server atlassian: 401 Unauthorized' ;;
           auth-403) printf '%s\n' 'server atlassian: 403 Forbidden' ;;
           *) exit 1 ;;
@@ -461,6 +473,16 @@ case "$*" in
     printf '%s (Claude Code)\n' "${FAKE_CLAUDE_VERSION:-1.2.3}"
     ;;
   'mcp add --help'|'mcp get --help'|'mcp list --help') ;;
+  'mcp login --help')
+    [ "${FAKE_CLAUDE_NO_BROWSER:-1}" -eq 1 ] &&
+      printf '%s\n' 'Usage: claude mcp login [options] <name>' \
+        '  --no-browser  Print the authentication URL'
+    ;;
+  'mcp login atlassian --no-browser')
+    printf '%s\n' \
+      'OAuth URL: https://auth.example.test/claude-one-time'
+    printf '%s\n' healthy >"$XDG_CONFIG_HOME/fake-claude-health"
+    ;;
   'mcp get atlassian')
     [ -f "$XDG_CONFIG_HOME/fake-claude-configured" ] || exit 1
     printf '%s\n' \
@@ -1677,6 +1699,31 @@ assert_contains "$output" 'Remediation: codex mcp login atlassian'
 assert_contains "$output" 'Result: ATLASSIAN_AUTH_REQUIRED'
 assert_not_contains "$(cat "$CALLS")" 'codex mcp login atlassian'
 
+printf '%s\n' refresh-token-invalid \
+  >"$XDG_CONFIG_HOME/fake-codex-health"
+: >"$CALLS"
+if output=$($CLI preflight "$consumer" \
+  --client codex --operation jira-write --non-interactive 2>&1)
+then
+  fail 'Codex refresh-token failure passed Jira preflight'
+fi
+assert_contains "$output" 'Remediation: codex mcp login atlassian'
+assert_contains "$output" 'Result: ATLASSIAN_AUTH_REQUIRED'
+assert_not_contains "$output" 'CONNECTOR_CAPABILITY_REQUIRED'
+assert_not_contains "$(cat "$CALLS")" 'codex mcp login atlassian'
+
+printf '%s\n' refresh-token-invalid-other-server \
+  >"$XDG_CONFIG_HOME/fake-codex-health"
+if output=$($CLI preflight "$consumer" \
+  --client codex --operation jira-write --non-interactive 2>&1)
+then
+  fail 'authenticated empty inventory passed Jira preflight'
+fi
+assert_contains "$output" 'Capability state: UNSUPPORTED'
+assert_contains "$output" 'Runtime inventory: COMPLETE'
+assert_contains "$output" 'Result: CONNECTOR_CAPABILITY_REQUIRED'
+assert_not_contains "$output" 'ATLASSIAN_AUTH_REQUIRED'
+
 for codex_auth_error in auth-401 auth-403; do
   printf '%s\n' "$codex_auth_error" >"$XDG_CONFIG_HOME/fake-codex-health"
   : >"$CALLS"
@@ -1690,28 +1737,25 @@ for codex_auth_error in auth-401 auth-403; do
   assert_not_contains "$(cat "$CALLS")" 'codex mcp login atlassian'
 done
 
+printf '%s\n' auth-required >"$XDG_CONFIG_HOME/fake-codex-health"
 : >"$CALLS"
-if output=$(printf 'n\n' | script -qec \
+if ! output=$(script -qec \
   "$CLI preflight $consumer --client codex --operation jira-write" \
   /dev/null 2>&1)
 then
-  fail 'preflight accepted declined OAuth'
+  fail 'interactive preflight did not start required Codex OAuth'
 fi
-assert_contains "$output" 'Result: ATLASSIAN_AUTH_REQUIRED'
-assert_not_contains "$(cat "$CALLS")" 'codex mcp login atlassian'
-
-: >"$CALLS"
-output=$(printf 'y\n' | script -qec \
-  "$CLI preflight $consumer --client codex --operation jira-write" \
-  /dev/null 2>&1)
 assert_contains "$output" 'Result: PASS'
+assert_not_contains "$output" 'Start OAuth now?'
+assert_contains "$output" \
+  'OAuth URL: https://auth.example.test/authorize?state=one-time'
 assert_contains "$(cat "$CALLS")" 'codex mcp login atlassian'
 assert_not_contains "$(cat "$CALLS")" 'claude mcp login atlassian'
 assert_not_contains "$(cat "$CALLS")" 'cursor-agent mcp login atlassian'
 
 printf '%s\n' auth-required >"$XDG_CONFIG_HOME/fake-codex-health"
 export FAKE_CODEX_OAUTH_HEALTH=healthy-nested-metadata
-if output=$(printf 'y\n' | script -qec \
+if output=$(script -qec \
   "$CLI preflight $consumer --client codex --operation jira-write" \
   /dev/null 2>&1)
 then

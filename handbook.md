@@ -129,6 +129,26 @@ Missing/expired authentication trả `ATLASSIAN_AUTH_REQUIRED`; với Codex,
 remediation là `codex mcp login atlassian`. Interactive OAuth output đi trực
 tiếp tới terminal và governance không parse, log, hay store output đó.
 
+Once Atlassian authentication is known to be missing, expired, or invalid,
+interactive setup, bootstrap, and preflight start re-authentication
+immediately and wait for the selected producer command: Codex uses
+`codex mcp login atlassian`, Claude uses
+`claude mcp login atlassian --no-browser`, and Cursor uses
+`cursor-agent mcp login atlassian`. Claude checks
+`claude mcp login --help` for `--no-browser` only at this OAuth boundary; if
+unsupported, governance returns `DEPENDENCY_MISSING` with
+`Remediation: claude update`.
+
+Non-interactive setup, bootstrap, and preflight and all Doctor paths never
+invoke login. Cursor hooks retain non-interactive preflight, and Cursor
+first-run still requires its global-MCP configuration confirmation before
+OAuth starts. An active agent receiving `ATLASSIAN_AUTH_REQUIRED` stops the
+dependent write, runs the selected command in an interactive terminal,
+streams producer output so the user receives the one-time login URL, and
+waits for completion. It never synthesizes, parses, persists, or copies that
+URL or credentials into an issue, commit, or durable log. It then runs a
+fresh operation-specific preflight and continues only on `Result: PASS`.
+
 Connector health có 15-second total deadline. Nếu chưa có classifiable record, trả `CONNECTOR_HEALTH_UNAVAILABLE`; unknown không được xem là `PASS`.
 Capability được request nhưng không có provider-owned evidence trả
 `CONNECTOR_CAPABILITY_REQUIRED`.
