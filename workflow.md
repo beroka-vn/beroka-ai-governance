@@ -48,6 +48,13 @@ one question. Do not request information already present in linked records.
 ### Step 1 — Create high-level Jira work
 
 - Backend uses project `BB`, board `34`; Frontend uses project `BF`, board `35`.
+- Apply the Jira summary contract before duplicate search or creation:
+  - Epic: `<Domain or module> — <Business outcome>`
+  - Feature: `<Capability> — <Observable outcome>`
+  - Task: `<Action verb> <Outcome or deliverable>`
+  - Bug: `<Actual symptom> when <condition>`
+- Use English sentence case, no trailing punctuation, and no Jira key or
+  issue-type prefix.
 - Follow [Jira and Confluence Templates](templates/jira-confluence.md).
 - Validate the parent active Epic before creating Story/Task/Bug/Feature.
 - If the Epic is missing, invalid, inactive, or ambiguous, list relevant active

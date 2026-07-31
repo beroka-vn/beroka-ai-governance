@@ -111,4 +111,3 @@ mutation, application-repository change, or release metadata change.
    ```bash
    git commit -m "feat(governance): add cross-team Jira intake"
    ```
-

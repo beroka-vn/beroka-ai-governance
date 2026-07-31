@@ -147,6 +147,37 @@ require_text runtime/rules/work-items.md \
   'English. Chat language does not select artifact language.'
 require_text runtime/rules/work-items.md \
   'Work-item language: <language>'
+for file in governance.md workflow.md runtime/rules/work-items.md \
+  templates/jira-confluence.md; do
+  require_text "$file" 'Epic: `<Domain or module> — <Business outcome>`'
+  require_text "$file" 'Feature: `<Capability> — <Observable outcome>`'
+  require_text "$file" 'Task: `<Action verb> <Outcome or deliverable>`'
+  require_text "$file" 'Bug: `<Actual symptom> when <condition>`'
+done
+require_text runtime/rules/work-items.md 'English sentence case'
+require_text runtime/rules/work-items.md 'no trailing punctuation'
+require_text runtime/rules/work-items.md \
+  'no Jira key or `[Epic]`, `[Feature]`, `[Task]`, or `[Bug]` prefix'
+for example in \
+  'Market overview — Faster investment discovery' \
+  'Portfolio — Clear real-time performance visibility' \
+  'Market data — Reliable real-time price delivery' \
+  'Order management — Consistent trade execution' \
+  'Market charts — Display continuous historical price trends' \
+  'Watchlist — Reflect live price changes without manual refresh' \
+  'Historical candles API — Return complete time-bucketed market data' \
+  'Order events WebSocket — Publish deterministic order status updates' \
+  'Add empty-state guidance to the market watchlist' \
+  'Validate chart rendering across supported time ranges' \
+  'Add idempotency protection to order submission' \
+  'Validate trading sessions before candle aggregation' \
+  'Chart shows duplicate candles when the WebSocket reconnects' \
+  'Watchlist loses selected symbols when the page refreshes' \
+  'Order submission creates duplicates when clients retry timed-out requests' \
+  'Candle API omits the latest interval when the market session crosses midnight'
+do
+  require_text templates/jira-confluence.md "$example"
+done
 require_text templates/agent-entrypoints/CURSOR-USER-RULE.txt \
   'Technical artifacts default to English; chat language does not select artifact language.'
 require_text templates/agent-entrypoints/CURSOR-USER-RULE.txt \

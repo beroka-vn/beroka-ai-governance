@@ -4,6 +4,12 @@
   English. Chat language does not select artifact language. Use another language
   only when the user explicitly supplies `Work-item language: <language>` for
   the current generation.
+- Jira summaries use English sentence case, no trailing punctuation, and
+  no Jira key or `[Epic]`, `[Feature]`, `[Task]`, or `[Bug]` prefix:
+  - Epic: `<Domain or module> — <Business outcome>`
+  - Feature: `<Capability> — <Observable outcome>`
+  - Task: `<Action verb> <Outcome or deliverable>`
+  - Bug: `<Actual symptom> when <condition>`
 - Classify work as Frontend, Backend, or shared before planning or record
   creation. Shared work requires exact target repositories, one confirmed
   primary tracking repository, and fresh context for every target. Do not infer
