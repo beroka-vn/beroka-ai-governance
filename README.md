@@ -51,6 +51,10 @@ Claude: claude mcp login atlassian --no-browser
 Cursor: cursor-agent mcp login atlassian
 ```
 
+Interactive authentication treats producer output as opaque and passes
+provider OAuth output directly to the terminal so the user receives its
+one-time login URL.
+
 Claude checks `claude mcp login --help` for `--no-browser` only at this OAuth
 boundary. Without it, governance returns `DEPENDENCY_MISSING` with
 `Remediation: claude update`. Non-interactive setup, bootstrap, and preflight

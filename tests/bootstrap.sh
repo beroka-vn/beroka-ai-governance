@@ -75,7 +75,7 @@ instruction_contract() {
 expected_atlassian_auth_contract() {
   eaac_command=$1
   cat <<EOF
-Technical artifacts default to English; chat language does not select artifact language. Use another language only when the user explicitly requests it in natural language.
+Technical artifacts default to English; chat language does not select artifact language. Use another language only when the user explicitly supplies \`Work-item language: <language>\` for the current generation.
 
 If a non-interactive preflight returns \`ATLASSIAN_AUTH_REQUIRED\`, stop the dependent external write. In an interactive terminal or PTY, run \`$eaac_command\` and stream the opaque producer output unchanged so the user receives its one-time login URL. Never synthesize, parse, persist, copy, or place that URL or credentials in an issue, commit, or durable log. Wait for the producer command to complete. Then rerun a fresh operation-specific preflight and continue only when it returns \`Result: PASS\`.
 EOF

@@ -15,8 +15,8 @@ operation-specific preflight immediately before every external write. Never
 rely on governance details preserved only in conversation history.
 
 Technical artifacts default to English; chat language does not select artifact language.
-Use another language only when the user explicitly requests it in natural
-language.
+Use another language only when the user explicitly supplies
+`Work-item language: <language>` for the current generation.
 
 If a non-interactive preflight returns `ATLASSIAN_AUTH_REQUIRED`, stop the
 dependent external write. In an interactive terminal or PTY, run
