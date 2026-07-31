@@ -247,6 +247,12 @@ reporting success.
 
 - Backend work uses project `BB`, board `34`.
 - Frontend work uses project `BF`, board `35`.
+- Jira summaries use English sentence case, no trailing punctuation, and no
+  Jira key or issue-type prefix:
+  - Epic: `<Domain or module> — <Business outcome>`
+  - Feature: `<Capability> — <Observable outcome>`
+  - Task: `<Action verb> <Outcome or deliverable>`
+  - Bug: `<Actual symptom> when <condition>`
 - Follow [Jira and Confluence Templates](templates/jira-confluence.md).
 - Validate work area, issue type, and parent Epic before creating a child.
 - An active Epic belongs to the correct project, is not archived, and has

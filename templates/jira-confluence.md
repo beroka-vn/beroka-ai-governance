@@ -17,8 +17,8 @@ belong in the GitHub Issue. Confluence does not replace Jira status or PR eviden
   [Beroka Backend backlog](https://beroka.atlassian.net/jira/software/projects/BB/boards/34/backlog).
 - Frontend Epic/Story/Task/Bug/Feature: project `BF` at
   [Beroka Frontend backlog](https://beroka.atlassian.net/jira/software/projects/BF/boards/35/backlog).
-- Use the matching Epic, Story, or Task template. For Bug, Feature, or another
-  type, preserve the native type and use the nearest high-level structure.
+- Use the matching Epic, Story, Task, Feature, or Bug guidance below. Preserve
+  any other native type and use the nearest high-level structure.
 - Before creating a child, establish work area, type, and parent Epic. An active
   Epic belongs to the correct project, is not archived, and has
   `statusCategory != Done`.
@@ -55,6 +55,32 @@ Active Epic confirmation required
 ```
 
 If Jira cannot be read, report access failure. Never invent an Epic list.
+
+## Jira Summary Contract
+
+Use English sentence case, no trailing punctuation, and no Jira key or
+`[Epic]`, `[Feature]`, `[Task]`, or `[Bug]` prefix.
+
+- Epic: `<Domain or module> — <Business outcome>`
+  - Frontend: `Market overview — Faster investment discovery`
+  - Frontend: `Portfolio — Clear real-time performance visibility`
+  - Backend: `Market data — Reliable real-time price delivery`
+  - Backend: `Order management — Consistent trade execution`
+- Feature: `<Capability> — <Observable outcome>`
+  - Frontend: `Market charts — Display continuous historical price trends`
+  - Frontend: `Watchlist — Reflect live price changes without manual refresh`
+  - Backend: `Historical candles API — Return complete time-bucketed market data`
+  - Backend: `Order events WebSocket — Publish deterministic order status updates`
+- Task: `<Action verb> <Outcome or deliverable>`
+  - Frontend: `Add empty-state guidance to the market watchlist`
+  - Frontend: `Validate chart rendering across supported time ranges`
+  - Backend: `Add idempotency protection to order submission`
+  - Backend: `Validate trading sessions before candle aggregation`
+- Bug: `<Actual symptom> when <condition>`
+  - Frontend: `Chart shows duplicate candles when the WebSocket reconnects`
+  - Frontend: `Watchlist loses selected symbols when the page refreshes`
+  - Backend: `Order submission creates duplicates when clients retry timed-out requests`
+  - Backend: `Candle API omits the latest interval when the market session crosses midnight`
 
 ```text
 Cross-project counterpart confirmation
