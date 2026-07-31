@@ -935,23 +935,18 @@ fi
 printf '%s\n' auth-required >"$XDG_CONFIG_HOME/fake-codex-health"
 rm -f "$XDG_CONFIG_HOME/fake-codex-configured"
 : >"$CALLS"
-if output=$(printf 'y\nn\n' | script -qec "$CLI setup-connectors" /dev/null 2>&1); then
-  fail 'interactive setup accepted declined Codex authentication'
+if ! output=$(printf 'y\n' |
+  script -qec "$CLI setup-connectors" /dev/null 2>&1)
+then
+  fail 'interactive detected Codex setup did not start required OAuth'
 fi
 assert_contains "$output" 'Detected client: codex'
-assert_contains "$output" 'Result: AUTH_PENDING'
-assert_contains "$(cat "$CALLS")" 'codex app-server --stdio'
-
-printf '%s\n' auth-required >"$XDG_CONFIG_HOME/fake-codex-health"
-if output=$(printf 'n\n' |
-  script -qec "$CLI setup-connectors --client codex" /dev/null 2>&1)
-then
-  fail 'interactive setup accepted pending authentication'
-fi
-assert_contains "$output" 'Connector: AUTH_PENDING'
-assert_contains "$output" 'Result: AUTH_PENDING'
 assert_contains "$output" \
-  'Resume: beroka-governance setup-connectors --client codex'
+  'OAuth URL: https://auth.example.test/authorize?state=one-time'
+assert_contains "$output" 'Result: PASS'
+assert_not_contains "$output" 'Start OAuth now?'
+assert_contains "$(cat "$CALLS")" 'codex mcp login atlassian'
+assert_contains "$(cat "$CALLS")" 'codex app-server --stdio'
 
 export FAKE_CODEX_READY_AFTER=never
 rm -f \
@@ -972,6 +967,16 @@ printf 'claude %s\n' "$*" >>"$CALLS"
 case "$*" in
   '--version') printf '%s\n' '1.2.3 (Claude Code)' ;;
   'mcp add --help'|'mcp get --help'|'mcp list --help') exit 0 ;;
+  'mcp login --help')
+    [ "${FAKE_CLAUDE_NO_BROWSER:-1}" -eq 1 ] &&
+      printf '%s\n' 'Usage: claude mcp login [options] <name>' \
+        '  --no-browser  Print the authentication URL'
+    ;;
+  'mcp login atlassian --no-browser')
+    printf '%s\n' \
+      'OAuth URL: https://auth.example.test/claude-one-time'
+    printf '%s\n' healthy >"$XDG_CONFIG_HOME/fake-claude-health"
+    ;;
   '')
     printf '%s\n' healthy >"$XDG_CONFIG_HOME/fake-claude-health"
     ;;
@@ -1051,12 +1056,20 @@ chmod 755 "$FAKE_BIN/claude"
 rm -f "$XDG_CONFIG_HOME/fake-codex-configured" "$XDG_CONFIG_HOME/fake-claude-configured"
 : >"$CALLS"
 
-if output=$(printf '2\nn\n' | script -qec "$CLI setup-connectors" /dev/null 2>&1); then
-  fail 'interactive setup accepted declined Claude authentication'
+if ! output=$(printf '2\n' |
+  script -qec "$CLI setup-connectors" /dev/null 2>&1)
+then
+  fail 'interactive selected Claude setup did not start required OAuth'
 fi
 assert_contains "$output" 'Select one client'
 assert_not_contains "$output" 'cursor'
+assert_contains "$output" \
+  'OAuth URL: https://auth.example.test/claude-one-time'
+assert_contains "$output" 'Result: PASS'
+assert_not_contains "$output" 'Start OAuth now?'
 assert_contains "$(cat "$CALLS")" 'claude mcp add --transport http --scope user atlassian'
+assert_contains "$(cat "$CALLS")" \
+  'claude mcp login atlassian --no-browser'
 assert_not_contains "$(cat "$CALLS")" 'codex app-server --stdio'
 
 : >"$XDG_CONFIG_HOME/fake-codex-configured"
@@ -1163,14 +1176,16 @@ else
 fi
 
 printf '%s\n' auth-needs-realistic >"$XDG_CONFIG_HOME/fake-claude-health"
+: >"$CALLS"
 if output=$($CLI setup-connectors --client claude --non-interactive 2>&1)
 then
   fix_wave_fail 'Claude Needs authentication status passed'
 else
   fix_wave_contains "$output" 'Result: ATLASSIAN_AUTH_REQUIRED'
-  fix_wave_contains "$output" 'Remediation: claude'
   fix_wave_contains "$output" \
-    'In Claude: /mcp -> atlassian -> Authenticate'
+    'Remediation: claude mcp login atlassian --no-browser'
+  fix_wave_not_contains "$(cat "$CALLS")" \
+    'claude mcp login atlassian --no-browser'
 fi
 
 printf '%s\n' unrelated-only >"$XDG_CONFIG_HOME/fake-claude-health"
@@ -1446,12 +1461,17 @@ assert_contains "$output" 'Result: PASS'
 
 printf '%s\n' auth-required >"$XDG_CONFIG_HOME/fake-codex-health"
 : >"$CALLS"
-output=$(printf 'y\n' | script -qec "$CLI setup-connectors --client codex" /dev/null 2>&1)
+if ! output=$(script -qec \
+  "$CLI setup-connectors --client codex" /dev/null 2>&1)
+then
+  fail 'interactive Codex setup did not start required OAuth'
+fi
 assert_contains "$output" 'Authentication: AUTH_REQUIRED'
 assert_contains "$output" 'Provider: atlassian'
 assert_contains "$output" \
   'OAuth URL: https://auth.example.test/authorize?state=one-time'
 assert_contains "$output" 'Result: PASS'
+assert_not_contains "$output" 'Start OAuth now?'
 assert_contains "$(cat "$CALLS")" 'codex mcp login atlassian'
 if rg -l -F 'auth.example.test' \
   "$HOME" "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" >/dev/null 2>&1
@@ -1469,13 +1489,31 @@ assert_not_contains "$(cat "$CALLS")" 'cursor-agent '
 
 printf '%s\n' auth-required >"$XDG_CONFIG_HOME/fake-claude-health"
 : >"$CALLS"
-output=$(printf 'y\n' | script -qec "$CLI setup-connectors --client claude" /dev/null 2>&1)
-assert_contains "$output" 'Result: PASS'
-fix_wave_contains "$output" 'In Claude: /mcp -> atlassian -> Authenticate'
-if ! grep -Fx 'claude ' "$CALLS" >/dev/null; then
-  fix_wave_fail 'interactive Claude authentication did not launch claude'
+if ! output=$(script -qec \
+  "$CLI setup-connectors --client claude" /dev/null 2>&1)
+then
+  fail 'interactive Claude setup did not start required OAuth'
 fi
-fix_wave_not_contains "$(cat "$CALLS")" 'claude mcp login atlassian'
+assert_contains "$output" \
+  'OAuth URL: https://auth.example.test/claude-one-time'
+assert_contains "$output" 'Result: PASS'
+assert_not_contains "$output" 'Start OAuth now?'
+assert_contains "$(cat "$CALLS")" \
+  'claude mcp login atlassian --no-browser'
+grep -Fx 'claude mcp login atlassian --no-browser' "$CALLS" >/dev/null ||
+  fail 'interactive Claude setup did not use direct no-browser login'
+
+printf '%s\n' auth-required >"$XDG_CONFIG_HOME/fake-claude-health"
+: >"$CALLS"
+if output=$(FAKE_CLAUDE_NO_BROWSER=0 script -qec \
+  "$CLI setup-connectors --client claude" /dev/null 2>&1)
+then
+  fail 'Claude without --no-browser support started OAuth'
+fi
+assert_contains "$output" 'Remediation: claude update'
+assert_contains "$output" 'Result: DEPENDENCY_MISSING'
+assert_not_contains "$(cat "$CALLS")" \
+  'claude mcp login atlassian --no-browser'
 
 printf '%s\n' '{"mcpServers":{"atlassian":{"url":"https://mcp.atlassian.com/v1/mcp/authv2"}}}' \
   >"$HOME/.cursor/mcp.json"
@@ -1503,8 +1541,13 @@ fix_wave_not_contains "$output" 'Tool inventory failed'
 
 printf '%s\n' auth-required >"$XDG_CONFIG_HOME/fake-cursor-health"
 : >"$CALLS"
-output=$(printf 'y\n' | script -qec "$CLI setup-connectors --client cursor" /dev/null 2>&1)
+if ! output=$(script -qec \
+  "$CLI setup-connectors --client cursor" /dev/null 2>&1)
+then
+  fail 'interactive Cursor setup did not start required OAuth'
+fi
 assert_contains "$output" 'Result: PASS'
+assert_not_contains "$output" 'Start OAuth now?'
 assert_contains "$(cat "$CALLS")" 'cursor-agent mcp login atlassian'
 assert_contains "$(cat "$CALLS")" 'cursor-agent mcp login atlassian | /'
 

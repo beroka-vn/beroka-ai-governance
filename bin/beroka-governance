@@ -1422,7 +1422,9 @@ client_executable() {
 oauth_command() {
   case "$1" in
     codex) printf '%s\n' 'codex mcp login atlassian' ;;
-    claude) printf '%s\n' 'claude' ;;
+    claude)
+      printf '%s\n' 'claude mcp login atlassian --no-browser'
+      ;;
     cursor) printf '%s\n' 'cursor-agent mcp login atlassian' ;;
     *) usage >&2; exit 2 ;;
   esac
@@ -2990,8 +2992,10 @@ run_oauth() {
   case "$1" in
     codex) codex mcp login atlassian ;;
     claude)
-      printf '%s\n' 'In Claude: /mcp -> atlassian -> Authenticate'
-      claude
+      claude mcp login --help 2>&1 |
+        grep -F -- '--no-browser' >/dev/null ||
+        die DEPENDENCY_MISSING 'Remediation: claude update'
+      claude mcp login atlassian --no-browser
       ;;
     cursor) cursor_mcp login atlassian ;;
   esac || return $?
@@ -3279,8 +3283,6 @@ auth_required() {
     'Provider: atlassian' \
     'Authentication: AUTH_REQUIRED' \
     "Remediation: $(oauth_command "$ar_client")"
-  [ "$ar_client" != claude ] ||
-    printf '%s\n' 'In Claude: /mcp -> atlassian -> Authenticate'
   die ATLASSIAN_AUTH_REQUIRED
 }
 
@@ -3293,8 +3295,6 @@ auth_pending() {
     'Connector: AUTH_PENDING' \
     "Remediation: $(oauth_command "$ap_client")" \
     "Resume: beroka-governance setup-connectors --client $ap_client"
-  [ "$ap_client" != claude ] ||
-    printf '%s\n' 'In Claude: /mcp -> atlassian -> Authenticate'
   die AUTH_PENDING
 }
 
@@ -3504,31 +3504,20 @@ cmd_preflight() {
     if [ "$pf_non_interactive" -eq 0 ] && [ -t 0 ] && [ -t 1 ]; then
       pf_interactive=1
     fi
-    if [ "$pf_interactive" -eq 1 ]; then
-      printf '%s\n' \
-        "Client: $pf_client" \
-        'Provider: atlassian' \
-        'Authentication: AUTH_REQUIRED'
-      printf 'Start OAuth now? [y/N] '
-      IFS= read -r pf_answer || pf_answer=
-      case "$pf_answer" in
-        y|Y|yes|YES)
-          run_oauth "$pf_client" || {
-            auth_required "$pf_client"
-          }
-          pf_health=0
-          connector_health "$pf_client" || pf_health=$?
-          case "$pf_health" in
-            0) ;;
-            1) auth_required "$pf_client" ;;
-            *) connector_health_unavailable "$pf_client" ;;
-          esac
-          ;;
-        *) auth_required "$pf_client" ;;
-      esac
-    else
+    [ "$pf_interactive" -eq 1 ] ||
       auth_required "$pf_client"
-    fi
+    printf '%s\n' \
+      "Client: $pf_client" \
+      'Provider: atlassian' \
+      'Authentication: AUTH_REQUIRED'
+    run_oauth "$pf_client" || auth_required "$pf_client"
+    pf_health=0
+    connector_health "$pf_client" || pf_health=$?
+    case "$pf_health" in
+      0) ;;
+      1) auth_required "$pf_client" ;;
+      *) connector_health_unavailable "$pf_client" ;;
+    esac
   elif [ "$pf_health" -ne 0 ]; then
     connector_health_unavailable "$pf_client"
   fi
@@ -3609,35 +3598,25 @@ cmd_setup_connectors() {
       ;;
     *) connector_health_unavailable "$setup_client" ;;
   esac
-  if [ "$setup_interactive" -eq 1 ]; then
-    printf '%s\n' \
-      "Client: $setup_client" \
-      'Provider: atlassian' \
-      'Authentication: AUTH_REQUIRED'
-    printf 'Start OAuth now? [y/N] '
-    IFS= read -r setup_answer || setup_answer=
-    case "$setup_answer" in
-      y|Y|yes|YES)
-        run_oauth "$setup_client" || auth_pending "$setup_client"
-        setup_health=0
-        connector_health "$setup_client" || setup_health=$?
-        case "$setup_health" in
-          0) ;;
-          1) auth_pending "$setup_client" ;;
-          *) connector_health_unavailable "$setup_client" ;;
-        esac
-        printf '%s\n' \
-          "Client: $setup_client" \
-          'Connector: PASS' \
-          'Authentication: PASS'
-        pass_result
-        return
-        ;;
-    esac
-  fi
-  [ "$setup_interactive" -eq 0 ] ||
-    auth_pending "$setup_client"
-  auth_required "$setup_client"
+  [ "$setup_interactive" -eq 1 ] ||
+    auth_required "$setup_client"
+  printf '%s\n' \
+    "Client: $setup_client" \
+    'Provider: atlassian' \
+    'Authentication: AUTH_REQUIRED'
+  run_oauth "$setup_client" || auth_pending "$setup_client"
+  setup_health=0
+  connector_health "$setup_client" || setup_health=$?
+  case "$setup_health" in
+    0) ;;
+    1) auth_pending "$setup_client" ;;
+    *) connector_health_unavailable "$setup_client" ;;
+  esac
+  printf '%s\n' \
+    "Client: $setup_client" \
+    'Connector: PASS' \
+    'Authentication: PASS'
+  pass_result
 }
 
 cmd_doctor() {

@@ -110,6 +110,8 @@ case "$*" in
     printf '%s\n' '{"name":"atlassian","url":"https://mcp.atlassian.com/v1/mcp/authv2"}'
     ;;
   'mcp login atlassian')
+    printf '%s\n' \
+      'OAuth URL: https://auth.example.test/authorize?state=one-time'
     printf '%s\n' "${FAKE_CODEX_OAUTH_HEALTH:-healthy-all}" \
       >"$XDG_CONFIG_HOME/fake-codex-health"
     ;;
@@ -471,6 +473,16 @@ case "$*" in
     printf '%s (Claude Code)\n' "${FAKE_CLAUDE_VERSION:-1.2.3}"
     ;;
   'mcp add --help'|'mcp get --help'|'mcp list --help') ;;
+  'mcp login --help')
+    [ "${FAKE_CLAUDE_NO_BROWSER:-1}" -eq 1 ] &&
+      printf '%s\n' 'Usage: claude mcp login [options] <name>' \
+        '  --no-browser  Print the authentication URL'
+    ;;
+  'mcp login atlassian --no-browser')
+    printf '%s\n' \
+      'OAuth URL: https://auth.example.test/claude-one-time'
+    printf '%s\n' healthy >"$XDG_CONFIG_HOME/fake-claude-health"
+    ;;
   'mcp get atlassian')
     [ -f "$XDG_CONFIG_HOME/fake-claude-configured" ] || exit 1
     printf '%s\n' \
@@ -1725,28 +1737,25 @@ for codex_auth_error in auth-401 auth-403; do
   assert_not_contains "$(cat "$CALLS")" 'codex mcp login atlassian'
 done
 
+printf '%s\n' auth-required >"$XDG_CONFIG_HOME/fake-codex-health"
 : >"$CALLS"
-if output=$(printf 'n\n' | script -qec \
+if ! output=$(script -qec \
   "$CLI preflight $consumer --client codex --operation jira-write" \
   /dev/null 2>&1)
 then
-  fail 'preflight accepted declined OAuth'
+  fail 'interactive preflight did not start required Codex OAuth'
 fi
-assert_contains "$output" 'Result: ATLASSIAN_AUTH_REQUIRED'
-assert_not_contains "$(cat "$CALLS")" 'codex mcp login atlassian'
-
-: >"$CALLS"
-output=$(printf 'y\n' | script -qec \
-  "$CLI preflight $consumer --client codex --operation jira-write" \
-  /dev/null 2>&1)
 assert_contains "$output" 'Result: PASS'
+assert_not_contains "$output" 'Start OAuth now?'
+assert_contains "$output" \
+  'OAuth URL: https://auth.example.test/authorize?state=one-time'
 assert_contains "$(cat "$CALLS")" 'codex mcp login atlassian'
 assert_not_contains "$(cat "$CALLS")" 'claude mcp login atlassian'
 assert_not_contains "$(cat "$CALLS")" 'cursor-agent mcp login atlassian'
 
 printf '%s\n' auth-required >"$XDG_CONFIG_HOME/fake-codex-health"
 export FAKE_CODEX_OAUTH_HEALTH=healthy-nested-metadata
-if output=$(printf 'y\n' | script -qec \
+if output=$(script -qec \
   "$CLI preflight $consumer --client codex --operation jira-write" \
   /dev/null 2>&1)
 then
