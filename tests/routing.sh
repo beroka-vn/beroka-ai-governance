@@ -424,6 +424,16 @@ case "$*" in
               '{"method":"mcpServer/startupStatus/updated","params":{"name":"atlassian","failureReason":"reauthenticationRequired"}}' \
               '{"id":1,"result":{"data":[{"name":"atlassian","tools":{},"authStatus":"oAuth"}]}}'
             ;;
+          refresh-token-invalid)
+            printf '%s\n' \
+              '2026-07-31T03:04:05.000Z ERROR codex_rmcp_client::oauth::refresh_transaction: error=failed to refresh OAuth tokens for server atlassian: OAuth token refresh failed: Server returned error response: unauthorized_client: refresh_token is invalid' \
+              '{"id":1,"result":{"data":[{"name":"atlassian","tools":{},"authStatus":"oAuth"}]}}'
+            ;;
+          refresh-token-invalid-other-server)
+            printf '%s\n' \
+              '2026-07-31T03:04:05.000Z ERROR codex_rmcp_client::oauth::refresh_transaction: error=failed to refresh OAuth tokens for server github: OAuth token refresh failed: Server returned error response: unauthorized_client: refresh_token is invalid' \
+              '{"id":1,"result":{"data":[{"name":"atlassian","tools":{},"authStatus":"oAuth"}]}}'
+            ;;
           auth-401) printf '%s\n' 'server atlassian: 401 Unauthorized' ;;
           auth-403) printf '%s\n' 'server atlassian: 403 Forbidden' ;;
           *) exit 1 ;;
@@ -1676,6 +1686,31 @@ fi
 assert_contains "$output" 'Remediation: codex mcp login atlassian'
 assert_contains "$output" 'Result: ATLASSIAN_AUTH_REQUIRED'
 assert_not_contains "$(cat "$CALLS")" 'codex mcp login atlassian'
+
+printf '%s\n' refresh-token-invalid \
+  >"$XDG_CONFIG_HOME/fake-codex-health"
+: >"$CALLS"
+if output=$($CLI preflight "$consumer" \
+  --client codex --operation jira-write --non-interactive 2>&1)
+then
+  fail 'Codex refresh-token failure passed Jira preflight'
+fi
+assert_contains "$output" 'Remediation: codex mcp login atlassian'
+assert_contains "$output" 'Result: ATLASSIAN_AUTH_REQUIRED'
+assert_not_contains "$output" 'CONNECTOR_CAPABILITY_REQUIRED'
+assert_not_contains "$(cat "$CALLS")" 'codex mcp login atlassian'
+
+printf '%s\n' refresh-token-invalid-other-server \
+  >"$XDG_CONFIG_HOME/fake-codex-health"
+if output=$($CLI preflight "$consumer" \
+  --client codex --operation jira-write --non-interactive 2>&1)
+then
+  fail 'authenticated empty inventory passed Jira preflight'
+fi
+assert_contains "$output" 'Capability state: UNSUPPORTED'
+assert_contains "$output" 'Runtime inventory: COMPLETE'
+assert_contains "$output" 'Result: CONNECTOR_CAPABILITY_REQUIRED'
+assert_not_contains "$output" 'ATLASSIAN_AUTH_REQUIRED'
 
 for codex_auth_error in auth-401 auth-403; do
   printf '%s\n' "$codex_auth_error" >"$XDG_CONFIG_HOME/fake-codex-health"

@@ -2841,10 +2841,14 @@ codex_http_auth_required() {
       line=$0
       sub(/^[[:space:]]*/, "", line)
       sub(/[[:space:]]*$/, "", line)
-      if (line ~ /^server atlassian:/ &&
-          (line ~ /unauthorized_client/ ||
-           line ~ /401 Unauthorized/ ||
-           line ~ /403 Forbidden/)) found=1
+      if ((line ~ /^server atlassian:/ &&
+           (line ~ /unauthorized_client/ ||
+            line ~ /401 Unauthorized/ ||
+            line ~ /403 Forbidden/)) ||
+          (line ~ /codex_rmcp_client::oauth::refresh_transaction/ &&
+           line ~ /server atlassian:/ &&
+           line ~ /unauthorized_client/ &&
+           line ~ /refresh_token is invalid/)) found=1
     }
     END { exit !found }
   '

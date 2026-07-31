@@ -420,6 +420,11 @@ case "$*" in
               '{"method":"mcpServer/startupStatus/updated","params":{"name":"atlassian","status":"failed","failureReason":"reauthenticationRequired"}}' \
               '{"id":1,"result":{"data":[{"name":"atlassian","serverInfo":null,"tools":{},"resources":[],"resourceTemplates":[],"authStatus":"oAuth"}]}}'
             ;;
+          refresh-token-invalid)
+            printf '%s\n' \
+              '2026-07-31T03:04:05.000Z ERROR codex_rmcp_client::oauth::refresh_transaction: error=failed to refresh OAuth tokens for server atlassian: OAuth token refresh failed: Server returned error response: unauthorized_client: refresh_token is invalid' \
+              '{"id":1,"result":{"data":[{"name":"atlassian","tools":{},"authStatus":"oAuth"}]}}'
+            ;;
           missing)
             printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","serverInfo":null,"tools":{},"resources":[],"resourceTemplates":[],"authStatus":"notLoggedIn"}]}}'
             ;;
@@ -1414,6 +1419,17 @@ assert_contains "$output" 'Remediation: codex mcp login atlassian'
 assert_contains "$output" 'Result: ATLASSIAN_AUTH_REQUIRED'
 assert_not_contains "$(cat "$CALLS")" 'codex mcp login atlassian'
 
+printf '%s\n' refresh-token-invalid \
+  >"$XDG_CONFIG_HOME/fake-codex-health"
+: >"$CALLS"
+if output=$($CLI setup-connectors --client codex --non-interactive 2>&1)
+then
+  fail 'Codex refresh-token failure passed connector setup'
+fi
+assert_contains "$output" 'Remediation: codex mcp login atlassian'
+assert_contains "$output" 'Result: ATLASSIAN_AUTH_REQUIRED'
+assert_not_contains "$(cat "$CALLS")" 'codex mcp login atlassian'
+
 printf '%s\n' missing >"$XDG_CONFIG_HOME/fake-codex-health"
 if output=$($CLI setup-connectors --client codex --non-interactive 2>&1); then
   fail 'non-interactive setup accepted missing authentication'
@@ -1582,6 +1598,15 @@ if output=$($CLI doctor "$CONSUMER" --client codex 2>&1); then
 fi
 assert_contains "$output" 'Remediation: codex mcp login atlassian'
 assert_contains "$output" 'Result: ATLASSIAN_AUTH_REQUIRED'
+
+printf '%s\n' refresh-token-invalid \
+  >"$XDG_CONFIG_HOME/fake-codex-health"
+: >"$CALLS"
+if output=$($CLI doctor "$CONSUMER" --client codex 2>&1); then
+  fail 'Doctor accepted the Codex refresh-token failure'
+fi
+assert_contains "$output" 'Result: ATLASSIAN_AUTH_REQUIRED'
+assert_not_contains "$(cat "$CALLS")" 'codex mcp login atlassian'
 
 printf '%s\n' healthy-empty-tools >"$XDG_CONFIG_HOME/fake-codex-health"
 output=$($CLI doctor "$CONSUMER" --client codex)
