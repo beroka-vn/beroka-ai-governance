@@ -395,8 +395,10 @@ then
 fi
 assert_contains "$output" 'Result: GITHUB_ROLE_SELECTION_REQUIRED'
 
+role_tab=$(printf '\t')
 for role_case in \
   '  Full-stack  |FULL_STACK' \
+  "${role_tab}Full-stack${role_tab}|FULL_STACK" \
   'FE|FE' 'fe|FE' \
   'BE|BE' 'be|BE' \
   'Full-stack|FULL_STACK' 'full-stack|FULL_STACK' 'FULL_STACK|FULL_STACK'
@@ -415,7 +417,7 @@ do
     fail "interactive [$role_input] stored the wrong GitHub role"
 done
 
-for role_input in '' '   ' unknown 'Full stack'; do
+for role_input in '' '   ' "$role_tab" unknown 'Full stack'; do
   rm -f "$role_file"
   if output=$(printf '%s\n' "$role_input" | script -qec \
     "$CLI bootstrap $repo --client codex --version v1.1.0" \
