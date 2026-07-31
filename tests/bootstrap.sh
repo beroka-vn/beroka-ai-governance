@@ -54,6 +54,21 @@ assert_separate_managed_block() {
     fail "instruction markers are not separately delimited in $asmb_file"
 }
 
+assert_atlassian_auth_handoff() {
+  aah_file=$1 aah_command=$2
+  aah_content=$(awk '{$1=$1; printf "%s ", $0}' "$aah_file")
+  assert_contains "$aah_content" 'ATLASSIAN_AUTH_REQUIRED'
+  assert_contains "$aah_content" "$aah_command"
+  assert_contains "$aah_content" 'stream the producer output'
+  assert_contains "$aah_content" 'never synthesize, parse, persist, copy'
+  assert_contains "$aah_content" 'place that URL or credentials'
+  assert_contains "$aah_content" 'fresh operation-specific preflight'
+  assert_contains "$aah_content" 'Result: PASS'
+  assert_contains "$aah_content" \
+    'Task, issue, and pull request work defaults to English'
+  assert_contains "$aah_content" 'explicitly requests another language'
+}
+
 assert_cursor_hook() {
   ach_file=$1 ach_event=$2 ach_command=$3 ach_fail_closed=$4
   ach_count=$(jq --arg event "$ach_event" --arg command "$ach_command" \
@@ -435,6 +450,9 @@ assert_contains "$(cat "$HOME/.codex/AGENTS.md")" \
 assert_contains "$(cat "$HOME/.codex/AGENTS.md")" \
   '<!-- BEROKA-GOVERNANCE:START -->'
 assert_separate_managed_block "$HOME/.codex/AGENTS.md"
+assert_atlassian_auth_handoff \
+  "$HOME/.codex/AGENTS.md" \
+  'codex mcp login atlassian'
 [ "$(cat "$XDG_CONFIG_HOME/beroka-ai-governance/clients")" = codex ] ||
   fail 'bootstrap omitted Codex enrollment'
 assert_not_contains "$output" 'Repository pull request:'
@@ -622,6 +640,9 @@ assert_contains "$(cat "$HOME/.claude/CLAUDE.md")" \
 assert_contains "$(cat "$HOME/.claude/CLAUDE.md")" \
   '<!-- BEROKA-GOVERNANCE:START -->'
 assert_separate_managed_block "$HOME/.claude/CLAUDE.md"
+assert_atlassian_auth_handoff \
+  "$HOME/.claude/CLAUDE.md" \
+  'claude mcp login atlassian --no-browser'
 [ "$(cat "$XDG_CONFIG_HOME/beroka-ai-governance/clients")" = codex,claude ] ||
   fail 'bootstrap omitted Claude enrollment'
 assert_contains "$(cat "$CALLS")" 'claude mcp'
@@ -960,6 +981,26 @@ assert_contains "$output" \
   'Remediation: beroka-governance bootstrap --client cursor'
 [ ! -e "$HOME/.cursor" ] ||
   fail 'Cursor bootstrap edited undocumented Cursor state'
+
+if cursor_output=$(printf 'n\n' | script -qec \
+  "$CLI bootstrap $repo --client cursor --version v1.2.0" \
+  /dev/null 2>&1)
+then
+  fail 'Cursor bootstrap accepted a declined User Rule'
+fi
+cursor_rule_output=$(printf '%s\n' "$cursor_output" |
+  tr '\r' '\n' |
+  awk 'NF {$1=$1; printf "%s ", $0}')
+assert_contains "$cursor_rule_output" 'ATLASSIAN_AUTH_REQUIRED'
+assert_contains "$cursor_rule_output" 'cursor-agent mcp login atlassian'
+assert_contains "$cursor_rule_output" 'stream the producer output'
+assert_contains "$cursor_rule_output" 'never synthesize, parse, persist, copy'
+assert_contains "$cursor_rule_output" 'place that URL or credentials'
+assert_contains "$cursor_rule_output" 'fresh operation-specific preflight'
+assert_contains "$cursor_rule_output" 'Result: PASS'
+assert_contains "$cursor_rule_output" \
+  'Task, issue, and pull request work defaults to English'
+assert_contains "$cursor_rule_output" 'explicitly requests another language'
 
 $CLI uninstall --force >/dev/null
 cmp -s "$codex_personal_expected" "$HOME/.codex/AGENTS.md" ||

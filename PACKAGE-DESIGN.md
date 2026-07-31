@@ -123,6 +123,24 @@ At a new session, resume, or compaction, run `beroka-governance context "$PWD"` 
 
 Connector health uses a 15-second total deadline. Missing, expired, or invalid Atlassian authentication returns `ATLASSIAN_AUTH_REQUIRED` with selected-client remediation. `CONNECTOR_HEALTH_UNAVAILABLE` is not authentication success or `PASS`. Interactive provider output stays attached to the terminal.
 
+Once authentication is known to be missing, expired, or invalid, interactive
+setup, bootstrap, and preflight start re-authentication immediately and wait
+for the selected producer: `codex mcp login atlassian`,
+`claude mcp login atlassian --no-browser`, or
+`cursor-agent mcp login atlassian`. Claude checks
+`claude mcp login --help` for `--no-browser` only at this OAuth boundary;
+unsupported clients return `DEPENDENCY_MISSING` with
+`Remediation: claude update`. Non-interactive setup, bootstrap, and preflight
+and all Doctor paths never invoke login. Cursor hooks retain their
+non-interactive preflight contract.
+
+An active agent receiving `ATLASSIAN_AUTH_REQUIRED` stops the dependent write,
+runs the selected command in an interactive terminal, streams producer output
+so the user receives the one-time login URL, and waits for completion. It
+never synthesizes, parses, persists, or copies that URL or credentials into an
+issue, commit, or durable log. It reruns a fresh operation-specific preflight
+and continues only on `Result: PASS`.
+
 Cursor MCP commands run from `/` while preserving the user's HOME and
 credentials. This keeps global `~/.cursor/mcp.json` separate from a
 project-local `.cursor/mcp.json`, including when bootstrap is invoked from
