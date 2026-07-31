@@ -1685,6 +1685,22 @@ cursor_configure_atlassian() {
   assert_safe_user_path "$cuca_file" 'Cursor MCP config'
   mkdir -p "$cuca_dir" ||
     die GOVERNANCE_NOT_READY 'Cannot create Cursor config directory'
+  if [ -f "$cuca_file" ]; then
+    jq -e -s 'length == 1 and (.[0] | type == "object")' \
+      "$cuca_file" >/dev/null 2>&1 ||
+      die GOVERNANCE_NOT_READY 'Cursor MCP config is invalid JSON'
+    cuca_state=0
+    connector_state cursor || cuca_state=$?
+    case "$cuca_state" in
+      0) return 0 ;;
+      1) ;;
+      2)
+        die CONNECTOR_MISSING \
+          'Existing atlassian connector has an unexpected URL for cursor'
+        ;;
+      *) die GOVERNANCE_NOT_READY 'Cannot inspect cursor Atlassian connector' ;;
+    esac
+  fi
   cuca_temp=$(mktemp "$cuca_dir/.beroka-mcp.XXXXXX") ||
     die GOVERNANCE_NOT_READY 'Cannot stage Cursor MCP config'
   if [ -f "$cuca_file" ]; then
@@ -1703,6 +1719,51 @@ cursor_configure_atlassian() {
   fi
   apply_user_file "$cuca_temp" "$cuca_file" cursor-mcp-config
   rm -f "$cuca_temp" || :
+}
+
+cursor_project_mcp_notice() {
+  cpmp_root=$(git rev-parse --show-toplevel 2>/dev/null) || return 0
+  cpmp_file=$cpmp_root/.cursor/mcp.json
+  [ "$cpmp_file" != "$HOME/.cursor/mcp.json" ] || return 0
+  [ -f "$cpmp_file" ] && [ ! -L "$cpmp_file" ] || return 0
+  jq -e '.mcpServers.atlassian != null' "$cpmp_file" \
+    >/dev/null 2>&1 || return 0
+  printf '%s\n' 'Project MCP: PRESENT_IGNORED'
+}
+
+cursor_global_connector_required() {
+  printf '%s\n' \
+    'Client: cursor' \
+    'Provider: atlassian' \
+    'Authentication: AUTH_REQUIRED' \
+    'Remediation: beroka-governance setup-connectors --client cursor'
+  die ATLASSIAN_AUTH_REQUIRED
+}
+
+cursor_first_run_setup() {
+  cfr_interactive=$1
+  cfr_dir=$HOME/.cursor
+  cfr_file=$cfr_dir/mcp.json
+  assert_safe_user_path "$cfr_dir" 'Cursor config'
+  assert_safe_user_path "$cfr_file" 'Cursor MCP config'
+  if [ -e "$cfr_file" ]; then
+    [ -f "$cfr_file" ] && [ ! -L "$cfr_file" ] &&
+      jq -e -s 'length == 1 and (.[0] | type == "object")' \
+        "$cfr_file" >/dev/null 2>&1 ||
+      die GOVERNANCE_NOT_READY 'Cursor MCP config is invalid JSON'
+  fi
+  cursor_project_mcp_notice
+  [ "$cfr_interactive" -eq 1 ] ||
+    cursor_global_connector_required
+  printf 'Install global Atlassian MCP and start OAuth now? [y/N] '
+  IFS= read -r cfr_answer || cfr_answer=
+  case "$cfr_answer" in
+    y|Y|yes|YES)
+      cursor_configure_atlassian
+      run_oauth cursor || auth_pending cursor
+      ;;
+    *) cursor_global_connector_required ;;
+  esac
 }
 
 configure_connector() {
@@ -3484,7 +3545,7 @@ cmd_preflight() {
 }
 
 cmd_setup_connectors() {
-  setup_client= setup_non_interactive=0
+  setup_client= setup_non_interactive=0 setup_cursor_first_run=0
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --client)
@@ -3516,7 +3577,14 @@ cmd_setup_connectors() {
   connector_state "$setup_client" || setup_state=$?
   case "$setup_state" in
     0) ;;
-    1) configure_connector "$setup_client" ;;
+    1)
+      if [ "$setup_client" = cursor ]; then
+        setup_cursor_first_run=1
+        cursor_first_run_setup "$setup_interactive"
+      else
+        configure_connector "$setup_client"
+      fi
+      ;;
     2) die CONNECTOR_MISSING "Existing atlassian connector has an unexpected URL for $setup_client" ;;
     *) die GOVERNANCE_NOT_READY "Cannot inspect $setup_client Atlassian connector" ;;
   esac
@@ -3531,7 +3599,10 @@ cmd_setup_connectors() {
       pass_result
       return
       ;;
-    1) ;;
+    1)
+      [ "$setup_cursor_first_run" -eq 0 ] ||
+        auth_pending "$setup_client"
+      ;;
     *) connector_health_unavailable "$setup_client" ;;
   esac
   if [ "$setup_interactive" -eq 1 ]; then

@@ -133,6 +133,12 @@ Connector health có 15-second total deadline. Nếu chưa có classifiable reco
 Capability được request nhưng không có provider-owned evidence trả
 `CONNECTOR_CAPABILITY_REQUIRED`.
 
+Beroka governance yêu cầu global `~/.cursor/mcp.json` cho Atlassian setup.
+Cursor vẫn có thể dùng project connector; connector đó được báo
+`Project MCP: PRESENT_IGNORED`, không bao giờ bị sửa và không được chấp nhận là
+global setup. Compatible global connector giữ idempotent; unknown health
+remains fail-closed.
+
 schema-1 compatibility remains for existing releases. `provider-owned evidence` là baseline cho capability decision; `cross-client adapters` chỉ normalize inventory của Codex, Claude Code, và Cursor. Workflow rules are instruction-driven, không phải hard CLI enforcement.
 
 Trước Jira create, resolve exact metadata, search record, create once, rồi read-back key. Indeterminate create trả `CREATION_STATUS_UNKNOWN`; never retry automatically. Confluence create cũng read-back content và parent.

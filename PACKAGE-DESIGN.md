@@ -128,6 +128,13 @@ credentials. This keeps global `~/.cursor/mcp.json` separate from a
 project-local `.cursor/mcp.json`, including when bootstrap is invoked from
 HOME.
 
+Interactive Cursor first-run confirms before writing only the global Atlassian
+MCP entry, streams OAuth, then health-checks. A project connector is reported
+as `Project MCP: PRESENT_IGNORED` and is neither modified nor accepted as
+global setup. Non-interactive Cursor first-run does not write global MCP configuration
+or start OAuth; it returns the interactive resume command. Compatible global
+connectors remain idempotent and unknown health remains fail-closed.
+
 Bootstrap invokes `setup-connectors` for its selected client. The selected
 client's connector inspection requires `jq` for every selected client.
 

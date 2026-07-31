@@ -726,9 +726,12 @@ printf '%s\n' codex,claude,cursor \
   >"$XDG_CONFIG_HOME/beroka-ai-governance/clients"
 printf '%s\n' "$cursor_hash" \
   >"$XDG_CONFIG_HOME/beroka-ai-governance/cursor-user-rule.sha256"
+mkdir -p "$HOME/.cursor"
+printf '%s\n' \
+  '{"mcpServers":{"atlassian":{"url":"https://mcp.atlassian.com/v1/mcp/authv2"}}}' \
+  >"$HOME/.cursor/mcp.json"
 cursor_hooks=$HOME/.cursor/hooks.json
 installed_cursor_cli=$BEROKA_GOV_BIN_DIR/beroka-governance
-mkdir -p "$(dirname -- "$cursor_hooks")"
 cat >"$cursor_hooks" <<'EOF'
 {
   "version": 1,

@@ -46,6 +46,8 @@ is still pending, rerun
 provider OAuth output directly, while `--non-interactive` returns the exact
 client-owned remediation without opening a browser.
 
+On an interactive Cursor first-run, `setup-connectors` asks `Install global Atlassian MCP and start OAuth now?`. After confirmation, it writes only the global entry, streams OAuth, then health-checks. Non-interactive Cursor first-run does not write global MCP configuration or start OAuth; it returns the interactive resume command.
+
 The launcher verifies its embedded annotated tag and commit before it executes
 package code. It installs the active release and selected-client adapter in
 user-owned locations. Bootstrap does not infer repository context from the

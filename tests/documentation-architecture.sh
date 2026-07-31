@@ -165,6 +165,11 @@ require_text handbook.md 'globally unique Folder'
 reject_text templates/jira-confluence.md 'The Hub row is canonical'
 require_text README.md 'Bootstrap does not infer repository context'
 require_text PACKAGE-DESIGN.md 'Bootstrap does not infer repository context'
+require_text README.md \
+  'Install global Atlassian MCP and start OAuth now?'
+require_text handbook.md 'Project MCP: PRESENT_IGNORED'
+require_text PACKAGE-DESIGN.md \
+  'Non-interactive Cursor first-run does not write global MCP configuration'
 reject_text README.md 'renders context when a Git repository is present'
 reject_text PACKAGE-DESIGN.md \
   'renders context if a Git repository is present'
