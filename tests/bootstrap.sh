@@ -54,19 +54,48 @@ assert_separate_managed_block() {
     fail "instruction markers are not separately delimited in $asmb_file"
 }
 
+normalize_instruction() {
+  awk 'NF {$1=$1; printf "%s ", $0}'
+}
+
+instruction_contract() {
+  awk '
+    $0 == "Technical artifacts default to English; chat language does not select artifact language." {
+      contract=1
+    }
+    contract { print }
+    contract && /returns `Result: PASS`\.$/ {
+      complete=1
+      exit
+    }
+    END { exit !complete }
+  '
+}
+
+expected_atlassian_auth_contract() {
+  eaac_command=$1
+  cat <<EOF
+Technical artifacts default to English; chat language does not select artifact language. Use another language only when the user explicitly requests it in natural language.
+
+If a non-interactive preflight returns \`ATLASSIAN_AUTH_REQUIRED\`, stop the dependent external write. In an interactive terminal or PTY, run \`$eaac_command\` and stream the opaque producer output unchanged so the user receives its one-time login URL. Never synthesize, parse, persist, copy, or place that URL or credentials in an issue, commit, or durable log. Wait for the producer command to complete. Then rerun a fresh operation-specific preflight and continue only when it returns \`Result: PASS\`.
+EOF
+}
+
 assert_atlassian_auth_handoff() {
   aah_file=$1 aah_command=$2
-  aah_content=$(awk '{$1=$1; printf "%s ", $0}' "$aah_file")
-  assert_contains "$aah_content" 'ATLASSIAN_AUTH_REQUIRED'
-  assert_contains "$aah_content" "$aah_command"
-  assert_contains "$aah_content" 'stream the producer output'
-  assert_contains "$aah_content" 'never synthesize, parse, persist, copy'
-  assert_contains "$aah_content" 'place that URL or credentials'
-  assert_contains "$aah_content" 'fresh operation-specific preflight'
-  assert_contains "$aah_content" 'Result: PASS'
-  assert_contains "$aah_content" \
-    'Task, issue, and pull request work defaults to English'
-  assert_contains "$aah_content" 'explicitly requests another language'
+  aah_managed=$(awk -v start="$START_MARKER" -v end="$END_MARKER" '
+    $0 == start { managed=1; next }
+    $0 == end { exit }
+    managed { print }
+  ' "$aah_file")
+  aah_contract=$(printf '%s\n' "$aah_managed" |
+    instruction_contract) ||
+    fail "missing coherent Atlassian auth contract in $aah_file"
+  aah_actual=$(printf '%s\n' "$aah_contract" | normalize_instruction)
+  aah_expected=$(expected_atlassian_auth_contract "$aah_command" |
+    normalize_instruction)
+  [ "$aah_actual" = "$aah_expected" ] ||
+    fail "wrong Atlassian auth contract in $aah_file"
 }
 
 assert_cursor_hook() {
@@ -989,18 +1018,22 @@ then
   fail 'Cursor bootstrap accepted a declined User Rule'
 fi
 cursor_rule_output=$(printf '%s\n' "$cursor_output" |
-  tr '\r' '\n' |
-  awk 'NF {$1=$1; printf "%s ", $0}')
-assert_contains "$cursor_rule_output" 'ATLASSIAN_AUTH_REQUIRED'
-assert_contains "$cursor_rule_output" 'cursor-agent mcp login atlassian'
-assert_contains "$cursor_rule_output" 'stream the producer output'
-assert_contains "$cursor_rule_output" 'never synthesize, parse, persist, copy'
-assert_contains "$cursor_rule_output" 'place that URL or credentials'
-assert_contains "$cursor_rule_output" 'fresh operation-specific preflight'
-assert_contains "$cursor_rule_output" 'Result: PASS'
-assert_contains "$cursor_rule_output" \
-  'Task, issue, and pull request work defaults to English'
-assert_contains "$cursor_rule_output" 'explicitly requests another language'
+  tr -d '\r' |
+  awk '
+    $0 == "## Beroka AI Governance" { rule=1 }
+    /^User Rule added in Cursor Settings > Rules?/ { exit }
+    rule { print }
+  ')
+cursor_rule_contract=$(printf '%s\n' "$cursor_rule_output" |
+  instruction_contract) ||
+  fail 'emitted Cursor User Rule lacks a coherent auth contract'
+cursor_rule_actual=$(printf '%s\n' "$cursor_rule_contract" |
+  normalize_instruction)
+cursor_rule_expected=$(expected_atlassian_auth_contract \
+  'cursor-agent mcp login atlassian' |
+  normalize_instruction)
+[ "$cursor_rule_actual" = "$cursor_rule_expected" ] ||
+  fail 'emitted Cursor User Rule has the wrong auth contract'
 
 $CLI uninstall --force >/dev/null
 cmp -s "$codex_personal_expected" "$HOME/.codex/AGENTS.md" ||

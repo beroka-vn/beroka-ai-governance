@@ -17,16 +17,18 @@ Repository-specific instructions may narrow central governance. They must not
 broaden authority or bypass a central stop condition.
 
 Technical artifacts default to English; chat language does not select artifact language.
-Task, issue, and pull request work defaults to English unless the user
-explicitly requests another language. Express that request as
-`Work-item language: <language>` for the current generation.
+Use another language only when the user explicitly requests it in natural
+language.
 
 If a non-interactive preflight returns `ATLASSIAN_AUTH_REQUIRED`, stop the
-dependent external write. In an interactive terminal, run
-`cursor-agent mcp login atlassian`, stream the producer output so the user
-receives the one-time login URL, wait for the producer command to complete,
-and never synthesize, parse, persist, copy, or place that URL or credentials
-in an issue, commit, or durable log. Then rerun a fresh operation-specific
-preflight and continue only when it returns `Result: PASS`.
+dependent external write. In an interactive terminal or PTY, run
+`cursor-agent mcp login atlassian` and stream the opaque producer output
+unchanged so the user receives its one-time login URL. Never synthesize,
+parse, persist, copy, or place that URL or credentials in an issue, commit, or
+durable log. Wait for the producer command to complete. Then rerun a fresh
+operation-specific preflight and continue only when it returns `Result: PASS`.
+
+Do not require `Work-item language: <language>`; a natural-language request is
+sufficient.
 
 Governed Jira and GitHub writes must use the configured MCP tools and never direct `gh` write commands.
