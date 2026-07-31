@@ -8,6 +8,20 @@
   creation. Shared work requires exact target repositories, one confirmed
   primary tracking repository, and fresh context for every target. Do not infer
   a target from the IDE workspace or repository name.
+- Cross-team intake is symmetric for Frontend → Backend and Backend → Frontend.
+  Use `jira-intake-write` from the requesting repository only when preflight
+  returns its exact opposite-team repository and Jira project.
+- The requester/reporter remains distinct from the executor/assignee. Intake
+  starts unassigned with Sprint unset and no receiving-project parent selected;
+  the receiving team owns triage, issue type, active Epic, final priority,
+  Sprint, readiness, assignment, and technical delivery.
+- Assignment alone does not authorize a GitHub Issue. Create exactly one
+  receiving-repository Issue only after
+  `Accepted + Ready + Assigned + Definition of Ready PASS` and a search proves
+  there is no existing primary GitHub Issue.
+- Missing supported intake state or equivalent field returns
+  `INTAKE_CONFIGURATION_REQUIRED`. Intake handling is
+  agent-driven; there is no event listener.
 - Every GitHub issue has one primary human owner. An explicit assignee wins;
   otherwise use the requesting developer when known, then the authenticated
   human creator. Never default to a bot or service account. Stop if ownership

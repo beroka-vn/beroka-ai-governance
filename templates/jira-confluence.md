@@ -56,6 +56,49 @@ Active Epic confirmation required
 
 If Jira cannot be read, report access failure. Never invent an Epic list.
 
+## Cross-team Jira intake
+
+Frontend → Backend and Backend → Frontend use `jira-intake-write` from the
+requesting repository. The preflight result must name the exact receiving
+repository and Jira project. Missing supported intake state or equivalent-field
+evidence returns `INTAKE_CONFIGURATION_REQUIRED`.
+
+```text
+Cross-team Jira intake request
+- Direction: Frontend → Backend | Backend → Frontend
+- Requester/reporter accountId:
+- Receiving repository/project: <exact preflight values>
+- Requested outcome and business reason:
+- Requested priority: <input, not commitment>
+- Duplicate search:
+- Create metadata and intake state/equivalent field: VERIFIED | MISSING
+- Assignee: Unassigned
+- Sprint: Unset
+- Parent: Unset — receiving team selects
+- Work-item language:
+- Result: PASS | INTAKE_CONFIGURATION_REQUIRED | ROUTING_REQUIRED
+```
+
+```text
+Receiving-team triage decision
+- Intake Jira item:
+- Decision: Accepted | Rejected
+- Duplicate resolution:
+- Final issue type and active parent Epic:
+- Final priority and Sprint:
+- Executor/assignee accountId:
+- Readiness: Ready | Not Ready
+- Definition of Ready: PASS | FAIL
+- Existing primary GitHub Issue search: NONE | <issue>
+- Receiving-repository GitHub Issue/readback: <issue | Pending>
+- Result: PASS | NOT_READY | DUPLICATE
+```
+
+Assignment alone does not authorize a GitHub Issue. Creation requires
+`Accepted + Ready + Assigned + Definition of Ready PASS` and no existing
+primary GitHub Issue. The requester/reporter remains distinct from the
+executor/assignee. Intake is agent-driven; there is no event listener.
+
 ```text
 Cross-project counterpart confirmation
 - Requested project/item: <BB | BF> / <Epic | Feature | Story | Task | Bug>

@@ -115,6 +115,30 @@ require_text runtime/profiles/backend.md 'globally unique Folder'
 require_text runtime/profiles/frontend.md 'Capability Index'
 require_text runtime/integrations/beroka-be-fe.md 'Registry rows'
 require_text runtime/integrations/beroka-be-fe.md 'Integration Hub'
+for file in governance.md workflow.md runtime/rules/work-items.md \
+  runtime/integrations/beroka-be-fe.md templates/jira-confluence.md; do
+  require_text "$file" 'jira-intake-write'
+  require_text "$file" 'Frontend → Backend'
+  require_text "$file" 'Backend → Frontend'
+done
+require_text runtime/rules/work-items.md \
+  'requester/reporter remains distinct from the executor/assignee'
+require_text runtime/rules/work-items.md \
+  'Assignment alone does not authorize a GitHub Issue.'
+require_text runtime/rules/work-items.md \
+  'Accepted + Ready + Assigned + Definition of Ready PASS'
+require_text runtime/rules/work-items.md \
+  'no existing primary GitHub Issue'
+require_text runtime/rules/work-items.md 'INTAKE_CONFIGURATION_REQUIRED'
+require_text runtime/rules/work-items.md \
+  'agent-driven; there is no event listener'
+reject_text workflow.md 'reassign to the requester'
+require_text workflow.md \
+  'Receiving-team executor ownership'
+require_text templates/jira-confluence.md \
+  'Cross-team Jira intake request'
+require_text templates/jira-confluence.md \
+  'Receiving-team triage decision'
 require_text runtime/rules/work-items.md 'LABEL_CONFIGURATION_REQUIRED'
 require_text runtime/rules/work-items.md 'Parent Epic: N/A'
 require_text runtime/rules/work-items.md \
