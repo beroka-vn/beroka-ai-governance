@@ -1,5 +1,9 @@
 # BE/FE Work Items
 
+- AI-generated Jira and GitHub work items and technical artifacts default to
+  English. Chat language does not select artifact language. Use another language
+  only when the user explicitly supplies `Work-item language: <language>` for
+  the current generation.
 - Classify work as Frontend, Backend, or shared before planning or record
   creation. Shared work requires exact target repositories, one confirmed
   primary tracking repository, and fresh context for every target. Do not infer

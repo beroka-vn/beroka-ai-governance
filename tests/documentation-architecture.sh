@@ -117,6 +117,18 @@ require_text runtime/integrations/beroka-be-fe.md 'Registry rows'
 require_text runtime/integrations/beroka-be-fe.md 'Integration Hub'
 require_text runtime/rules/work-items.md 'LABEL_CONFIGURATION_REQUIRED'
 require_text runtime/rules/work-items.md 'Parent Epic: N/A'
+require_text runtime/rules/work-items.md \
+  'AI-generated Jira and GitHub work items and technical artifacts default to'
+require_text runtime/rules/work-items.md \
+  'English. Chat language does not select artifact language.'
+require_text runtime/rules/work-items.md \
+  'Work-item language: <language>'
+require_text templates/agent-entrypoints/CURSOR-USER-RULE.txt \
+  'Technical artifacts default to English; chat language does not select artifact language.'
+require_text templates/agent-entrypoints/CURSOR-USER-RULE.txt \
+  'Work-item language: <language>'
+require_text templates/agent-entrypoints/CURSOR-USER-RULE.txt \
+  'configured MCP tools and never direct `gh` write commands'
 require_text governance.md 'native Issue Type'
 require_text workflow.md 'standalone reason'
 reject_text runtime/integrations/beroka-be-fe.repositories \
@@ -246,7 +258,27 @@ trap - EXIT HUP INT TERM
 
 require_text governance.md \
   'CLI hard-enforces installation, release integrity, catalog routing, connector, authentication, and operation preflight.'
+require_text governance.md 'Technical artifacts default to English across clients'
+require_text governance.md 'operation-specific preflight immediately before each write'
 require_text workflow.md \
   'Agent instructions govern workflow behavior unless CI, hooks, branch protection, or platform policy provides hard enforcement.'
+require_text workflow.md 'Technical artifacts default to English across clients'
+require_text workflow.md 'preflight immediately before each write'
+require_text README.md 'documented global local hooks'
+require_text README.md 'Instruction: USER_CONFIRMED'
+require_text README.md 'Runtime hook: INSTALLED'
+require_text README.md 'enforcement: PASS'
+require_text handbook.md 'Runtime hook: INSTALLED'
+require_text handbook.md 'Runtime enforcement: PASS'
+require_text handbook.md 'Work-item language: <language>'
+require_text PACKAGE-DESIGN.md 'atomic JSON merge'
+require_text PACKAGE-DESIGN.md 'personal hooks are preserved'
+require_text PACKAGE-DESIGN.md 'Security hooks fail closed'
+require_text PACKAGE-DESIGN.md 'XDG_STATE_HOME/beroka-ai-governance/cursor'
+require_text PACKAGE-DESIGN.md 'runtime-enforcement canary'
+require_text PACKAGE-DESIGN.md 'local-agent threat model'
+for file in README.md handbook.md PACKAGE-DESIGN.md governance.md workflow.md; do
+  reject_text "$file" 'USER_CONFIRMED`, not verified runtime behavior'
+done
 
 printf '%s\n' 'Documentation architecture tests: PASS'
