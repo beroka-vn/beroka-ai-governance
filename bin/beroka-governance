@@ -4028,8 +4028,12 @@ cursor_jira_operation() {
     printf '%s\n' "$CURSOR_TOOL_INPUT" | jq -er '
       [
         .. | objects |
-        (.projectKey?, .project?) |
-        select(type == "string" and test("^[A-Z][A-Z0-9_]*$"))
+        (.projectKey?, .project?, .issueKey?, .issue_key?, .issueIdOrKey?) |
+        select(type == "string") |
+        if test("^[A-Z][A-Z0-9_]*$") then .
+        elif test("^[A-Z][A-Z0-9_]*-[1-9][0-9]*$") then
+          capture("^(?<project>[A-Z][A-Z0-9_]*)-").project
+        else empty end
       ] |
       unique |
       if length == 1 then .[0] else error("one Jira project is required") end

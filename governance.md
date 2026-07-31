@@ -362,18 +362,21 @@ not a personal quick filter. If child creation fails after Epic creation, return
 return `CREATED_BUT_NOT_VISIBLE`; never create a duplicate or change board
 settings without authority.
 
-## Jira execution ownership and reassignment
+## Receiving-team executor ownership
 
 The gate applies to the executable Story/Task/Bug/Feature, not its Epic. Resolve
-the requester by Jira `accountId`, not display name. If assignee differs or is
-unset, warn and wait for exact confirmation:
+the requester/reporter and executor/assignee separately by Jira `accountId`, not
+display name. If assignee differs from the confirmed executor or is unset, warn
+and wait for exact receiving-team confirmation:
 
-`I confirm ownership of <key>, reassign it to me, and continue execution.`
+`I confirm <executor accountId> owns <key>; assign it and continue execution.`
 
-After confirmation, assign the requester, read back the accountId, record an
-old/new assignee comment, check Definition of Ready and branch ownership, then
-start implementation. Failed permission, mapping, or readback blocks execution.
-Jira reassignment does not transfer a branch owned by another writer.
+After confirmation, assign only that executor, read back the accountId, record
+an old/new assignee comment, check Definition of Ready and branch ownership,
+then start implementation. The requester may be the executor for same-team work,
+but cross-team intake stays with its receiving-team executor. Failed permission,
+mapping, or readback blocks execution. Jira reassignment does not transfer a
+branch owned by another writer.
 
 ## GitHub repository routing
 

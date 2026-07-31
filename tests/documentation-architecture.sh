@@ -133,7 +133,10 @@ require_text runtime/rules/work-items.md 'INTAKE_CONFIGURATION_REQUIRED'
 require_text runtime/rules/work-items.md \
   'agent-driven; there is no event listener'
 reject_text workflow.md 'reassign to the requester'
+reject_text governance.md 'assign the requester'
 require_text workflow.md \
+  'Receiving-team executor ownership'
+require_text governance.md \
   'Receiving-team executor ownership'
 require_text templates/jira-confluence.md \
   'Cross-team Jira intake request'
