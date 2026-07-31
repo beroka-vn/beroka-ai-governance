@@ -104,6 +104,21 @@ done
 
 jira_write=$(printf '%s\n' "$base_input" | jq -c '. + {tool_name:"jira.create_issue",url:"https://example.atlassian.net",tool_input:{body:"Work-item language: English"}}')
 assert_denied "$(hook beforeMCPExecution "$jira_write")" WORK_ITEM_TEMPLATE_REQUIRED
+jira_update_by_key=$(printf '%s\n' "$base_input" | jq -c \
+  '. + {tool_name:"jira.update_issue",url:"https://example.atlassian.net",tool_input:{issueKey:"BB-123",body:"Work-item language: English"}}')
+assert_denied "$(hook beforeMCPExecution "$jira_update_by_key")" CLIENT_INSTRUCTION_REQUIRED
+cross_team_update_by_key=$(printf '%s\n' "$jira_update_by_key" | jq -c \
+  '.tool_input.issueKey="BF-123"')
+assert_denied "$(hook beforeMCPExecution "$cross_team_update_by_key")" ROUTING_REQUIRED
+intake_base=$(printf '%s\n' "$base_input" | jq -c \
+  '. + {tool_name:"jira.create_issue",url:"https://example.atlassian.net",tool_input:{projectKey:"BF",issue_type:"Task",requester:"requester-account",priority:"P2",github:"N/A",body:"Work-item language: English"}}')
+assert_denied "$(hook beforeMCPExecution "$(printf '%s\n' "$intake_base" | jq -c '.tool_input.assignee="frontend-developer"')")" WORK_ITEM_TEMPLATE_REQUIRED
+assert_denied "$(hook beforeMCPExecution "$(printf '%s\n' "$intake_base" | jq -c '.tool_input.parent="BF-1"')")" WORK_ITEM_TEMPLATE_REQUIRED
+assert_denied "$(hook beforeMCPExecution "$(printf '%s\n' "$intake_base" | jq -c 'del(.tool_input.requester)')")" WORK_ITEM_TEMPLATE_REQUIRED
+assert_denied "$(hook beforeMCPExecution "$(printf '%s\n' "$intake_base" | jq -c '.tool_input.projectKey="XX"')")" ROUTING_REQUIRED
+assert_denied "$(hook beforeMCPExecution "$(printf '%s\n' "$intake_base" | jq -c '.tool_name="jira.update_issue"')")" ROUTING_REQUIRED
+ordinary_unassigned=$(printf '%s\n' "$intake_base" | jq -c '.tool_input.projectKey="BB"')
+assert_denied "$(hook beforeMCPExecution "$ordinary_unassigned")" WORK_ITEM_TEMPLATE_REQUIRED
 unknown_write=$(printf '%s\n' "$base_input" | jq -c '. + {tool_name:"create_record",url:"https://github.com",tool_input:{body:"Work-item language: English"}}')
 assert_denied "$(hook beforeMCPExecution "$unknown_write")" WORK_ITEM_TEMPLATE_REQUIRED
 

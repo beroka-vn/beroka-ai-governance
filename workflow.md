@@ -94,6 +94,26 @@ Cross-project mapping is a separate result. Pure FE returns
 the BF backlog after explicit confirmation as `Pending` with owner, but returns
 `MAPPING_INCOMPLETE` and is not Ready for dependent execution.
 
+#### Cross-team Jira intake
+
+Frontend → Backend and Backend → Frontend requesters use
+`jira-intake-write` from their own routed repository. Create only in the exact
+opposite-team project returned by preflight. The requester/reporter leaves
+assignee, Sprint, and parent unset; requested priority is not a receiving-team
+commitment.
+
+The receiving team owns duplicate checks, issue type, active Epic,
+accept/reject, final priority, Sprint, readiness, executor assignment, and
+technical delivery. Assignment alone does not authorize a GitHub Issue. Create
+one receiving-repository Issue only after
+`Accepted + Ready + Assigned + Definition of Ready PASS` and no existing
+primary GitHub Issue is found.
+
+Return `INTAKE_CONFIGURATION_REQUIRED` if create metadata cannot prove a
+supported intake state or equivalent field. Intake is agent-driven; there is no
+event listener. Keep separate BB/BF items, same-project parents, `Blocks`
+provider → consumer, and `Relates` for non-blocking same-capability work.
+
 ### Step 2 — Decompose into GitHub Issues
 
 - Backend:
@@ -149,16 +169,22 @@ Ready only after `READY_FOR_FE`, an exact contract version, and FE
 
 ### Step 4 — Create the branch and implement
 
+#### Receiving-team executor ownership
+
 Before editing for a Story/Task/Bug/Feature:
 
-1. resolve the requester by Jira `accountId`;
-2. read the current assignee;
-3. if mismatched or unassigned, show a warning and wait for exact confirmation;
-4. reassign to the requester and read back;
+1. resolve the requester/reporter and executor/assignee separately by Jira
+   `accountId`;
+2. read the current assignee and confirm that person owns the technical GitHub
+   work;
+3. if mismatched or unassigned, show a warning and wait for exact receiving-team
+   confirmation;
+4. assign only the confirmed executor and read back;
 5. verify Definition of Ready and GitHub writer ownership.
 
 Failure to reassign/read back blocks implementation. Do not reassign the parent
-Epic or transfer an active branch implicitly.
+Epic, assign cross-team work back to its requester, or transfer an active branch
+implicitly.
 
 Branch format: `<type>/<issue-number>-<short-slug>`, where type is `feature`,
 `fix`, `hotfix`, `docs`, `refactor`, `test`, `chore`, or `ci`.

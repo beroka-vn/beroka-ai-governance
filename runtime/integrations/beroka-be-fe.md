@@ -13,6 +13,16 @@
   evidence plus developer confirmation where the mapping is not unique.
 - Cross-repository writes require `CROSS_REPO_POLICY=profile-controlled`.
 - `explicit-only` narrows this pack and disables automatic counterpart use.
-- The current central inventory has no exact counterpart/workflow mapping, so
-  every current `cross-repo-write` returns `ROUTING_REQUIRED` before client
+- Frontend → Backend and Backend → Frontend intake use the exact canonical
+  mappings in `beroka-be-fe.intake` through `jira-intake-write`. This authorizes
+  only a new intake record in the returned Jira project; it does not grant
+  receiving-repository execution authority.
+- The requester/reporter stays separate from the receiving executor/assignee.
+  Assignment alone never creates a GitHub Issue; the receiving team must verify
+  Accepted, Ready, Assigned, Definition of Ready PASS, and no existing primary
+  Issue.
+- Missing supported intake workflow evidence returns
+  `INTAKE_CONFIGURATION_REQUIRED`. Intake is agent-driven, not an event
+  listener.
+- General `cross-repo-write` remains `ROUTING_REQUIRED` before client
   inspection.

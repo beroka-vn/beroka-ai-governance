@@ -321,6 +321,31 @@ The same discovery applies when BB work is created after BF. Epic pairs use
 `Relates`. Child dependencies use `Blocks` provider → consumer; non-blocking
 same-capability children use `Relates`.
 
+## Cross-team Jira intake
+
+Frontend → Backend and Backend → Frontend use the same constrained lifecycle.
+The requester runs a fresh `jira-intake-write` preflight from their own exact
+repository. Only the canonical opposite-team repository and Jira project
+returned by preflight may receive the intake; ordinary `jira-write`, repository
+role checks, and `cross-repo-write` remain unchanged.
+
+The requester/reporter creates only the intake record. Leave assignee and Sprint
+unset, do not select a receiving-project parent, and treat requested priority
+as input. The receiving team exclusively owns duplicate resolution, issue type,
+active Epic, acceptance/rejection, final priority, Sprint, readiness,
+executor/assignee, and GitHub delivery.
+
+Assignment alone does not authorize a GitHub Issue. The receiving-team agent
+creates exactly one Issue in its repository only after
+`Accepted + Ready + Assigned + Definition of Ready PASS` and an idempotency
+search proves there is no existing primary GitHub Issue. Read back its executor
+and primary Jira link.
+
+Before intake creation, resolve Jira create metadata and verify a supported
+intake state or equivalent field. Otherwise return
+`INTAKE_CONFIGURATION_REQUIRED` with configuration remediation. The lifecycle
+is agent-driven; there is no event listener.
+
 ## Jira post-create readback and backlog verification
 
 Creation completes only after the agent:
@@ -337,18 +362,21 @@ not a personal quick filter. If child creation fails after Epic creation, return
 return `CREATED_BUT_NOT_VISIBLE`; never create a duplicate or change board
 settings without authority.
 
-## Jira execution ownership and reassignment
+## Receiving-team executor ownership
 
 The gate applies to the executable Story/Task/Bug/Feature, not its Epic. Resolve
-the requester by Jira `accountId`, not display name. If assignee differs or is
-unset, warn and wait for exact confirmation:
+the requester/reporter and executor/assignee separately by Jira `accountId`, not
+display name. If assignee differs from the confirmed executor or is unset, warn
+and wait for exact receiving-team confirmation:
 
-`I confirm ownership of <key>, reassign it to me, and continue execution.`
+`I confirm <executor accountId> owns <key>; assign it and continue execution.`
 
-After confirmation, assign the requester, read back the accountId, record an
-old/new assignee comment, check Definition of Ready and branch ownership, then
-start implementation. Failed permission, mapping, or readback blocks execution.
-Jira reassignment does not transfer a branch owned by another writer.
+After confirmation, assign only that executor, read back the accountId, record
+an old/new assignee comment, check Definition of Ready and branch ownership,
+then start implementation. The requester may be the executor for same-team work,
+but cross-team intake stays with its receiving-team executor. Failed permission,
+mapping, or readback blocks execution. Jira reassignment does not transfer a
+branch owned by another writer.
 
 ## GitHub repository routing
 

@@ -25,6 +25,7 @@ ROUTE_SCHEMA_VERSION= ROUTE_PROFILE= ROUTE_JIRA_PROJECT_KEY=
 ROUTE_JIRA_BOARD_ID= ROUTE_CONFLUENCE_SPACE_KEY=
 ROUTE_CONFLUENCE_ROOT_CONTENT_ID= ROUTE_CONFLUENCE_ROOT_CONTENT_TYPE=
 ROUTE_INTEGRATION_PROFILE= ROUTE_CROSS_REPO_POLICY= DEPENDENCY_STATE=
+INTAKE_TARGET_REPOSITORY= INTAKE_TARGET_PROFILE= INTAKE_TARGET_JIRA_PROJECT=
 GITHUB_ROLE=
 GITHUB_FRONTEND_MEMBER=0 GITHUB_BACKEND_MEMBER=0
 CONNECTOR_PROBE_CLIENT= CONNECTOR_PROBE_OUTPUT= CONNECTOR_PROBE_STATUS=
@@ -578,6 +579,14 @@ validate_release_checkout() {
     if semver_not_older v1.0.2 "$vrc_version"; then
       assert_release_file "$vrc_checkout" runtime/rules/work-items.md
     fi
+    if semver_not_older v1.0.5 "$vrc_version"; then
+      assert_release_file "$vrc_checkout" \
+        runtime/integrations/beroka-be-fe.intake
+      validate_intake_inventory \
+        "$vrc_checkout/runtime/integrations/beroka-be-fe.intake" \
+        "$vrc_checkout/runtime/repositories" ||
+        die VERSION_MISMATCH 'Invalid cross-team intake inventory'
+    fi
     atlassian_compatibility_schema \
       "$vrc_checkout/runtime/compatibility/atlassian.tsv" >/dev/null ||
       die VERSION_MISMATCH 'Unsupported Atlassian compatibility schema'
@@ -590,6 +599,58 @@ validate_release_checkout() {
   assert_detached_release "$vrc_checkout"
   vrc_status=$(git -C "$vrc_checkout" status --porcelain --untracked-files=all 2>/dev/null) || die VERSION_MISMATCH 'Cannot inspect installed release status'
   [ -z "$vrc_status" ] || die VERSION_MISMATCH 'Installed release contains local modifications'
+}
+
+validate_intake_inventory() {
+  vii_file=$1 vii_catalog=$2
+  [ -f "$vii_file" ] && [ ! -L "$vii_file" ] &&
+    [ -d "$vii_catalog" ] && [ ! -L "$vii_catalog" ] || return 1
+  awk -F '\t' '
+    /^#/ || /^[[:space:]]*$/ { next }
+    NF != 4 { invalid=1; next }
+    $1 == "beroka-vn/Beroka_Frontend" &&
+      $2 == "beroka-vn/Beroka_Backend" &&
+      $3 == "backend" && $4 == "BB" { frontend++; count++; next }
+    $1 == "beroka-vn/Beroka_Backend" &&
+      $2 == "beroka-vn/Beroka_Frontend" &&
+      $3 == "frontend" && $4 == "BF" { backend++; count++; next }
+    { invalid=1 }
+    END {
+      exit invalid || count != 2 || frontend != 1 || backend != 1
+    }
+  ' "$vii_file" || return 1
+  while IFS="$(printf '\t')" read -r vii_source vii_target \
+    vii_profile vii_project
+  do
+    case "$vii_source" in ''|\#*) continue ;; esac
+    vii_record=$vii_catalog/$vii_target.conf
+    case "$vii_record" in "$vii_catalog/"*.conf) ;; *) return 1 ;; esac
+    [ -f "$vii_record" ] && [ ! -L "$vii_record" ] || return 1
+    awk -F= -v profile="$vii_profile" -v project="$vii_project" '
+      $1 == "PROFILE" {
+        if (seen_profile++) exit 1
+        actual_profile=substr($0, length($1) + 2)
+      }
+      $1 == "JIRA_PROJECT_KEY" {
+        if (seen_project++) exit 1
+        actual_project=substr($0, length($1) + 2)
+      }
+      $1 == "INTEGRATION_PROFILE" {
+        if (seen_integration++) exit 1
+        integration=substr($0, length($1) + 2)
+      }
+      $1 == "CROSS_REPO_POLICY" {
+        if (seen_policy++) exit 1
+        policy=substr($0, length($1) + 2)
+      }
+      END {
+        exit !(seen_profile == 1 && seen_project == 1 &&
+          seen_integration == 1 && seen_policy == 1 &&
+          actual_profile == profile && actual_project == project &&
+          integration == "beroka-be-fe" && policy == "profile-controlled")
+      }
+    ' "$vii_record" || return 1
+  done <"$vii_file"
 }
 
 validate_catalog_records() {
@@ -3389,6 +3450,10 @@ require_operation_routing() {
         die ROUTING_REQUIRED 'JIRA_BOARD_ID is required for jira-board-verify'
       PREFLIGHT_CAPABILITY=jira-board-verification
       ;;
+    jira-intake-write)
+      resolve_intake_route
+      PREFLIGHT_CAPABILITY=jira-issue-write
+      ;;
     confluence-write)
       [ -n "$ROUTE_CONFLUENCE_SPACE_KEY" ] &&
         [ -n "$ROUTE_CONFLUENCE_ROOT_CONTENT_ID" ] &&
@@ -3407,6 +3472,51 @@ require_operation_routing() {
   esac
 }
 
+resolve_intake_route() {
+  INTAKE_TARGET_REPOSITORY=
+  INTAKE_TARGET_PROFILE=
+  INTAKE_TARGET_JIRA_PROJECT=
+  [ "$ROUTE_INTEGRATION_PROFILE" = beroka-be-fe ] &&
+    [ "$ROUTE_CROSS_REPO_POLICY" = profile-controlled ] ||
+    die ROUTING_REQUIRED \
+      'Exact profile-controlled intake mapping is required for jira-intake-write'
+
+  rir_file=$RELEASE_DIR/runtime/integrations/beroka-be-fe.intake
+  validate_intake_inventory \
+    "$rir_file" "$RELEASE_DIR/runtime/repositories" ||
+    die ROUTING_REQUIRED \
+      'Exact profile-controlled intake mapping is required for jira-intake-write'
+  rir_record=$(
+    awk -F '\t' -v source="$REPOSITORY_SLUG" '
+      /^#/ || /^[[:space:]]*$/ { next }
+      $1 == source { matches++; record=$0 }
+      END {
+        if (matches != 1) exit 1
+        print record
+      }
+    ' "$rir_file"
+  ) || die ROUTING_REQUIRED \
+    'Exact profile-controlled intake mapping is required for jira-intake-write'
+  while IFS="$(printf '\t')" read -r rir_source rir_target_repository \
+    rir_target_profile rir_target_project
+  do
+    [ "$rir_source" = "$REPOSITORY_SLUG" ] || die ROUTING_REQUIRED
+    INTAKE_TARGET_REPOSITORY=$rir_target_repository
+    INTAKE_TARGET_PROFILE=$rir_target_profile
+    INTAKE_TARGET_JIRA_PROJECT=$rir_target_project
+  done <<EOF
+$rir_record
+EOF
+
+  case "$ROUTE_PROFILE:$INTAKE_TARGET_PROFILE" in
+    frontend:backend|backend:frontend) ;;
+    *)
+      die ROUTING_REQUIRED \
+        "Cross-team intake requires the opposite profile: $ROUTE_PROFILE -> ${INTAKE_TARGET_PROFILE:-missing}"
+      ;;
+  esac
+}
+
 print_preflight_result() {
   ppr_client=$1 ppr_operation=$2
   printf '%s\n' \
@@ -3419,6 +3529,12 @@ print_preflight_result() {
   case "$ppr_operation" in
     jira-write)
       printf '%s\n' "Jira project: $ROUTE_JIRA_PROJECT_KEY"
+      ;;
+    jira-intake-write)
+      printf '%s\n' \
+        "Intake source repository: $REPOSITORY_SLUG" \
+        "Intake target repository: $INTAKE_TARGET_REPOSITORY" \
+        "Intake Jira project: $INTAKE_TARGET_JIRA_PROJECT"
       ;;
     jira-board-verify)
       printf '%s\n' \
@@ -3902,6 +4018,42 @@ cursor_has_nonempty_field() {
     '.. | objects | .[$field]? | strings | select(length > 0)' >/dev/null 2>&1
 }
 
+cursor_has_value() {
+  printf '%s\n' "$CURSOR_TOOL_INPUT" | jq -e --arg field "$1" \
+    '.. | objects | .[$field]? | select(. != null and . != "")' >/dev/null 2>&1
+}
+
+cursor_jira_operation() {
+  cjo_project=$(
+    printf '%s\n' "$CURSOR_TOOL_INPUT" | jq -er '
+      [
+        .. | objects |
+        (.projectKey?, .project?, .issueKey?, .issue_key?, .issueIdOrKey?) |
+        select(type == "string") |
+        if test("^[A-Z][A-Z0-9_]*$") then .
+        elif test("^[A-Z][A-Z0-9_]*-[1-9][0-9]*$") then
+          capture("^(?<project>[A-Z][A-Z0-9_]*)-").project
+        else empty end
+      ] |
+      unique |
+      if length == 1 then .[0] else error("one Jira project is required") end
+    '
+  ) 2>/dev/null || return 2
+  if [ "$cjo_project" = "$ROUTE_JIRA_PROJECT_KEY" ]; then
+    printf '%s\n' jira-write
+    return
+  fi
+  case "$CURSOR_TOOL_TEXT" in *create*) ;; *) return 1 ;; esac
+  cjo_target=$(
+    (
+      resolve_intake_route
+      printf '%s\n' "$INTAKE_TARGET_JIRA_PROJECT"
+    ) 2>/dev/null
+  ) || return 1
+  [ "$cjo_project" = "$cjo_target" ] || return 1
+  printf '%s\n' jira-intake-write
+}
+
 cursor_language_label() {
   case "$CURSOR_LANGUAGE" in en) printf '%s\n' English ;; vi) printf '%s\n' Vietnamese ;; *) printf '%s\n' "$CURSOR_LANGUAGE" ;; esac
 }
@@ -3925,12 +4077,24 @@ cursor_validate_template() {
       cursor_has_nonempty_field jira || printf '%s\n' "$CURSOR_TOOL_INPUT" | grep -F 'N/A' >/dev/null || return 1
       ;;
     jira)
-      cursor_has_nonempty_field project || return 1
+      cursor_has_nonempty_field project ||
+        cursor_has_nonempty_field projectKey || return 1
       cursor_has_nonempty_field issue_type || return 1
-      cursor_has_nonempty_field assignee || cursor_has_nonempty_field owner || return 1
       cursor_has_nonempty_field priority || return 1
-      cursor_has_nonempty_field parent || cursor_has_nonempty_field standalone_reason || return 1
       cursor_has_nonempty_field github || printf '%s\n' "$CURSOR_TOOL_INPUT" | grep -F 'N/A' >/dev/null || return 1
+      if [ "$cursor_operation" = jira-intake-write ]; then
+        cursor_has_nonempty_field reporter ||
+          cursor_has_nonempty_field requester || return 1
+        ! cursor_has_value assignee &&
+          ! cursor_has_value owner &&
+          ! cursor_has_value parent &&
+          ! cursor_has_value sprint || return 1
+      else
+        cursor_has_nonempty_field assignee ||
+          cursor_has_nonempty_field owner || return 1
+        cursor_has_nonempty_field parent ||
+          cursor_has_nonempty_field standalone_reason || return 1
+      fi
       ;;
   esac
 }
@@ -3950,6 +4114,27 @@ cmd_cursor_before_mcp_execution() {
     return
   }
   [ -n "$CURSOR_PROVIDER" ] && [ "$CURSOR_TOOL_WRITE" -eq 1 ] || { cursor_allow; return; }
+  case "$CURSOR_PROVIDER" in
+    github) cursor_operation=github-write ;;
+    jira)
+      cursor_operation_state=0
+      cursor_operation=$(cursor_jira_operation) ||
+        cursor_operation_state=$?
+      case "$cursor_operation_state" in
+        0) ;;
+        2)
+          cursor_deny WORK_ITEM_TEMPLATE_REQUIRED \
+            'Provide exactly one structured Jira project.'
+          return
+          ;;
+        *)
+          cursor_deny ROUTING_REQUIRED \
+            'Use the current Jira project or its exact governed intake target.'
+          return
+          ;;
+      esac
+      ;;
+  esac
   cursor_template_state=0
   cursor_validate_template || cursor_template_state=$?
   case "$cursor_template_state" in
@@ -3958,7 +4143,6 @@ cmd_cursor_before_mcp_execution() {
     3) cursor_deny WORK_ITEM_LANGUAGE_REQUIRED 'Use the current Work-item language marker in the structured payload.'; return ;;
     *) cursor_deny WORK_ITEM_TEMPLATE_REQUIRED 'Include the language marker and all required governed work-item fields.'; return ;;
   esac
-  case "$CURSOR_PROVIDER" in github) cursor_operation=github-write ;; jira) cursor_operation=jira-write ;; esac
   if cursor_preflight=$(cmd_preflight "$CURSOR_WORKSPACE" --client cursor --operation "$cursor_operation" --non-interactive 2>&1) &&
      printf '%s\n' "$cursor_preflight" | grep -F 'Result: PASS' >/dev/null; then
     cursor_allow

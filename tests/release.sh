@@ -104,6 +104,13 @@ esac
   "$ROOT/runtime/integrations/beroka-be-fe.repositories" | wc -l | tr -d ' ')" = \
   "$expected_inventory_rows" ] ||
   fail "beroka-be-fe inventory does not contain $expected_inventory_rows repositories"
+[ "$(sed '/^#/d;/^[[:space:]]*$/d' \
+  "$ROOT/runtime/integrations/beroka-be-fe.intake" | wc -l | tr -d ' ')" = 2 ] ||
+  fail 'beroka-be-fe intake inventory must contain exactly two routes'
+require_text runtime/integrations/beroka-be-fe.intake \
+  'beroka-vn/Beroka_Frontend	beroka-vn/Beroka_Backend	backend	BB'
+require_text runtime/integrations/beroka-be-fe.intake \
+  'beroka-vn/Beroka_Backend	beroka-vn/Beroka_Frontend	frontend	BF'
 for alias in Beroka_Backend Beroka_Frontend; do
   alias_slug="cuongngo1801-beroka/$alias"
   alias_record="runtime/repositories/$alias_slug.conf"

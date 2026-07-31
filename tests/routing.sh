@@ -860,6 +860,53 @@ if output=$($CLI context "$canonical_backend" 2>&1); then
 fi
 assert_contains "$output" 'Result: GITHUB_ROLE_REQUIRED'
 
+printf '%s\n' healthy >"$XDG_CONFIG_HOME/fake-github-health"
+: >"$XDG_CONFIG_HOME/fake-codex-configured"
+printf '%s\n' healthy-all >"$XDG_CONFIG_HOME/fake-codex-health"
+
+printf '%s\n' FE >"$role_file"
+printf '%s\n' frontend >"$XDG_CONFIG_HOME/fake-github-teams"
+output=$($CLI preflight "$canonical_frontend" --client codex \
+  --operation jira-intake-write --non-interactive)
+assert_contains "$output" 'Operation: jira-intake-write'
+assert_contains "$output" \
+  'Intake target repository: beroka-vn/Beroka_Backend'
+assert_contains "$output" 'Intake Jira project: BB'
+assert_contains "$output" 'Capability: jira-issue-write'
+assert_contains "$output" 'Result: PASS'
+
+printf '%s\n' BE >"$role_file"
+printf '%s\n' backend >"$XDG_CONFIG_HOME/fake-github-teams"
+output=$($CLI preflight "$canonical_backend" --client codex \
+  --operation jira-intake-write --non-interactive)
+assert_contains "$output" 'Operation: jira-intake-write'
+assert_contains "$output" \
+  'Intake target repository: beroka-vn/Beroka_Frontend'
+assert_contains "$output" 'Intake Jira project: BF'
+assert_contains "$output" 'Capability: jira-issue-write'
+assert_contains "$output" 'Result: PASS'
+
+printf '%s\n' FE >"$role_file"
+: >"$CALLS"
+if output=$($CLI preflight "$frontend_repo" --client codex \
+  --operation jira-intake-write --non-interactive 2>&1)
+then
+  fail 'deprecated alias received canonical cross-team intake routing'
+fi
+assert_contains "$output" 'Result: ROUTING_REQUIRED'
+[ ! -s "$CALLS" ] ||
+  fail 'missing intake mapping inspected a client'
+
+: >"$CALLS"
+if output=$($CLI preflight "$consumer" --client codex \
+  --operation jira-intake-write --non-interactive 2>&1)
+then
+  fail 'explicit-only standalone route received cross-team intake routing'
+fi
+assert_contains "$output" 'Result: ROUTING_REQUIRED'
+[ ! -s "$CALLS" ] ||
+  fail 'explicit-only intake routing inspected a client'
+
 for cross_repo_role in missing FE FULL_STACK; do
   case "$cross_repo_role" in
     missing) rm -f "$role_file" ;;
