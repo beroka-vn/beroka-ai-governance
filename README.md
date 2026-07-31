@@ -82,23 +82,23 @@ governed repository work begins.
 
 Tracked legacy governance files remain until a repository owner explicitly
 authorizes a separate cleanup. The new CLI ignores them for release selection
-and routing. `v1.0.4` is the current supported capability release. Every
+and routing. `v1.0.5` is the current supported capability release. Every
 published tag is immutable.
 
-### v1.0.4 release
+### v1.0.5 release
 
-This release adds canonical `beroka-vn` Backend and Frontend routing, enforces
-GitHub Team-verified roles, and retains the prior catalog slugs as deprecated
-aliases for this release only.
+This release hardens GitHub role input and Atlassian reauthentication across
+supported clients. It defines Jira summary naming contracts and adds
+symmetric cross-team Jira intake while preserving each team's delivery ownership.
 
-### v1.0.4 upgrade
+### v1.0.5 upgrade
 
 Bootstrap installs a missing Cursor Agent after one confirmation. Developers
-upgrading from `v1.0.0` through `v1.0.3` run this once; installation and
+upgrading from `v1.0.0` through `v1.0.4` run this once; installation and
 Atlassian connector setup continue in the same process:
 
 ```bash
-bash -e -o pipefail -c 'gh release download v1.0.4 --repo beroka-vn/beroka-ai-governance --pattern bootstrap.sh --output - | sh -s -- --client cursor --upgrade'
+bash -e -o pipefail -c 'gh release download v1.0.5 --repo beroka-vn/beroka-ai-governance --pattern bootstrap.sh --output - | sh -s -- --client cursor --upgrade'
 ```
 
 ### Upgrade
