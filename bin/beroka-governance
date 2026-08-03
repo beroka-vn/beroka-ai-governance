@@ -670,7 +670,15 @@ validate_confluence_target_inventory() {
   vcti_file=$1 vcti_catalog=$2
   [ -f "$vcti_file" ] && [ ! -L "$vcti_file" ] &&
     [ -d "$vcti_catalog" ] && [ ! -L "$vcti_catalog" ] || return 1
-  awk -F '\t' -v catalog="$vcti_catalog" '
+  vcti_root_ids=$(
+    find "$vcti_catalog" -type f -name '*.conf' -print |
+      LC_ALL=C sort |
+      while IFS= read -r vcti_record; do
+        awk -F= '$1 == "CONFLUENCE_ROOT_CONTENT_ID" { print $2 }' \
+          "$vcti_record"
+      done
+  ) || return 1
+  awk -F '\t' -v catalog="$vcti_catalog" -v roots="$vcti_root_ids" '
     /^#/ || /^[[:space:]]*$/ { next }
     NF != 11 { invalid=1; next }
     $1 !~ /^beroka-vn\/Beroka_(Backend|Frontend)$/ ||
@@ -703,6 +711,9 @@ validate_confluence_target_inventory() {
     { rows++; state[NR]=$3; type[NR]=$2; repo[NR]=$1; id[NR]=$4; parent[NR]=$9;
       scope[NR]=$6; domain[NR]=$7; transport[NR]=$8 }
     END {
+      root_count=split(roots, root_values, /[^0-9]+/)
+      for (i=1; i<=root_count; i++) if (root_values[i] != "" &&
+        ++content[root_values[i]] > 1) invalid=1
       for (i in state) if ((state[i] == "ACTIVE" || state[i] == "PLANNED") && type[i] == "page") {
         matches=0
         for (j in state) if (repo[j] == repo[i] && type[j] == "folder" &&
@@ -3186,6 +3197,14 @@ runtime_capability() {
         CAPABILITY_STATE=UNSUPPORTED
       fi
       ;;
+    confluence-page-update)
+      if [ "$CAPABILITY_INVENTORY_COMPLETE" -eq 1 ] &&
+         { ! inventory_has_tool updateConfluencePage ||
+           ! inventory_has_tool getConfluencePage; }
+      then
+        CAPABILITY_STATE=UNSUPPORTED
+      fi
+      ;;
     confluence-page-read)
       if [ "$CAPABILITY_INVENTORY_COMPLETE" -eq 1 ] &&
          ! inventory_has_tool getConfluencePage
@@ -3263,6 +3282,7 @@ load_provider_capability() {
         allowed["createJiraIssue"]=1
         allowed["getAccessibleAtlassianResources"]=1
         allowed["getConfluencePage"]=1
+        allowed["updateConfluencePage"]=1
         allowed["getJiraIssue"]=1
         allowed["getJiraIssueTypeMetaWithFields"]=1
         allowed["getJiraProjectIssueTypesMetadata"]=1
@@ -3299,7 +3319,7 @@ load_provider_capability() {
             year < 1 ||
             month < 1 || month > 12 ||
             day < 1 || day > month_days[month] ||
-            $4 !~ /^(jira-issue-write|confluence-page-parent-write|confluence-page-read|jira-board-verification|confluence-folder-parent-write)$/ ||
+            $4 !~ /^(jira-issue-write|confluence-page-parent-write|confluence-page-update|confluence-page-read|jira-board-verification|confluence-folder-parent-write)$/ ||
             $5 !~ /^(official-contract|isolated-pilot)$/ ||
             $6 !~ /^(SUPPORTED|UNSUPPORTED)$/) invalid=1
         pair=$1 SUBSEP $4
@@ -3683,7 +3703,7 @@ require_operation_routing() {
       require_confluence_route
       resolve_confluence_target
       case "$CONFLUENCE_TARGET_ACTION" in
-        update) PREFLIGHT_CAPABILITY=confluence-page-parent-write ;;
+        update) PREFLIGHT_CAPABILITY=confluence-page-update ;;
         create|move) PREFLIGHT_CAPABILITY=confluence-folder-parent-write ;;
       esac
       ;;

@@ -134,6 +134,9 @@ case "$*" in
         health=$(sed -n '1p' "$XDG_CONFIG_HOME/fake-codex-health" 2>/dev/null || :)
         case "$health" in
           healthy-all)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{},"updateConfluencePage":{}},"authStatus":"oAuth"}]}}'
+            ;;
+          healthy-no-confluence-update)
             printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]}}'
             ;;
           healthy-rpc-extensions)
@@ -1114,6 +1117,8 @@ assert_target_inventory_invalid v1.1.25 \
   'beroka-vn/Beroka_Backend\tfolder\tACTIVE\t900040\tMetadata parent\tShared\tMarket\tAPI\t65962274\t-\t-\nberoka-vn/Beroka_Backend\tpage\tACTIVE\t900041\tMismatched page metadata\tDerivatives\tUser\tWebSocket\t900040\tMARKET-MISMATCHED\t900042'
 assert_target_inventory_invalid v1.1.26 \
   'beroka-vn/Beroka_Backend\tfolder\tACTIVE\t900043\tPlanned metadata parent\tShared\tMarket\tAPI\t65962274\t-\t-\nberoka-vn/Beroka_Backend\tpage\tPLANNED\t-\tPlanned mismatched metadata\tUnderlying\tUser\tWebSocket\t900043\tMARKET-PLANNED-MISMATCHED\t900044'
+assert_target_inventory_invalid v1.1.27 \
+  'beroka-vn/Beroka_Backend\tpage\tDRIFTED\t65831203\tFrontend root collision\t-\tMarket\tAPI\t-\t-\t-'
 
 metadata_file=$source_repo/runtime/integrations/beroka-be-fe.confluence-targets
 metadata_backup=$TEST_ROOT/confluence-targets.metadata
@@ -1203,7 +1208,24 @@ output=$($CLI preflight "$canonical_backend" --client codex \
   --transport API --expected-parent-id 900002 \
   --registry-content-id 900003)
 assert_contains "$output" 'Target transport: API'
+assert_contains "$output" 'Capability: confluence-page-update'
 assert_contains "$output" 'Result: PASS'
+
+printf '%s\n' healthy-no-confluence-update \
+  >"$XDG_CONFIG_HOME/fake-codex-health"
+if output=$($CLI preflight "$canonical_backend" --client codex \
+  --operation confluence-write --non-interactive \
+  --confluence-action update --target-content-id 900001 \
+  --capability-id MARKET-FU-INDEX-API --scope Shared --domain Market \
+  --transport API --expected-parent-id 900002 \
+  --registry-content-id 900003 2>&1)
+then
+  fail 'Confluence update passed without update tool'
+fi
+assert_contains "$output" 'Capability: confluence-page-update'
+assert_contains "$output" 'Capability state: UNSUPPORTED'
+assert_contains "$output" 'Result: CONNECTOR_CAPABILITY_REQUIRED'
+printf '%s\n' healthy-all >"$XDG_CONFIG_HOME/fake-codex-health"
 
 : >"$CALLS"
 if output=$($CLI preflight "$canonical_backend" --client codex \

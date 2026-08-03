@@ -2,4 +2,5 @@
 # endpoint	required_tools	tested_on	capability	evidence	state
 https://mcp.atlassian.com/v1/mcp/authv2	createJiraIssue,getAccessibleAtlassianResources,getJiraIssue,getJiraIssueTypeMetaWithFields,getJiraProjectIssueTypesMetadata,searchJiraIssuesUsingJql	2026-07-27	jira-issue-write	official-contract	SUPPORTED
 https://mcp.atlassian.com/v1/mcp/authv2	createConfluencePage,getAccessibleAtlassianResources,getConfluencePage	2026-07-27	confluence-page-parent-write	official-contract	SUPPORTED
+https://mcp.atlassian.com/v1/mcp/authv2	getAccessibleAtlassianResources,getConfluencePage,updateConfluencePage	2026-08-03	confluence-page-update	official-contract	SUPPORTED
 https://mcp.atlassian.com/v1/mcp/authv2	getAccessibleAtlassianResources,getConfluencePage	2026-07-31	confluence-page-read	official-contract	SUPPORTED
