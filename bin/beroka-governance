@@ -587,6 +587,14 @@ validate_release_checkout() {
         "$vrc_checkout/runtime/repositories" ||
         die VERSION_MISMATCH 'Invalid cross-team intake inventory'
     fi
+    if semver_not_older v1.0.6 "$vrc_version"; then
+      assert_release_file "$vrc_checkout" \
+        runtime/integrations/beroka-be-fe.confluence-targets
+      validate_confluence_target_inventory \
+        "$vrc_checkout/runtime/integrations/beroka-be-fe.confluence-targets" \
+        "$vrc_checkout/runtime/repositories" ||
+        die VERSION_MISMATCH 'Invalid Confluence target inventory'
+    fi
     atlassian_compatibility_schema \
       "$vrc_checkout/runtime/compatibility/atlassian.tsv" >/dev/null ||
       die VERSION_MISMATCH 'Unsupported Atlassian compatibility schema'
@@ -651,6 +659,54 @@ validate_intake_inventory() {
       }
     ' "$vii_record" || return 1
   done <"$vii_file"
+}
+
+validate_confluence_target_inventory() {
+  vcti_file=$1 vcti_catalog=$2
+  [ -f "$vcti_file" ] && [ ! -L "$vcti_file" ] &&
+    [ -d "$vcti_catalog" ] && [ ! -L "$vcti_catalog" ] || return 1
+  awk -F '\t' '
+    /^#/ || /^[[:space:]]*$/ { next }
+    NF != 11 { invalid=1; next }
+    $1 !~ /^beroka-vn\/Beroka_(Backend|Frontend)$/ ||
+      $2 !~ /^(page|folder)$/ ||
+      $3 !~ /^(ACTIVE|PLANNED|DRIFTED|LEGACY)$/ ||
+      $4 !~ /^([1-9][0-9]*|-)$/ || $5 == "" ||
+      $7 !~ /^(Market|User|-)$/ ||
+      $8 !~ /^(API|WebSocket)$/ ||
+      $9 !~ /^([1-9][0-9]*|-)$/ ||
+      $10 !~ /^([A-Z][A-Z0-9]*(-[A-Z0-9]+)*|-)$/ ||
+      $11 !~ /^([1-9][0-9]*|-)$/ { invalid=1 }
+    $3 == "ACTIVE" && $2 == "page" &&
+      ($4 == "-" || $6 !~ /^(Shared|Derivatives|Underlying)$/ ||
+       $9 == "-" || $10 == "-" || $11 == "-") { invalid=1 }
+    $3 == "ACTIVE" && $2 == "folder" &&
+      ($4 == "-" || $6 !~ /^(Shared|Derivatives|Underlying)$/ ||
+       $9 == "-" || $10 != "-" || $11 != "-") { invalid=1 }
+    $3 == "PLANNED" &&
+      ($2 != "page" || $4 != "-" ||
+       $6 !~ /^(Shared|Derivatives|Underlying)$/ ||
+       $9 == "-" || $10 == "-" || $11 == "-") { invalid=1 }
+    $3 == "DRIFTED" && ($2 != "page" || $4 == "-") { invalid=1 }
+    $3 == "LEGACY" && ($2 != "folder" || $4 == "-") { invalid=1 }
+    $4 != "-" && ++content[$1 SUBSEP $4] > 1 { invalid=1 }
+    $10 != "-" && ++capability[$1 SUBSEP $10] > 1 { invalid=1 }
+    { rows++; state[NR]=$3; type[NR]=$2; repo[NR]=$1; id[NR]=$4; parent[NR]=$9 }
+    END {
+      for (i in state) if ((state[i] == "ACTIVE" || state[i] == "PLANNED") && type[i] == "page") {
+        matches=0
+        for (j in state) if (repo[j] == repo[i] && type[j] == "folder" &&
+          state[j] == "ACTIVE" && id[j] == parent[i]) matches++
+        if (matches != 1) invalid=1
+      }
+      exit invalid || rows == 0
+    }
+  ' "$vcti_file" || return 1
+  cut -f1 "$vcti_file" | sed '/^#/d;/^[[:space:]]*$/d' | LC_ALL=C sort -u |
+  while IFS= read -r vcti_repository; do
+    vcti_record=$vcti_catalog/$vcti_repository.conf
+    [ -f "$vcti_record" ] && [ ! -L "$vcti_record" ] || exit 1
+  done
 }
 
 validate_catalog_records() {

@@ -1048,7 +1048,7 @@ pin_test_release() {
   ptr_version=$1
   printf '%s\n' "$ptr_version" >"$source_repo/VERSION"
   git -C "$source_repo" add VERSION runtime/compatibility/atlassian.tsv \
-    runtime/repositories
+    runtime/integrations runtime/repositories
   git -C "$source_repo" commit -qm "test: create $ptr_version release"
   git -C "$source_repo" tag -a "$ptr_version" -m "$ptr_version"
   ptr_release=$XDG_DATA_HOME/beroka-ai-governance/releases/$ptr_version
@@ -1060,6 +1060,43 @@ pin_test_release() {
     "COMMIT=$ptr_commit" \
     >"$XDG_CONFIG_HOME/beroka-ai-governance/active-release"
 }
+
+assert_target_inventory_invalid() {
+  ati_version=$1 ati_row=$2
+  ati_file=$source_repo/runtime/integrations/beroka-be-fe.confluence-targets
+  ati_backup=$TEST_ROOT/confluence-targets.valid
+  cp "$ati_file" "$ati_backup"
+  printf '%b\n' "$ati_row" >>"$ati_file"
+  pin_test_release "$ati_version"
+  if output=$($CLI context "$consumer" 2>&1); then
+    fail 'invalid Confluence target inventory passed release validation'
+  fi
+  assert_contains "$output" 'Result: VERSION_MISMATCH'
+  assert_contains "$output" 'Invalid Confluence target inventory'
+  mv "$ati_backup" "$ati_file"
+}
+
+assert_target_inventory_invalid v1.1.9 \
+  'beroka-vn/Beroka_Backend\tpage\tDRIFTED\t70713366\tDuplicate\t-\tMarket\tWebSocket\t71303169\t-\t-'
+assert_target_inventory_invalid v1.1.10 \
+  'beroka-vn/Beroka_Backend\tpage\tACTIVE\t900001\tInvalid active page\tShared\tMarket\tAPI\t900002\tNOT_UPPERCASE\t900003'
+assert_target_inventory_invalid v1.1.11 \
+  'beroka-vn/Unknown\tpage\tDRIFTED\t900004\tCross-repository row\t-\tMarket\tAPI\t-\t-\t-'
+
+target_file=$source_repo/runtime/integrations/beroka-be-fe.confluence-targets
+target_backup=$TEST_ROOT/confluence-targets.regular
+cp "$target_file" "$target_backup"
+rm "$target_file"
+ln -s ../rules/general.md "$target_file"
+pin_test_release v1.1.12
+if output=$($CLI context "$consumer" 2>&1); then
+  fail 'symlinked Confluence target inventory passed release validation'
+fi
+assert_contains "$output" 'Result: GOVERNANCE_NOT_READY'
+assert_contains "$output" 'Release path is a symlink'
+rm "$target_file"
+mv "$target_backup" "$target_file"
+pin_test_release v1.1.13
 
 PUBLISH_SERIAL=0
 
