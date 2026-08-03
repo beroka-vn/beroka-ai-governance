@@ -1110,6 +1110,10 @@ assert_target_inventory_invalid v1.1.23 \
   'beroka-vn/Beroka_Backend\tfolder\tACTIVE\t900031\tMissing active ancestry\tShared\tMarket\tAPI\t999999\t-\t-'
 assert_target_inventory_invalid v1.1.24 \
   'beroka-vn/Beroka_Backend\tfolder\tACTIVE\t900032\tCyclic folder A\tShared\tMarket\tAPI\t900033\t-\t-\nberoka-vn/Beroka_Backend\tfolder\tACTIVE\t900033\tCyclic folder B\tShared\tMarket\tAPI\t900032\t-\t-'
+assert_target_inventory_invalid v1.1.25 \
+  'beroka-vn/Beroka_Backend\tfolder\tACTIVE\t900040\tMetadata parent\tShared\tMarket\tAPI\t65962274\t-\t-\nberoka-vn/Beroka_Backend\tpage\tACTIVE\t900041\tMismatched page metadata\tDerivatives\tUser\tWebSocket\t900040\tMARKET-MISMATCHED\t900042'
+assert_target_inventory_invalid v1.1.26 \
+  'beroka-vn/Beroka_Backend\tfolder\tACTIVE\t900043\tPlanned metadata parent\tShared\tMarket\tAPI\t65962274\t-\t-\nberoka-vn/Beroka_Backend\tpage\tPLANNED\t-\tPlanned mismatched metadata\tUnderlying\tUser\tWebSocket\t900043\tMARKET-PLANNED-MISMATCHED\t900044'
 
 metadata_file=$source_repo/runtime/integrations/beroka-be-fe.confluence-targets
 metadata_backup=$TEST_ROOT/confluence-targets.metadata

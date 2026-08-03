@@ -700,12 +700,17 @@ validate_confluence_target_inventory() {
       ($2 != "folder" || $4 == "-" || $10 != "-" || $11 != "-") { invalid=1 }
     $4 != "-" && ++content[$4] > 1 { invalid=1 }
     $10 != "-" && ++capability[$10] > 1 { invalid=1 }
-    { rows++; state[NR]=$3; type[NR]=$2; repo[NR]=$1; id[NR]=$4; parent[NR]=$9 }
+    { rows++; state[NR]=$3; type[NR]=$2; repo[NR]=$1; id[NR]=$4; parent[NR]=$9;
+      scope[NR]=$6; domain[NR]=$7; transport[NR]=$8 }
     END {
       for (i in state) if ((state[i] == "ACTIVE" || state[i] == "PLANNED") && type[i] == "page") {
         matches=0
         for (j in state) if (repo[j] == repo[i] && type[j] == "folder" &&
-          state[j] == "ACTIVE" && id[j] == parent[i]) matches++
+          state[j] == "ACTIVE" && id[j] == parent[i]) {
+          matches++
+          if (scope[i] != scope[j] || domain[i] != domain[j] ||
+            transport[i] != transport[j]) invalid=1
+        }
         if (matches != 1) invalid=1
       }
       for (i in state) if (state[i] == "ACTIVE" && type[i] == "folder") {
@@ -4322,6 +4327,28 @@ cursor_tool_provider() {
   esac
 }
 
+cursor_private_repo_link() {
+  cprl_slug=$1
+  printf '%s\n' "$CURSOR_REQUEST" |
+    tr '[:upper:]' '[:lower:]' |
+    grep -F "$cprl_slug" >/dev/null
+}
+
+cursor_cross_team_private_link() {
+  case "$REPOSITORY_SLUG" in
+    beroka-vn/Beroka_Backend)
+      cursor_private_repo_link beroka-vn/beroka_frontend ;;
+    beroka-vn/Beroka_Frontend)
+      cursor_private_repo_link beroka-vn/beroka_backend ;;
+    *) return 1 ;;
+  esac
+}
+
+cursor_any_private_repo_link() {
+  cursor_private_repo_link beroka-vn/beroka_backend ||
+    cursor_private_repo_link beroka-vn/beroka_frontend
+}
+
 cursor_has_nonempty_field() {
   printf '%s\n' "$CURSOR_TOOL_INPUT" | jq -e --arg field "$1" \
     '.. | objects | .[$field]? | strings | select(length > 0)' >/dev/null 2>&1
@@ -4487,6 +4514,11 @@ cmd_cursor_before_mcp_execution() {
     return
   }
   [ -n "$CURSOR_PROVIDER" ] && [ "$CURSOR_TOOL_WRITE" -eq 1 ] || { cursor_allow; return; }
+  if cursor_cross_team_private_link; then
+    cursor_deny CROSS_TEAM_LINK_SCOPE_DENIED \
+      'Use an accessible exact Confluence page for cross-team documentation.'
+    return
+  fi
   case "$CURSOR_PROVIDER" in
     github) cursor_operation=github-write ;;
     confluence)
@@ -4531,8 +4563,7 @@ cmd_cursor_before_mcp_execution() {
       ;;
   esac
   if [ "$cursor_operation" = jira-intake-write ] &&
-     printf '%s\n' "$CURSOR_TOOL_INPUT" |
-       grep -Eiq 'https://github\.com/beroka-vn/Beroka_(Backend|Frontend)(/|"|$)'
+     cursor_any_private_repo_link
   then
     cursor_deny CROSS_TEAM_LINK_SCOPE_DENIED \
       'Use an accessible exact Confluence page for cross-team documentation.'

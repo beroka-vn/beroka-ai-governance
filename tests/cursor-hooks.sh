@@ -128,6 +128,16 @@ done
 same_team_private_link=$(printf '%s\n' "$jira_write" | jq -c \
   '.tool_input.github="https://github.com/beroka-vn/Beroka_Backend/issues/138"')
 assert_denied "$(hook beforeMCPExecution "$same_team_private_link")" WORK_ITEM_TEMPLATE_REQUIRED
+for opposite_private_link in \
+  'https://github.com/beroka-vn/Beroka_Frontend/issues/138' \
+  'git@github.com:beroka-vn/Beroka_Frontend.git' \
+  'beroka-vn/Beroka_Frontend/issues/138'
+do
+  opposite_team_private_link=$(printf '%s\n' "$jira_write" | jq -c \
+    --arg link "$opposite_private_link" '.tool_input.github=$link')
+  assert_denied "$(hook beforeMCPExecution "$opposite_team_private_link")" \
+    CROSS_TEAM_LINK_SCOPE_DENIED
+done
 
 printf '%s\n' cursor >"$XDG_CONFIG_HOME/beroka-ai-governance/clients"
 git --git-dir=/dev/null hash-object --no-filters \
@@ -142,6 +152,10 @@ confluence_update=$(printf '%s\n' "$base_input" | jq -c '. + {
     body:"Capability ID: MARKET-FU-INDEX-API\nRegistry content ID: 900003\nScope: Shared\nDomain: Market\nTransport: API\nConfluence content ID: 70713366"
   }}')
 assert_denied "$(hook beforeMCPExecution "$confluence_update")" MAPPING_CONFLICT
+confluence_private_link=$(printf '%s\n' "$confluence_update" | jq -c \
+  '.tool_input.body += "\nRelated repository: git@github.com:beroka-vn/Beroka_Frontend.git"')
+assert_denied "$(hook beforeMCPExecution "$confluence_private_link")" \
+  CROSS_TEAM_LINK_SCOPE_DENIED
 assert_denied "$(hook beforeMCPExecution "$(printf '%s\n' "$confluence_update" | jq -c 'del(.tool_input.parentId)')")" ROUTING_REQUIRED
 assert_denied "$(hook beforeMCPExecution "$(printf '%s\n' "$confluence_update" | jq -c '.tool_name="confluence.move_page"')")" MAPPING_CONFLICT
 assert_denied "$(hook beforeMCPExecution "$(printf '%s\n' "$confluence_update" | jq -c '.tool_input.body += "\nRegistry content ID: 900004"')")" ROUTING_REQUIRED
