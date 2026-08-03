@@ -670,7 +670,7 @@ validate_confluence_target_inventory() {
   vcti_file=$1 vcti_catalog=$2
   [ -f "$vcti_file" ] && [ ! -L "$vcti_file" ] &&
     [ -d "$vcti_catalog" ] && [ ! -L "$vcti_catalog" ] || return 1
-  awk -F '\t' '
+  awk -F '\t' -v catalog="$vcti_catalog" '
     /^#/ || /^[[:space:]]*$/ { next }
     NF != 11 { invalid=1; next }
     $1 !~ /^beroka-vn\/Beroka_(Backend|Frontend)$/ ||
@@ -698,7 +698,7 @@ validate_confluence_target_inventory() {
     $3 == "DRIFTED" && ($2 != "page" || $4 == "-") { invalid=1 }
     $3 == "LEGACY" &&
       ($2 != "folder" || $4 == "-" || $10 != "-" || $11 != "-") { invalid=1 }
-    $4 != "-" && ++content[$1 SUBSEP $4] > 1 { invalid=1 }
+    $4 != "-" && ++content[$4] > 1 { invalid=1 }
     $10 != "-" && ++capability[$10] > 1 { invalid=1 }
     { rows++; state[NR]=$3; type[NR]=$2; repo[NR]=$1; id[NR]=$4; parent[NR]=$9 }
     END {
@@ -707,6 +707,30 @@ validate_confluence_target_inventory() {
         for (j in state) if (repo[j] == repo[i] && type[j] == "folder" &&
           state[j] == "ACTIVE" && id[j] == parent[i]) matches++
         if (matches != 1) invalid=1
+      }
+      for (i in state) if (state[i] == "ACTIVE" && type[i] == "folder") {
+        root=""
+        path=catalog "/" repo[i] ".conf"
+        while ((getline line < path) > 0)
+          if (line ~ /^CONFLUENCE_ROOT_CONTENT_ID=/)
+            root=substr(line, index(line, "=") + 1)
+        close(path)
+        current=parent[i]
+        for (key in visited) delete visited[key]
+        reaches_root=0
+        for (step=0; step <= rows && current != root; step++) {
+          key=repo[i] SUBSEP current
+          if (visited[key]++) break
+          matches=0
+          for (j in state) if (repo[j] == repo[i] && type[j] == "folder" &&
+            state[j] == "ACTIVE" && id[j] == current) {
+            current=parent[j]
+            matches++
+          }
+          if (matches != 1) break
+        }
+        if (current == root && root ~ /^[1-9][0-9]*$/) reaches_root=1
+        if (!reaches_root) invalid=1
       }
       exit invalid || rows == 0
     }
@@ -3660,7 +3684,15 @@ require_operation_routing() {
       ;;
     confluence-handoff-verify)
       require_confluence_route
+      case "$CONFLUENCE_TARGET_ACTION:$CONFLUENCE_TARGET_CONTENT_ID" in
+        update:[1-9]*) ;;
+        *) die ROUTING_REQUIRED \
+          'Confluence handoff verification requires an existing target page' ;;
+      esac
       resolve_confluence_target
+      [ "$rct_state" = ACTIVE ] ||
+        die ROUTING_REQUIRED \
+          'Confluence handoff verification requires an ACTIVE target page'
       PREFLIGHT_CAPABILITY=confluence-page-read
       ;;
     cross-repo-write)

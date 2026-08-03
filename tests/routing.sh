@@ -1102,8 +1102,14 @@ assert_target_inventory_invalid v1.1.16 \
   'beroka-vn/Beroka_Backend\tpage\tDRIFTED\t900013\tDrifted page with invalid scope\tInvalid\tMarket\tAPI\t-\tMARKET-DRIFTED\t900014'
 assert_target_inventory_invalid v1.1.17 \
   'beroka-vn/Beroka_Backend\tpage\tDRIFTED\t900015\tBackend duplicate capability\tShared\tMarket\tAPI\t-\tMARKET-DUPLICATE\t900016\nberoka-vn/Beroka_Frontend\tpage\tDRIFTED\t900017\tFrontend duplicate capability\tShared\tMarket\tAPI\t-\tMARKET-DUPLICATE\t900018'
+assert_target_inventory_invalid v1.1.22 \
+  'beroka-vn/Beroka_Backend\tpage\tDRIFTED\t900030\tBackend duplicate content\t-\tMarket\tAPI\t-\t-\t-\nberoka-vn/Beroka_Frontend\tpage\tDRIFTED\t900030\tFrontend duplicate content\t-\tMarket\tAPI\t-\t-\t-'
 assert_target_inventory_invalid v1.1.18 \
   'beroka-vn/Beroka_Backend\tfolder\tLEGACY\t900019\tLegacy folder with metadata\t-\tMarket\tAPI\t-\tMARKET-LEGACY\t900020'
+assert_target_inventory_invalid v1.1.23 \
+  'beroka-vn/Beroka_Backend\tfolder\tACTIVE\t900031\tMissing active ancestry\tShared\tMarket\tAPI\t999999\t-\t-'
+assert_target_inventory_invalid v1.1.24 \
+  'beroka-vn/Beroka_Backend\tfolder\tACTIVE\t900032\tCyclic folder A\tShared\tMarket\tAPI\t900033\t-\t-\nberoka-vn/Beroka_Backend\tfolder\tACTIVE\t900033\tCyclic folder B\tShared\tMarket\tAPI\t900032\t-\t-'
 
 metadata_file=$source_repo/runtime/integrations/beroka-be-fe.confluence-targets
 metadata_backup=$TEST_ROOT/confluence-targets.metadata
@@ -1262,6 +1268,17 @@ output=$($CLI preflight "$canonical_backend" --client codex \
   --registry-content-id 900003)
 assert_contains "$output" 'Capability: confluence-page-read'
 assert_contains "$output" 'Result: PASS'
+
+if output=$($CLI preflight "$canonical_backend" --client codex \
+  --operation confluence-handoff-verify --non-interactive \
+  --confluence-action create --target-content-id new \
+  --capability-id MARKET-PLANNED-API --scope Shared --domain Market \
+  --transport API --expected-parent-id 900002 \
+  --registry-content-id 900003 2>&1)
+then
+  fail 'handoff accepted a planned target without a content ID'
+fi
+assert_contains "$output" 'Result: ROUTING_REQUIRED'
 
 printf '%s\n' healthy-missing-confluence-read \
   >"$XDG_CONFIG_HOME/fake-codex-health"
