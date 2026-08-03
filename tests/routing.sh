@@ -1082,6 +1082,27 @@ assert_target_inventory_invalid v1.1.10 \
   'beroka-vn/Beroka_Backend\tpage\tACTIVE\t900001\tInvalid active page\tShared\tMarket\tAPI\t900002\tNOT_UPPERCASE\t900003'
 assert_target_inventory_invalid v1.1.11 \
   'beroka-vn/Unknown\tpage\tDRIFTED\t900004\tCross-repository row\t-\tMarket\tAPI\t-\t-\t-'
+assert_target_inventory_invalid v1.1.14 \
+  'beroka-vn/Beroka_Backend\tfolder\tACTIVE\t900010\tActive folder without domain\tShared\t-\tAPI\t900009\t-\t-'
+assert_target_inventory_invalid v1.1.15 \
+  'beroka-vn/Beroka_Backend\tfolder\tACTIVE\t900011\tActive parent\tShared\tMarket\tAPI\t900009\t-\t-\nberoka-vn/Beroka_Backend\tpage\tPLANNED\t-\tPlanned page without domain\tShared\t-\tAPI\t900011\tMARKET-PLANNED\t900012'
+assert_target_inventory_invalid v1.1.16 \
+  'beroka-vn/Beroka_Backend\tpage\tDRIFTED\t900013\tDrifted page with invalid scope\tInvalid\tMarket\tAPI\t-\tMARKET-DRIFTED\t900014'
+assert_target_inventory_invalid v1.1.17 \
+  'beroka-vn/Beroka_Backend\tpage\tDRIFTED\t900015\tBackend duplicate capability\tShared\tMarket\tAPI\t-\tMARKET-DUPLICATE\t900016\nberoka-vn/Beroka_Frontend\tpage\tDRIFTED\t900017\tFrontend duplicate capability\tShared\tMarket\tAPI\t-\tMARKET-DUPLICATE\t900018'
+assert_target_inventory_invalid v1.1.18 \
+  'beroka-vn/Beroka_Backend\tfolder\tLEGACY\t900019\tLegacy folder with metadata\t-\tMarket\tAPI\t-\tMARKET-LEGACY\t900020'
+
+metadata_file=$source_repo/runtime/integrations/beroka-be-fe.confluence-targets
+metadata_backup=$TEST_ROOT/confluence-targets.metadata
+cp "$metadata_file" "$metadata_backup"
+printf '%b\n' \
+  'beroka-vn/Beroka_Backend\tpage\tDRIFTED\t900021\tDrifted page with known metadata\tShared\tMarket\tAPI\t-\tMARKET-KNOWN\t900022' \
+  >>"$metadata_file"
+pin_test_release v1.1.19
+output=$($CLI context "$consumer")
+assert_contains "$output" 'Routing: ROUTING_ACTIVE'
+mv "$metadata_backup" "$metadata_file"
 
 target_file=$source_repo/runtime/integrations/beroka-be-fe.confluence-targets
 target_backup=$TEST_ROOT/confluence-targets.regular
