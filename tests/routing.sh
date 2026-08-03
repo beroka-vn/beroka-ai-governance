@@ -1176,8 +1176,10 @@ target_file=$source_repo/runtime/integrations/beroka-be-fe.confluence-targets
 cp "$target_file" "$target_file.deny-only"
 printf '%b\n' \
   '# repository\trecord-type\tstate\tcontent-id\ttitle\tscope\tdomain\ttransport\tparent-id\tcapability-id\tregistry-content-id' \
+  'beroka-vn/Beroka_Backend\tfolder\tLEGACY\t71237633\tMarket — API\t-\tMarket\tAPI\t-\t-\t-' \
   'beroka-vn/Beroka_Backend\tfolder\tACTIVE\t900002\tShared — Market — API\tShared\tMarket\tAPI\t65962274\t-\t-' \
   'beroka-vn/Beroka_Backend\tpage\tACTIVE\t900001\tFU_INDEX REST contract\tShared\tMarket\tAPI\t900002\tMARKET-FU-INDEX-API\t900003' \
+  'beroka-vn/Beroka_Backend\tpage\tPLANNED\t-\tPlanned REST contract\tShared\tMarket\tAPI\t900002\tMARKET-PLANNED-API\t900003' \
   'beroka-vn/Beroka_Backend\tfolder\tACTIVE\t900005\tShared — Market — WebSocket\tShared\tMarket\tWebSocket\t65962274\t-\t-' \
   'beroka-vn/Beroka_Backend\tpage\tACTIVE\t900004\tDerivative quote stream\tShared\tMarket\tWebSocket\t900005\tMARKET-DERIVATIVE-QUOTE-WS\t900003' \
   >"$target_file"
@@ -1192,6 +1194,45 @@ output=$($CLI preflight "$canonical_backend" --client codex \
   --registry-content-id 900003)
 assert_contains "$output" 'Target transport: API'
 assert_contains "$output" 'Result: PASS'
+
+: >"$CALLS"
+if output=$($CLI preflight "$canonical_backend" --client codex \
+  --operation confluence-write --non-interactive \
+  --confluence-action update --target-content-id 900001 \
+  --capability-id MARKET-FU-INDEX-API --scope Shared --domain Market \
+  --transport API --expected-parent-id 71237633 \
+  --registry-content-id 900003 2>&1)
+then
+  fail 'active target passed with a legacy generic parent'
+fi
+assert_contains "$output" 'Result: FOLDER_CREATION_REQUIRED'
+[ ! -s "$CALLS" ] || fail 'legacy parent inspected a connector'
+
+if output=$($CLI preflight "$canonical_backend" --client codex \
+  --operation confluence-write --non-interactive \
+  --confluence-action create --target-content-id new \
+  --capability-id MARKET-PLANNED-API --scope Shared --domain Market \
+  --transport API --expected-parent-id 900002 \
+  --registry-content-id 900003 2>&1)
+then
+  fail 'page-parent capability authorized a Confluence create'
+fi
+assert_contains "$output" 'Capability: confluence-folder-parent-write'
+assert_contains "$output" 'Capability state: UNKNOWN'
+assert_contains "$output" 'Result: CONNECTOR_CAPABILITY_REQUIRED'
+
+if output=$($CLI preflight "$canonical_backend" --client codex \
+  --operation confluence-write --non-interactive \
+  --confluence-action move --target-content-id 900001 \
+  --capability-id MARKET-FU-INDEX-API --scope Shared --domain Market \
+  --transport API --expected-parent-id 900002 \
+  --registry-content-id 900003 2>&1)
+then
+  fail 'page-parent capability authorized a Confluence move'
+fi
+assert_contains "$output" 'Capability: confluence-folder-parent-write'
+assert_contains "$output" 'Capability state: UNKNOWN'
+assert_contains "$output" 'Result: CONNECTOR_CAPABILITY_REQUIRED'
 
 output=$($CLI preflight "$canonical_backend" --client codex \
   --operation confluence-write --non-interactive \

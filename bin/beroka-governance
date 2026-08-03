@@ -3515,6 +3515,18 @@ require_confluence_route() {
       'Confluence space, root content ID, and root type are required'
 }
 
+confluence_parent_is_legacy() {
+  cpl_file=$1
+  awk -F '\t' \
+    -v repository="$REPOSITORY_SLUG" \
+    -v parent="$CONFLUENCE_TARGET_PARENT_ID" '
+      /^#/ || /^[[:space:]]*$/ { next }
+      $1 == repository && $2 == "folder" && $3 == "LEGACY" &&
+        $4 == parent { found=1 }
+      END { exit !found }
+    ' "$cpl_file"
+}
+
 resolve_confluence_target() {
   rct_file=$RELEASE_DIR/runtime/integrations/beroka-be-fe.confluence-targets
   validate_confluence_target_inventory "$rct_file" \
@@ -3577,15 +3589,7 @@ resolve_confluence_target() {
         print row
       }
     ' "$rct_file") || {
-      if awk -F '\t' \
-        -v repository="$REPOSITORY_SLUG" \
-        -v parent="$CONFLUENCE_TARGET_PARENT_ID" '
-          /^#/ || /^[[:space:]]*$/ { next }
-          $1 == repository && $2 == "folder" && $3 == "LEGACY" &&
-            $4 == parent { found=1 }
-          END { exit !found }
-        ' "$rct_file"
-      then
+      if confluence_parent_is_legacy "$rct_file"; then
         die FOLDER_CREATION_REQUIRED \
           'The requested parent is a legacy generic folder'
       fi
@@ -3613,6 +3617,10 @@ EOF
         'A legacy folder is not a canonical target'
       ;;
   esac
+  if confluence_parent_is_legacy "$rct_file"; then
+    die FOLDER_CREATION_REQUIRED \
+      'The requested parent is a legacy generic folder'
+  fi
   [ "$rct_scope" = "$CONFLUENCE_TARGET_SCOPE" ] &&
     [ "$rct_domain" = "$CONFLUENCE_TARGET_DOMAIN" ] &&
     [ "$rct_transport" = "$CONFLUENCE_TARGET_TRANSPORT" ] &&
@@ -3645,7 +3653,10 @@ require_operation_routing() {
     confluence-write)
       require_confluence_route
       resolve_confluence_target
-      PREFLIGHT_CAPABILITY=confluence-page-parent-write
+      case "$CONFLUENCE_TARGET_ACTION" in
+        update) PREFLIGHT_CAPABILITY=confluence-page-parent-write ;;
+        create|move) PREFLIGHT_CAPABILITY=confluence-folder-parent-write ;;
+      esac
       ;;
     confluence-handoff-verify)
       require_confluence_route
