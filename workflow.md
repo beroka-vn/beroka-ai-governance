@@ -327,7 +327,8 @@ scan, affected entrypoint/smoke path, and `Not run` reasons.
 - [ ] Backlog visibility/readback passed or the exact failure is reported.
 - [ ] Counterpart discovery ran when relevant and every link was confirmed.
 - [ ] Pure FE created no BB link; unclear dependency was escalated.
-- [ ] Execution assignee matches requester by accountId.
+- [ ] Receiving-team executor and current assignee accountId are confirmed;
+      requester/reporter may differ.
 - [ ] Objective, scope, criteria, dependencies, owner, labels, and validation are Ready.
 - [ ] Registry row, Hub references, contract version, and handoff state are exact.
 - [ ] AI authority and stop conditions are explicit.
