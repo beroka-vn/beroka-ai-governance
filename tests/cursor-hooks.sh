@@ -152,6 +152,12 @@ confluence_update=$(printf '%s\n' "$base_input" | jq -c '. + {
     body:"Capability ID: MARKET-FU-INDEX-API\nRegistry content ID: 900003\nScope: Shared\nDomain: Market\nTransport: API\nConfluence content ID: 70713366"
   }}')
 assert_denied "$(hook beforeMCPExecution "$confluence_update")" MAPPING_CONFLICT
+bulleted_confluence_body=$(printf '%s\n' "$confluence_update" |
+  jq -r '.tool_input.body' | sed 's/^/- /')
+bulleted_confluence_update=$(printf '%s\n' "$confluence_update" | jq -c \
+  --arg body "$bulleted_confluence_body" '.tool_input.body=$body')
+assert_denied "$(hook beforeMCPExecution "$bulleted_confluence_update")" \
+  MAPPING_CONFLICT
 confluence_private_link=$(printf '%s\n' "$confluence_update" | jq -c \
   '.tool_input.body += "\nRelated repository: git@github.com:beroka-vn/Beroka_Frontend.git"')
 assert_denied "$(hook beforeMCPExecution "$confluence_private_link")" \

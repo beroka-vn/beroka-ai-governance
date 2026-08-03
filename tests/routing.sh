@@ -1091,6 +1091,26 @@ assert_target_inventory_invalid() {
   mv "$ati_backup" "$ati_file"
 }
 
+assert_target_catalog_invalid() {
+  atci_version=$1 atci_repository=$2 atci_field=$3 atci_value=$4
+  atci_file=$source_repo/runtime/repositories/$atci_repository.conf
+  atci_backup=$TEST_ROOT/confluence-catalog.valid
+  cp "$atci_file" "$atci_backup"
+  sed "s/^$atci_field=.*/$atci_field=$atci_value/" \
+    "$atci_file" >"$atci_file.tmp"
+  mv "$atci_file.tmp" "$atci_file"
+  pin_test_release "$atci_version"
+  if output=$($CLI context "$consumer" 2>&1); then
+    fail 'target inventory accepted an incompatible repository catalog'
+  fi
+  assert_contains "$output" 'Result: VERSION_MISMATCH'
+  case "$output" in
+    *'Invalid cross-team intake inventory'*|*'Invalid Confluence target inventory'*) ;;
+    *) fail 'incompatible repository catalog was not rejected' ;;
+  esac
+  mv "$atci_backup" "$atci_file"
+}
+
 assert_target_inventory_invalid v1.1.9 \
   'beroka-vn/Beroka_Backend\tpage\tDRIFTED\t70713366\tDuplicate\t-\tMarket\tWebSocket\t71303169\t-\t-'
 assert_target_inventory_invalid v1.1.10 \
@@ -1119,6 +1139,10 @@ assert_target_inventory_invalid v1.1.26 \
   'beroka-vn/Beroka_Backend\tfolder\tACTIVE\t900043\tPlanned metadata parent\tShared\tMarket\tAPI\t65962274\t-\t-\nberoka-vn/Beroka_Backend\tpage\tPLANNED\t-\tPlanned mismatched metadata\tUnderlying\tUser\tWebSocket\t900043\tMARKET-PLANNED-MISMATCHED\t900044'
 assert_target_inventory_invalid v1.1.27 \
   'beroka-vn/Beroka_Backend\tpage\tDRIFTED\t65831203\tFrontend root collision\t-\tMarket\tAPI\t-\t-\t-'
+assert_target_catalog_invalid v1.1.28 \
+  beroka-vn/Beroka_Backend INTEGRATION_PROFILE none
+assert_target_catalog_invalid v1.1.29 \
+  beroka-vn/Beroka_Backend PROFILE frontend
 
 metadata_file=$source_repo/runtime/integrations/beroka-be-fe.confluence-targets
 metadata_backup=$TEST_ROOT/confluence-targets.metadata

@@ -755,6 +755,30 @@ validate_confluence_target_inventory() {
   while IFS= read -r vcti_repository; do
     vcti_record=$vcti_catalog/$vcti_repository.conf
     [ -f "$vcti_record" ] && [ ! -L "$vcti_record" ] || exit 1
+    case "$vcti_repository" in
+      beroka-vn/Beroka_Backend) vcti_profile=backend ;;
+      beroka-vn/Beroka_Frontend) vcti_profile=frontend ;;
+      *) exit 1 ;;
+    esac
+    awk -F= -v profile="$vcti_profile" '
+      $1 == "PROFILE" {
+        if (seen_profile++) exit 1
+        actual_profile=substr($0, length($1) + 2)
+      }
+      $1 == "INTEGRATION_PROFILE" {
+        if (seen_integration++) exit 1
+        integration=substr($0, length($1) + 2)
+      }
+      $1 == "CROSS_REPO_POLICY" {
+        if (seen_policy++) exit 1
+        policy=substr($0, length($1) + 2)
+      }
+      END {
+        exit !(seen_profile == 1 && seen_integration == 1 &&
+          seen_policy == 1 && actual_profile == profile &&
+          integration == "beroka-be-fe" && policy == "profile-controlled")
+      }
+    ' "$vcti_record" || exit 1
   done
 }
 
@@ -4415,6 +4439,7 @@ cursor_confluence_marker() {
   awk -v label="$ccm_label" '
     {
       sub(/\r$/, "")
+      sub(/^[[:space:]]*-[[:space:]]+/, "")
       prefix=label ":"
       if (index($0, prefix) == 1) {
         value=substr($0, length(prefix) + 1)

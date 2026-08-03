@@ -110,7 +110,7 @@ exact accessible Confluence page.
 ```text
 CONFLUENCE TARGET
 - Action: create | update | move
-- Target content ID: <numeric ID | new>
+- Confluence content ID: <numeric ID | new>
 - Capability ID: <UPPERCASE-KEBAB-ID>
 - Scope: Shared | Derivatives | Underlying
 - Domain: Market | User
