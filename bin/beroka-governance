@@ -1176,7 +1176,7 @@ cursor_hooks_expected() {
     {event:"beforeSubmitPrompt",command:($cli + " cursor-hook beforeSubmitPrompt"),security:false},
     {event:"preCompact",command:($cli + " cursor-hook preCompact"),security:false},
     {event:"beforeMCPExecution",command:($cli + " cursor-hook beforeMCPExecution"),security:true},
-    {event:"beforeShellExecution",command:($cli + " cursor-hook beforeShellExecution"),security:true}
+    {event:"beforeShellExecution",command:($cli + " cursor-hook beforeShellExecution"),security:true,matcher:"gh"}
   ]' || die GOVERNANCE_NOT_READY 'Cannot define Cursor security hooks'
 }
 
@@ -1193,17 +1193,23 @@ install_cursor_hooks() {
   if [ -e "$ich_file" ]; then
     if ! jq -s --argjson managed "$ich_expected" '
       if length != 1 or (.[0] | type != "object") then error("invalid hooks") else
-        .[0] |
+        .[0] | .version = (.version // 1) |
       if has("hooks") and (.hooks | type != "object") then error("invalid hooks") else
         .hooks = (.hooks // {}) |
         reduce $managed[] as $item (
           .;
-          ($item | {command} + (if .security then {failClosed:true} else {} end)) as $expected |
+          ($item | {command}
+            + (if .security then {failClosed:true} else {} end)
+            + (if .matcher then {matcher:.matcher} else {} end)) as $expected |
+          ($expected | del(.matcher)) as $legacy |
           (.hooks[$item.event] // []) as $entries |
           if ((.hooks | has($item.event)) and (.hooks[$item.event] | type != "array")) then error("invalid hook event")
-          elif any($entries[]; .command == $expected.command and . != $expected) then error("conflicting hook")
-          elif any($entries[]; . == $expected) then .
-          else .hooks[$item.event] = $entries + [$expected]
+          else
+            ([$entries[] | select((($expected.matcher != null) and (. == $legacy)) | not)]) as $kept |
+            if any($kept[]; .command == $expected.command and . != $expected) then error("conflicting hook")
+            elif any($kept[]; . == $expected) then .hooks[$item.event] = $kept
+            else .hooks[$item.event] = $kept + [$expected]
+            end
           end
         )
       end
@@ -1215,10 +1221,12 @@ install_cursor_hooks() {
     fi
   elif ! printf '%s\n' '{}' | jq -s --argjson managed "$ich_expected" '
       if length != 1 or (.[0] | type != "object") then error("invalid hooks") else
-      .[0] | .hooks = {} |
+      .[0] | .version = 1 | .hooks = {} |
       reduce $managed[] as $item (
         .;
-        ($item | {command} + (if .security then {failClosed:true} else {} end)) as $expected |
+        ($item | {command}
+          + (if .security then {failClosed:true} else {} end)
+          + (if .matcher then {matcher:.matcher} else {} end)) as $expected |
         .hooks[$item.event] = [$expected]
       )
       end
@@ -1237,11 +1245,13 @@ verify_cursor_hooks() {
   vch_expected=$(cursor_hooks_expected) || return 1
   jq -se --argjson managed "$vch_expected" '
     length == 1 and (.[0] | type == "object") and
-    (.[0] | (.hooks | type == "object") and
+    (.[0] | ((.version // 1) == 1) and (.hooks | type == "object") and
     (. as $config |
     all($managed[];
       (. as $item |
-       ($item | {command} + (if .security then {failClosed:true} else {} end)) as $expected |
+       ($item | {command}
+         + (if .security then {failClosed:true} else {} end)
+         + (if .matcher then {matcher:.matcher} else {} end)) as $expected |
        ($config.hooks[$item.event] | type == "array") and
        ([$config.hooks[$item.event][] | select(. == $expected)] | length == 1)))))
   ' "$vch_file" >/dev/null 2>&1
@@ -4245,13 +4255,23 @@ cursor_read_request() {
       type == "object" and
       (.conversation_id | type == "string" and length > 0) and
       (.generation_id | type == "string" and length > 0) and
-      (.workspace_roots | type == "array" and length == 1 and
-        (.[0] | type == "string" and length > 0)))
+      (.workspace_roots | type == "array" and length >= 1 and
+        all(.[]; type == "string" and length > 0)))
   ' >/dev/null 2>&1 || return 1
   CURSOR_CONVERSATION=$(printf '%s\n' "$CURSOR_REQUEST" | jq -r .conversation_id) || return 1
   CURSOR_GENERATION=$(printf '%s\n' "$CURSOR_REQUEST" | jq -r .generation_id) || return 1
-  CURSOR_WORKSPACE=$(printf '%s\n' "$CURSOR_REQUEST" | jq -r '.workspace_roots[0]') || return 1
-  CURSOR_WORKSPACE=$(git -C "$CURSOR_WORKSPACE" rev-parse --show-toplevel 2>/dev/null) || return 1
+  # Multi-root workspaces expose more than one root; govern the first root that
+  # resolves to a Git repository top-level instead of rejecting the request.
+  CURSOR_WORKSPACE=
+  while IFS= read -r crr_root; do
+    [ -n "$crr_root" ] || continue
+    crr_top=$(git -C "$crr_root" rev-parse --show-toplevel 2>/dev/null) || continue
+    CURSOR_WORKSPACE=$crr_top
+    break
+  done <<CURSOR_ROOTS_EOF
+$(printf '%s\n' "$CURSOR_REQUEST" | jq -r '.workspace_roots[]')
+CURSOR_ROOTS_EOF
+  [ -n "$CURSOR_WORKSPACE" ] || return 1
   CURSOR_WORKSPACE=$(CDPATH= cd -- "$CURSOR_WORKSPACE" && pwd -P) || return 1
 }
 
@@ -4319,6 +4339,12 @@ cursor_allow() {
   jq -nc '{permission:"allow"}'
 }
 
+cursor_block_prompt() {
+  cbp_code=$1 cbp_message=$2
+  jq -nc --arg code "$cbp_code" --arg message "$cbp_message" \
+    '{continue:false,user_message:("Result: " + $code + " — " + $message)}'
+}
+
 cursor_language_from_prompt() {
   cursor_prompt=$1
   printf '%s\n' "$cursor_prompt" | awk '
@@ -4355,16 +4381,28 @@ cmd_cursor_session_start() {
 }
 
 cmd_cursor_before_submit_prompt() {
-  cursor_read_request || die GOVERNANCE_CONTEXT_REQUIRED 'Cursor hook input requires one Git workspace'
+  # Cursor only blocks a submission on {"continue":false} (exit 0) or exit code 2;
+  # any other non-zero exit is treated as a hook failure and fails open. Emit an
+  # explicit decision so the governed submit-time checks actually take effect.
+  cursor_read_request || { printf '%s\n' '{}'; return; }
   cursor_context
-  cursor_receipt_matches 0 || die GOVERNANCE_CONTEXT_REQUIRED 'Run cursor-hook sessionStart first'
-  cursor_prompt=$(printf '%s\n' "$CURSOR_REQUEST" | jq -er '.prompt // "" | if type == "string" then . else error("prompt") end') ||
-    die WORK_ITEM_LANGUAGE_REQUIRED 'Prompt must be text'
-  cursor_language=$(cursor_language_from_prompt "$cursor_prompt") ||
-    die WORK_ITEM_LANGUAGE_REQUIRED 'Use a complete Work-item language directive'
+  # Re-establish the per-generation receipt here even when none exists yet, so a
+  # session self-heals after preCompact clears it (sessionStart only fires for a
+  # brand-new conversation and cannot be re-triggered mid-conversation).
+  cursor_prompt=$(printf '%s\n' "$CURSOR_REQUEST" | jq -er '.prompt // "" | if type == "string" then . else error("prompt") end') || {
+    cursor_block_prompt WORK_ITEM_LANGUAGE_REQUIRED 'Prompt must be text.'
+    return
+  }
+  cursor_language_state=0
+  cursor_language=$(cursor_language_from_prompt "$cursor_prompt") || cursor_language_state=$?
+  if [ "$cursor_language_state" -ne 0 ]; then
+    cursor_block_prompt WORK_ITEM_LANGUAGE_REQUIRED \
+      'Use one complete "Work-item language: <language>" directive.'
+    return
+  fi
   [ -n "$cursor_language" ] || cursor_language=en
   cursor_write_receipt "$cursor_language"
-  jq -nc '{}'
+  printf '%s\n' '{}'
 }
 
 cmd_cursor_pre_compact() {

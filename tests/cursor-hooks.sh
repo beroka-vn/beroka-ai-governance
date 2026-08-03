@@ -76,10 +76,17 @@ assert_denied "$output" GOVERNANCE_CONTEXT_REQUIRED
 
 for invalid in '{' \
   "$(jq -nc --arg workspace "$TMP_ROOT/not-git" '{conversation_id:"bad",generation_id:"bad",workspace_roots:[$workspace]}')" \
-  "$(jq -nc --arg workspace "$known_repo" '{conversation_id:"bad",generation_id:"bad",workspace_roots:[$workspace,$workspace]}')"; do
+  "$(jq -nc '{conversation_id:"bad",generation_id:"bad",workspace_roots:[]}')"; do
   if output=$(hook sessionStart "$invalid" 2>&1); then fail 'invalid session input passed'; fi
   assert_contains "$output" 'GOVERNANCE_CONTEXT_REQUIRED'
 done
+
+# A multi-root workspace resolves the first Git root instead of hard-failing.
+multi_root=$(jq -nc --arg a "$TMP_ROOT/not-git" --arg b "$known_repo" \
+  '{conversation_id:"conversation-1",generation_id:"generation-1",workspace_roots:[$a,$b]}')
+multi_root_session=$(hook sessionStart "$multi_root")
+assert_contains "$multi_root_session" 'beroka-vn/Beroka_Backend'
+assert_contains "$multi_root_session" 'Routing: ROUTING_ACTIVE'
 
 hook sessionStart "$base_input" >/dev/null
 github_write=$(printf '%s\n' "$base_input" | jq -c '. + {tool_name:"github.create_issue",url:"https://github.com",tool_input:{body:"Work-item language: English"}}')
@@ -194,5 +201,29 @@ for command in 'gh issue view 1' 'git status'; do
   output=$(hook beforeShellExecution "$(jq -nc --arg command "$command" '{conversation_id:"shell",generation_id:"shell",workspace_roots:["/tmp/none"],command:$command}')")
   assert_contains "$output" '"permission":"allow"'
 done
+
+# beforeSubmitPrompt blocks a malformed Work-item language directive by emitting
+# {"continue":false} with exit 0 (not a non-zero exit, which Cursor fails open).
+selfheal_base=$(jq -nc --arg workspace "$known_repo" \
+  '{conversation_id:"conversation-heal",generation_id:"generation-heal",workspace_roots:[$workspace]}')
+hook sessionStart "$selfheal_base" >/dev/null
+malformed_prompt=$(printf '%s\n' "$selfheal_base" | jq -c '. + {prompt:"Work-item language: 日本語"}')
+malformed_submit=$(hook beforeSubmitPrompt "$malformed_prompt")
+assert_contains "$malformed_submit" '"continue":false'
+assert_contains "$malformed_submit" 'WORK_ITEM_LANGUAGE_REQUIRED'
+wellformed_prompt=$(printf '%s\n' "$selfheal_base" | jq -c '. + {prompt:"Work-item language: English"}')
+case "$(hook beforeSubmitPrompt "$wellformed_prompt")" in
+  *'"continue":false'*) fail 'well-formed prompt was blocked' ;;
+esac
+
+# After preCompact clears the receipt, a fresh beforeSubmitPrompt re-establishes
+# it within the same conversation so governed writes are not permanently locked.
+selfheal_read=$(printf '%s\n' "$selfheal_base" | jq -c \
+  '. + {tool_name:"github.get_issue",url:"https://github.com",tool_input:{}}')
+assert_contains "$(hook beforeMCPExecution "$selfheal_read")" '"permission":"allow"'
+hook preCompact "$selfheal_base" >/dev/null
+assert_denied "$(hook beforeMCPExecution "$selfheal_read")" GOVERNANCE_CONTEXT_REQUIRED
+hook beforeSubmitPrompt "$wellformed_prompt" >/dev/null
+assert_contains "$(hook beforeMCPExecution "$selfheal_read")" '"permission":"allow"'
 
 printf '%s\n' 'PASS: Cursor hook runtime'

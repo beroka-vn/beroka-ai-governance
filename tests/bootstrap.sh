@@ -99,13 +99,16 @@ assert_atlassian_auth_handoff() {
 }
 
 assert_cursor_hook() {
-  ach_file=$1 ach_event=$2 ach_command=$3 ach_fail_closed=$4
+  ach_file=$1 ach_event=$2 ach_command=$3 ach_fail_closed=$4 ach_matcher=${5:-}
   ach_count=$(jq --arg event "$ach_event" --arg command "$ach_command" \
     '[.hooks[$event][] | select(.command == $command)] | length' "$ach_file")
   [ "$ach_count" -eq 1 ] ||
     fail "expected one managed Cursor hook for $ach_event"
   ach_expected=$(jq -nc --arg command "$ach_command" --argjson fail_closed "$ach_fail_closed" \
-    'if $fail_closed then {command:$command,failClosed:true} else {command:$command} end')
+    --arg matcher "$ach_matcher" \
+    '({command:$command}
+      + (if $fail_closed then {failClosed:true} else {} end)
+      + (if $matcher != "" then {matcher:$matcher} else {} end))')
   jq -e --arg event "$ach_event" --argjson expected "$ach_expected" \
     '.hooks[$event] | any(. == $expected)' "$ach_file" >/dev/null ||
     fail "Cursor hook has the wrong security setting for $ach_event"
@@ -837,7 +840,8 @@ assert_cursor_hook "$cursor_hooks" sessionStart "$installed_cursor_cli cursor-ho
 assert_cursor_hook "$cursor_hooks" beforeSubmitPrompt "$installed_cursor_cli cursor-hook beforeSubmitPrompt" false
 assert_cursor_hook "$cursor_hooks" preCompact "$installed_cursor_cli cursor-hook preCompact" false
 assert_cursor_hook "$cursor_hooks" beforeMCPExecution "$installed_cursor_cli cursor-hook beforeMCPExecution" true
-assert_cursor_hook "$cursor_hooks" beforeShellExecution "$installed_cursor_cli cursor-hook beforeShellExecution" true
+assert_cursor_hook "$cursor_hooks" beforeShellExecution "$installed_cursor_cli cursor-hook beforeShellExecution" true gh
+assert_contains "$(jq -r '.version' "$cursor_hooks")" 1
 cursor_hooks_before_repeat=$TEST_ROOT/cursor-hooks-before-repeat
 cp "$cursor_hooks" "$cursor_hooks_before_repeat"
 cursor_ack_before_format_change=$TEST_ROOT/cursor-ack-before-format-change
@@ -941,6 +945,31 @@ fi
 assert_not_contains "$output" 'Runtime hook: INSTALLED'
 assert_not_contains "$output" 'Runtime enforcement: PASS'
 mv "$cursor_hooks_healthy" "$cursor_hooks"
+
+# A previously-installed managed beforeShellExecution entry that predates the
+# matcher is migrated in place instead of being rejected as a conflict.
+cursor_hooks_legacy=$TEST_ROOT/cursor-hooks-legacy
+jq --arg command "$installed_cursor_cli cursor-hook beforeShellExecution" \
+  '.hooks.beforeShellExecution = [{command:$command,failClosed:true}]' \
+  "$cursor_hooks_before_repeat" >"$cursor_hooks_legacy"
+cp "$cursor_hooks_legacy" "$cursor_hooks"
+legacy_output=$(cd "$cursor_sha256_cwd" &&
+  $CLI bootstrap --client cursor --version v1.1.0 --non-interactive)
+assert_contains "$legacy_output" 'Result: PASS'
+assert_cursor_hook "$cursor_hooks" beforeShellExecution \
+  "$installed_cursor_cli cursor-hook beforeShellExecution" true gh
+
+# A brand-new hooks file is written with the schema version and the matcher.
+rm -f "$cursor_hooks"
+fresh_hooks_output=$(cd "$cursor_sha256_cwd" &&
+  $CLI bootstrap --client cursor --version v1.1.0 --non-interactive)
+assert_contains "$fresh_hooks_output" 'Result: PASS'
+assert_contains "$(jq -r '.version' "$cursor_hooks")" 1
+assert_cursor_hook "$cursor_hooks" beforeShellExecution \
+  "$installed_cursor_cli cursor-hook beforeShellExecution" true gh
+assert_cursor_hook "$cursor_hooks" beforeMCPExecution \
+  "$installed_cursor_cli cursor-hook beforeMCPExecution" true
+
 rm -rf "$HOME/.cursor"
 
 printf '%s\n' 0000000000000000000000000000000000000000 \
