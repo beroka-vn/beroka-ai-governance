@@ -1,0 +1,4 @@
+# repository	record-type	state	content-id	title	scope	domain	transport	parent-id	capability-id	registry-content-id
+beroka-vn/Beroka_Backend	folder	LEGACY	71237633	Market — API	-	Market	API	-	-	-
+beroka-vn/Beroka_Backend	folder	LEGACY	71303169	Market — WS	-	Market	WebSocket	-	-	-
+beroka-vn/Beroka_Backend	page	DRIFTED	70713366	BB-11 — Market Data — Derivative Quote Stream Contract	-	Market	WebSocket	71303169	-	-

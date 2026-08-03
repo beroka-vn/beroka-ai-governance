@@ -29,3 +29,16 @@
 - Confluence creation uses exact trusted space/root routing and reads back the
   created content and parent. Folder routing remains blocked without isolated
   pilot evidence.
+- Before a Confluence create, update, move, or handoff, resolve the exact
+  content ID, Capability ID, scope, domain, transport, parent ID, and Registry
+  content ID; run target-bound `confluence-write` or
+  `confluence-handoff-verify`. Unknown or ambiguous targets return
+  `ROUTING_REQUIRED`; a target or transport mismatch returns
+  `MAPPING_CONFLICT`; ask the user and wait.
+- Before any Jira field, description, comment, or status update, read the
+  authenticated and current-assignee Atlassian `accountId`. A mismatch or
+  unassigned item returns `ASSIGNEE_CONFIRMATION_REQUIRED` and waits for exact
+  user authorization.
+- Cross-team intake and handoff text must not contain opposite-team private
+  GitHub links. Return `CROSS_TEAM_LINK_SCOPE_DENIED` and use an accessible
+  exact Confluence page instead.
