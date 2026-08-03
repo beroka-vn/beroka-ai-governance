@@ -179,6 +179,10 @@ Ready only after `READY_FOR_FE`, an exact contract version, and FE
 
 Before editing for a Story/Task/Bug/Feature:
 
+The requester/reporter may differ from executor/assignee. Resolve both by Jira
+`accountId`; the current assignee owns execution only after the receiving team
+confirms that account.
+
 1. resolve the requester/reporter and executor/assignee separately by Jira
    `accountId`;
 2. read the current assignee and confirm that person owns the technical GitHub
@@ -262,6 +266,10 @@ Maintain provider status as `To Do -> In Progress` when accepted work starts,
 and `In Review -> Done` only after merge and exact Confluence delivery/readback.
 The provider updates only its own project item; the consumer reviews the exact
 Confluence handoff and updates its own item.
+For every Jira status update, the agent reads available Jira transitions first,
+performs only an allowed transition, and reads back the new Jira status. An
+absent transition or status mismatch returns a failure and blocks dependent
+work.
 `Closes #<issue>` normally closes the GitHub Issue. If it remains open, an agent
 may close it only after exact merge/link readback proves the delivered commit
 and the close write is authorized; otherwise report the issue as blocked.

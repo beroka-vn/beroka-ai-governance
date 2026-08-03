@@ -99,6 +99,15 @@ for file in runtime/rules/work-items.md runtime/integrations/beroka-be-fe.md \
   require_text "$file" 'In Review'
 done
 reject_text templates/jira-confluence.md 'Frontend Jira/GitHub issue(s):'
+require_text workflow.md 'requester/reporter may differ from executor/assignee'
+require_text workflow.md 'reads available Jira transitions first'
+require_text workflow.md 'reads back the new Jira status'
+require_text workflow.md 'status mismatch returns a failure'
+require_text templates/jira-confluence.md 'provider-owned completion records'
+require_text templates/jira-confluence.md 'consumer-facing cross-team handoff'
+require_text templates/jira-confluence.md 'accessible Jira keys'
+require_text templates/jira-confluence.md \
+  'never opposite-team private GitHub links'
 reject_text governance.md 'The Hub row is the canonical mapping'
 
 require_text runtime/rules/general.md 'Confluence content ID'

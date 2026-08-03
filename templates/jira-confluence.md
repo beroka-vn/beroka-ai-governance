@@ -499,6 +499,11 @@ Additional related Jira items:
 
 Add this block before the Jira item moves to `Done`:
 
+These provider-owned completion records may retain provider-owned Jira/GitHub
+links. A consumer-facing cross-team handoff uses accessible Jira keys and exact
+Confluence references. Consumer-facing cross-team handoff: never opposite-team private GitHub links.
+Provider private delivery links stay in provider-owned records only.
+
 ```markdown
 ## Delivery evidence
 
