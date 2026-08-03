@@ -115,6 +115,16 @@ require_text runtime/integrations/beroka-be-fe.intake \
   'beroka-vn/Beroka_Frontend	beroka-vn/Beroka_Backend	backend	BB'
 require_text runtime/integrations/beroka-be-fe.intake \
   'beroka-vn/Beroka_Backend	beroka-vn/Beroka_Frontend	frontend	BF'
+target_inventory=$ROOT/runtime/integrations/beroka-be-fe.confluence-targets
+[ -f "$target_inventory" ] || fail 'missing Confluence target inventory'
+[ "$(sed '/^#/d;/^[[:space:]]*$/d' "$target_inventory" | wc -l | tr -d ' ')" = 3 ] ||
+  fail 'Confluence target inventory must contain three observed deny-only records'
+require_text runtime/integrations/beroka-be-fe.confluence-targets \
+  "$(printf 'beroka-vn/Beroka_Backend\tfolder\tLEGACY\t71237633\tMarket — API')"
+require_text runtime/integrations/beroka-be-fe.confluence-targets \
+  "$(printf 'beroka-vn/Beroka_Backend\tfolder\tLEGACY\t71303169\tMarket — WS')"
+require_text runtime/integrations/beroka-be-fe.confluence-targets \
+  "$(printf 'beroka-vn/Beroka_Backend\tpage\tDRIFTED\t70713366\tBB-11 — Market Data — Derivative Quote Stream Contract')"
 for alias in Beroka_Backend Beroka_Frontend; do
   alias_slug="cuongngo1801-beroka/$alias"
   alias_record="runtime/repositories/$alias_slug.conf"
