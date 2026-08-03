@@ -4366,7 +4366,7 @@ cursor_tool_provider() {
     *) CURSOR_PROVIDER= ;;
   esac
   case "$CURSOR_TOOL_TEXT" in
-    *create*|*update*|*edit*|*comment*|*move*) CURSOR_TOOL_WRITE=1 ;;
+    *create*|*update*|*edit*|*comment*|*move*|*transition*) CURSOR_TOOL_WRITE=1 ;;
     *) CURSOR_TOOL_WRITE=0 ;;
   esac
 }
@@ -4507,6 +4507,11 @@ cursor_validate_template() {
   cursor_marker="Work-item language: $(cursor_language_label)"
   printf '%s\n' "$CURSOR_TOOL_INPUT" | grep -F "$cursor_marker" >/dev/null || return 3
   case "$CURSOR_TOOL_TEXT" in
+    *transition*)
+      cursor_has_nonempty_field status ||
+        cursor_has_nonempty_field transition || return 1
+      return 0
+      ;;
     *update*|*edit*|*comment*)
       cursor_has_nonempty_field body || cursor_has_nonempty_field content || return 1
       return 0

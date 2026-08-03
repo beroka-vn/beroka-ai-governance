@@ -143,6 +143,18 @@ printf '%s\n' cursor >"$XDG_CONFIG_HOME/beroka-ai-governance/clients"
 git --git-dir=/dev/null hash-object --no-filters \
   "$release/templates/agent-entrypoints/CURSOR-USER-RULE.txt" \
   >"$XDG_CONFIG_HOME/beroka-ai-governance/cursor-user-rule.sha256"
+jira_transition=$(printf '%s\n' "$base_input" | jq -c '. + {
+  tool_name:"jira.transition_issue",
+  url:"https://example.atlassian.net",
+  tool_input:{
+    issueKey:"BB-123",
+    status:"In Review",
+    body:"Work-item language: English"
+  }}')
+assert_denied "$(hook beforeMCPExecution "$jira_transition")" DEPENDENCY_MISSING
+jira_cross_team_transition=$(printf '%s\n' "$jira_transition" | jq -c \
+  '.tool_input.issueKey="BF-123"')
+assert_denied "$(hook beforeMCPExecution "$jira_cross_team_transition")" ROUTING_REQUIRED
 confluence_update=$(printf '%s\n' "$base_input" | jq -c '. + {
   tool_name:"confluence.update_page",
   url:"https://beroka.atlassian.net/wiki",
