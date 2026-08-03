@@ -4280,11 +4280,12 @@ cursor_tool_provider() {
   CURSOR_TOOL_TEXT=$(printf '%s %s %s' "$CURSOR_TOOL_NAME" "$CURSOR_TOOL_URL" "$CURSOR_TOOL_COMMAND" | tr '[:upper:]' '[:lower:]')
   case "$CURSOR_TOOL_TEXT" in
     *github.com*|*github*) CURSOR_PROVIDER=github ;;
+    *confluence*|*/wiki*) CURSOR_PROVIDER=confluence ;;
     *atlassian.net*|*jira*) CURSOR_PROVIDER=jira ;;
     *) CURSOR_PROVIDER= ;;
   esac
   case "$CURSOR_TOOL_TEXT" in
-    *create*|*update*|*edit*|*comment*) CURSOR_TOOL_WRITE=1 ;;
+    *create*|*update*|*edit*|*comment*|*move*) CURSOR_TOOL_WRITE=1 ;;
     *) CURSOR_TOOL_WRITE=0 ;;
   esac
 }
@@ -4328,6 +4329,70 @@ cursor_jira_operation() {
   ) || return 1
   [ "$cjo_project" = "$cjo_target" ] || return 1
   printf '%s\n' jira-intake-write
+}
+
+cursor_confluence_marker() {
+  ccm_label=$1
+  awk -v label="$ccm_label" '
+    {
+      sub(/\r$/, "")
+      prefix=label ":"
+      if (index($0, prefix) == 1) {
+        value=substr($0, length(prefix) + 1)
+        sub(/^[[:space:]]+/, "", value)
+        if (value == "" || seen++) invalid=1
+        result=value
+      }
+    }
+    END { if (invalid || seen != 1) exit 1; print result }
+  '
+}
+
+cursor_confluence_preflight() {
+  ccp_action=update
+  case "$CURSOR_TOOL_TEXT" in
+    *create*) ccp_action=create ;;
+    *move*) ccp_action=move ;;
+  esac
+  if [ "$ccp_action" = create ]; then
+    ccp_target=new
+  else
+    ccp_target=$(printf '%s\n' "$CURSOR_TOOL_INPUT" | jq -er '
+      [.. | objects | (.pageId?, .contentId?) |
+       select(type == "string")] | unique |
+      if length == 1 then .[0] else error("target") end
+    ' 2>/dev/null) || return 1
+  fi
+  ccp_parent=$(printf '%s\n' "$CURSOR_TOOL_INPUT" | jq -er '
+    [.. | objects | .parentId? | select(type == "string")] | unique |
+    if length == 1 then .[0] else error("parent") end
+  ' 2>/dev/null) || return 1
+  ccp_body=$(printf '%s\n' "$CURSOR_TOOL_INPUT" | jq -er '
+    [.. | objects | (.body?, .content?) | select(type == "string")] |
+    unique | if length == 1 then .[0] else error("body") end
+  ' 2>/dev/null) || return 1
+  ccp_capability=$(printf '%s\n' "$ccp_body" |
+    cursor_confluence_marker 'Capability ID') || return 1
+  ccp_registry=$(printf '%s\n' "$ccp_body" |
+    cursor_confluence_marker 'Registry content ID') || return 1
+  ccp_scope=$(printf '%s\n' "$ccp_body" |
+    cursor_confluence_marker Scope) || return 1
+  ccp_domain=$(printf '%s\n' "$ccp_body" |
+    cursor_confluence_marker Domain) || return 1
+  ccp_transport=$(printf '%s\n' "$ccp_body" |
+    cursor_confluence_marker Transport) || return 1
+  ccp_body_target=$(printf '%s\n' "$ccp_body" |
+    cursor_confluence_marker 'Confluence content ID') || return 1
+  [ "$ccp_target" = "$ccp_body_target" ] || return 2
+  cmd_preflight "$CURSOR_WORKSPACE" --client cursor \
+    --operation confluence-write --non-interactive \
+    --confluence-action "$ccp_action" \
+    --target-content-id "$ccp_target" \
+    --capability-id "$ccp_capability" \
+    --scope "$ccp_scope" --domain "$ccp_domain" \
+    --transport "$ccp_transport" \
+    --expected-parent-id "$ccp_parent" \
+    --registry-content-id "$ccp_registry"
 }
 
 cursor_language_label() {
@@ -4392,6 +4457,28 @@ cmd_cursor_before_mcp_execution() {
   [ -n "$CURSOR_PROVIDER" ] && [ "$CURSOR_TOOL_WRITE" -eq 1 ] || { cursor_allow; return; }
   case "$CURSOR_PROVIDER" in
     github) cursor_operation=github-write ;;
+    confluence)
+      cursor_preflight_state=0
+      cursor_preflight=$(cursor_confluence_preflight 2>&1) ||
+        cursor_preflight_state=$?
+      case "$cursor_preflight_state" in
+        0)
+          printf '%s\n' "$cursor_preflight" | grep -F 'Result: PASS' >/dev/null &&
+            { cursor_allow; return; }
+          ;;
+        2)
+          cursor_deny MAPPING_CONFLICT \
+            'Confluence body and structured target IDs conflict.'
+          return
+          ;;
+      esac
+      cursor_result=$(printf '%s\n' "$cursor_preflight" |
+        awk '/^Result: / { result=$0 } END { sub(/^Result: /, "", result); print result }')
+      [ -n "$cursor_result" ] || cursor_result=ROUTING_REQUIRED
+      cursor_deny "$cursor_result" \
+        "${cursor_preflight:-Exact Confluence target metadata is required.}"
+      return
+      ;;
     jira)
       cursor_operation_state=0
       cursor_operation=$(cursor_jira_operation) ||
@@ -4411,6 +4498,14 @@ cmd_cursor_before_mcp_execution() {
       esac
       ;;
   esac
+  if [ "$cursor_operation" = jira-intake-write ] &&
+     printf '%s\n' "$CURSOR_TOOL_INPUT" |
+       grep -Eiq 'https://github\.com/beroka-vn/Beroka_(Backend|Frontend)(/|"|$)'
+  then
+    cursor_deny CROSS_TEAM_LINK_SCOPE_DENIED \
+      'Use an accessible exact Confluence page for cross-team documentation.'
+    return
+  fi
   cursor_template_state=0
   cursor_validate_template || cursor_template_state=$?
   case "$cursor_template_state" in

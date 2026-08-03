@@ -119,6 +119,33 @@ assert_denied "$(hook beforeMCPExecution "$(printf '%s\n' "$intake_base" | jq -c
 assert_denied "$(hook beforeMCPExecution "$(printf '%s\n' "$intake_base" | jq -c '.tool_name="jira.update_issue"')")" ROUTING_REQUIRED
 ordinary_unassigned=$(printf '%s\n' "$intake_base" | jq -c '.tool_input.projectKey="BB"')
 assert_denied "$(hook beforeMCPExecution "$ordinary_unassigned")" WORK_ITEM_TEMPLATE_REQUIRED
+for private_repo in Beroka_Backend Beroka_Frontend; do
+  private_link_intake=$(printf '%s\n' "$intake_base" | jq -c \
+    --arg link "https://github.com/beroka-vn/$private_repo/issues/138" \
+    '.tool_input.github=$link')
+  assert_denied "$(hook beforeMCPExecution "$private_link_intake")" CROSS_TEAM_LINK_SCOPE_DENIED
+done
+same_team_private_link=$(printf '%s\n' "$jira_write" | jq -c \
+  '.tool_input.github="https://github.com/beroka-vn/Beroka_Backend/issues/138"')
+assert_denied "$(hook beforeMCPExecution "$same_team_private_link")" WORK_ITEM_TEMPLATE_REQUIRED
+
+printf '%s\n' cursor >"$XDG_CONFIG_HOME/beroka-ai-governance/clients"
+git --git-dir=/dev/null hash-object --no-filters \
+  "$release/templates/agent-entrypoints/CURSOR-USER-RULE.txt" \
+  >"$XDG_CONFIG_HOME/beroka-ai-governance/cursor-user-rule.sha256"
+confluence_update=$(printf '%s\n' "$base_input" | jq -c '. + {
+  tool_name:"confluence.update_page",
+  url:"https://beroka.atlassian.net/wiki",
+  tool_input:{
+    pageId:"70713366",
+    parentId:"71303169",
+    body:"Capability ID: MARKET-FU-INDEX-API\nRegistry content ID: 900003\nScope: Shared\nDomain: Market\nTransport: API\nConfluence content ID: 70713366"
+  }}')
+assert_denied "$(hook beforeMCPExecution "$confluence_update")" MAPPING_CONFLICT
+assert_denied "$(hook beforeMCPExecution "$(printf '%s\n' "$confluence_update" | jq -c 'del(.tool_input.parentId)')")" ROUTING_REQUIRED
+assert_denied "$(hook beforeMCPExecution "$(printf '%s\n' "$confluence_update" | jq -c '.tool_name="confluence.move_page"')")" MAPPING_CONFLICT
+assert_denied "$(hook beforeMCPExecution "$(printf '%s\n' "$confluence_update" | jq -c '.tool_input.body += "\nRegistry content ID: 900004"')")" ROUTING_REQUIRED
+assert_denied "$(hook beforeMCPExecution "$(printf '%s\n' "$confluence_update" | jq -c '.tool_input.body |= sub("Confluence content ID: 70713366"; "Confluence content ID: 70713367")')")" MAPPING_CONFLICT
 unknown_write=$(printf '%s\n' "$base_input" | jq -c '. + {tool_name:"create_record",url:"https://github.com",tool_input:{body:"Work-item language: English"}}')
 assert_denied "$(hook beforeMCPExecution "$unknown_write")" WORK_ITEM_TEMPLATE_REQUIRED
 
