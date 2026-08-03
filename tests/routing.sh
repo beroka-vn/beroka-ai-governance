@@ -37,6 +37,18 @@ assert_not_contains() {
   esac
 }
 
+confluence_args() {
+  printf '%s\n' \
+    --confluence-action update \
+    --target-content-id 70713366 \
+    --capability-id MARKET-FU-INDEX-API \
+    --scope Shared \
+    --domain Market \
+    --transport API \
+    --expected-parent-id 71303169 \
+    --registry-content-id 900003
+}
+
 FIX_WAVE_FAILURES=0
 
 fix_wave_fail() {
@@ -1119,6 +1131,116 @@ rm "$target_file"
 mv "$target_backup" "$target_file"
 pin_test_release v1.1.13
 
+set -- $(confluence_args)
+: >"$CALLS"
+if output=$($CLI preflight "$canonical_backend" --client codex \
+  --operation confluence-write --non-interactive "$@" 2>&1)
+then
+  fail 'REST API update passed against the drifted WebSocket page'
+fi
+assert_contains "$output" 'Target content ID: 70713366'
+assert_contains "$output" 'Intended transport: API'
+assert_contains "$output" 'Target transport: WebSocket'
+assert_contains "$output" 'Result: MAPPING_CONFLICT'
+[ ! -s "$CALLS" ] || fail 'mapping conflict inspected a connector'
+
+set -- $(confluence_args | sed 's/^API$/WebSocket/')
+if output=$($CLI preflight "$canonical_backend" --client codex \
+  --operation confluence-write --non-interactive "$@" 2>&1)
+then
+  fail 'drifted page passed with matching transport'
+fi
+assert_contains "$output" 'Result: ROUTING_REQUIRED'
+
+: >"$CALLS"
+if output=$($CLI preflight "$canonical_backend" --client codex \
+  --operation confluence-write --non-interactive 2>&1)
+then
+  fail 'root-only Confluence preflight still passed'
+fi
+assert_contains "$output" 'Result: ROUTING_REQUIRED'
+[ ! -s "$CALLS" ] || fail 'missing target inspected a connector'
+
+if output=$($CLI preflight "$canonical_backend" --client codex \
+  --operation confluence-write --non-interactive \
+  --confluence-action create --target-content-id new \
+  --capability-id MARKET-FU-INDEX-API --scope Shared --domain Market \
+  --transport API --expected-parent-id 71237633 \
+  --registry-content-id 900003 2>&1)
+then
+  fail 'legacy generic API folder passed as a canonical parent'
+fi
+assert_contains "$output" 'Result: FOLDER_CREATION_REQUIRED'
+
+target_file=$source_repo/runtime/integrations/beroka-be-fe.confluence-targets
+cp "$target_file" "$target_file.deny-only"
+printf '%b\n' \
+  '# repository\trecord-type\tstate\tcontent-id\ttitle\tscope\tdomain\ttransport\tparent-id\tcapability-id\tregistry-content-id' \
+  'beroka-vn/Beroka_Backend\tfolder\tACTIVE\t900002\tShared — Market — API\tShared\tMarket\tAPI\t65962274\t-\t-' \
+  'beroka-vn/Beroka_Backend\tpage\tACTIVE\t900001\tFU_INDEX REST contract\tShared\tMarket\tAPI\t900002\tMARKET-FU-INDEX-API\t900003' \
+  'beroka-vn/Beroka_Backend\tfolder\tACTIVE\t900005\tShared — Market — WebSocket\tShared\tMarket\tWebSocket\t65962274\t-\t-' \
+  'beroka-vn/Beroka_Backend\tpage\tACTIVE\t900004\tDerivative quote stream\tShared\tMarket\tWebSocket\t900005\tMARKET-DERIVATIVE-QUOTE-WS\t900003' \
+  >"$target_file"
+pin_test_release v1.1.20
+
+printf '%s\n' healthy-all >"$XDG_CONFIG_HOME/fake-codex-health"
+output=$($CLI preflight "$canonical_backend" --client codex \
+  --operation confluence-write --non-interactive \
+  --confluence-action update --target-content-id 900001 \
+  --capability-id MARKET-FU-INDEX-API --scope Shared --domain Market \
+  --transport API --expected-parent-id 900002 \
+  --registry-content-id 900003)
+assert_contains "$output" 'Target transport: API'
+assert_contains "$output" 'Result: PASS'
+
+output=$($CLI preflight "$canonical_backend" --client codex \
+  --operation confluence-write --non-interactive \
+  --confluence-action update --target-content-id 900004 \
+  --capability-id MARKET-DERIVATIVE-QUOTE-WS --scope Shared --domain Market \
+  --transport WebSocket --expected-parent-id 900005 \
+  --registry-content-id 900003)
+assert_contains "$output" 'Target transport: WebSocket'
+assert_contains "$output" 'Result: PASS'
+
+if output=$($CLI preflight "$canonical_backend" --client codex \
+  --operation confluence-handoff-verify --non-interactive \
+  --confluence-action update --target-content-id 900001 \
+  --capability-id MARKET-WRONG-API --scope Shared --domain Market \
+  --transport API --expected-parent-id 900002 \
+  --registry-content-id 900003 2>&1)
+then
+  fail 'handoff accepted a conflicting Capability ID'
+fi
+assert_contains "$output" 'Result: MAPPING_CONFLICT'
+
+output=$($CLI preflight "$canonical_backend" --client codex \
+  --operation confluence-handoff-verify --non-interactive \
+  --confluence-action update --target-content-id 900001 \
+  --capability-id MARKET-FU-INDEX-API --scope Shared --domain Market \
+  --transport API --expected-parent-id 900002 \
+  --registry-content-id 900003)
+assert_contains "$output" 'Capability: confluence-page-read'
+assert_contains "$output" 'Result: PASS'
+
+printf '%s\n' healthy-missing-confluence-read \
+  >"$XDG_CONFIG_HOME/fake-codex-health"
+if output=$($CLI preflight "$canonical_backend" --client codex \
+  --operation confluence-handoff-verify --non-interactive \
+  --confluence-action update --target-content-id 900001 \
+  --capability-id MARKET-FU-INDEX-API --scope Shared --domain Market \
+  --transport API --expected-parent-id 900002 \
+  --registry-content-id 900003 2>&1)
+then
+  fail 'handoff passed without Confluence read capability'
+fi
+assert_contains "$output" 'Capability state: UNSUPPORTED'
+assert_contains "$output" 'Result: CONNECTOR_CAPABILITY_REQUIRED'
+
+printf '%s\n' healthy-all >"$XDG_CONFIG_HOME/fake-codex-health"
+
+mv "$target_file.deny-only" "$target_file"
+pin_test_release v1.1.21
+
 PUBLISH_SERIAL=0
 
 : >"$CALLS"
@@ -1503,18 +1625,15 @@ done
 
 printf '%s\n' healthy-missing-resource-discovery \
   >"$XDG_CONFIG_HOME/fake-codex-health"
-for missing_resource_operation in jira-write confluence-write; do
-  if output=$($CLI preflight "$consumer" \
-    --client codex --operation "$missing_resource_operation" \
-    --non-interactive 2>&1)
-  then
-    fail "$missing_resource_operation passed without resource discovery"
-  fi
-  assert_contains "$output" 'Capability state: UNSUPPORTED'
-  assert_contains "$output" 'Runtime inventory: COMPLETE'
-  assert_not_contains "$output" 'getAccessibleAtlassianResources'
-  assert_not_contains "$output" 'searchJiraIssuesUsingJql'
-done
+if output=$($CLI preflight "$consumer" \
+  --client codex --operation jira-write --non-interactive 2>&1)
+then
+  fail 'jira-write passed without resource discovery'
+fi
+assert_contains "$output" 'Capability state: UNSUPPORTED'
+assert_contains "$output" 'Runtime inventory: COMPLETE'
+assert_not_contains "$output" 'getAccessibleAtlassianResources'
+assert_not_contains "$output" 'searchJiraIssuesUsingJql'
 
 printf '%s\n' healthy-missing-jql >"$XDG_CONFIG_HOME/fake-codex-health"
 if output=$($CLI preflight "$consumer" \
@@ -1587,11 +1706,12 @@ assert_contains "$output" 'Capability state: SUPPORTED'
 assert_contains "$output" 'Result: PASS'
 
 printf '%s\n' healthy-all >"$XDG_CONFIG_HOME/fake-codex-health"
-output=$($CLI preflight "$consumer" \
-  --client codex --operation confluence-write --non-interactive)
-assert_contains "$output" 'Confluence root type: page'
-assert_contains "$output" 'Capability: confluence-page-parent-write'
-assert_contains "$output" 'Capability state: SUPPORTED'
+if output=$($CLI preflight "$consumer" \
+  --client codex --operation confluence-write --non-interactive 2>&1)
+then
+  fail 'schema-1 root-only Confluence preflight passed'
+fi
+assert_contains "$output" 'Result: ROUTING_REQUIRED'
 
 printf '%s\n' legacy-free-text >"$XDG_CONFIG_HOME/fake-cursor-health"
 output=$($CLI preflight "$consumer" \
@@ -1955,20 +2075,18 @@ printf '%s\n' healthy-all >"$XDG_CONFIG_HOME/fake-codex-health"
 if output=$($CLI preflight "$consumer" \
   --client codex --operation confluence-write --non-interactive 2>&1)
 then
-  fail 'folder write fell back to page capability'
+  fail 'folder root-only Confluence preflight passed'
 fi
-assert_contains "$output" 'Capability: confluence-folder-parent-write'
-assert_contains "$output" 'Capability state: UNKNOWN'
-assert_contains "$output" 'Result: CONNECTOR_CAPABILITY_REQUIRED'
+assert_contains "$output" 'Result: ROUTING_REQUIRED'
 
 : >"$XDG_CONFIG_HOME/fake-claude-configured"
 printf '%s\n' healthy >"$XDG_CONFIG_HOME/fake-claude-health"
 if output=$($CLI preflight "$consumer" \
   --client claude --operation confluence-write --non-interactive 2>&1)
 then
-  fail 'folder write passed without compatibility evidence'
+  fail 'Claude folder root-only Confluence preflight passed'
 fi
-assert_contains "$output" 'Capability state: UNKNOWN'
+assert_contains "$output" 'Result: ROUTING_REQUIRED'
 
 printf '%s\n' \
   '# schema=2' \
@@ -1994,10 +2112,9 @@ assert_not_contains "$output" 'searchJiraIssuesUsingJql'
 if output=$($CLI preflight "$consumer" \
   --client codex --operation confluence-write --non-interactive 2>&1)
 then
-  fail 'provider evidence enabled folder-parent writes'
+  fail 'provider evidence enabled root-only Confluence preflight'
 fi
-assert_contains "$output" 'Capability state: UNKNOWN'
-assert_contains "$output" 'Result: CONNECTOR_CAPABILITY_REQUIRED'
+assert_contains "$output" 'Result: ROUTING_REQUIRED'
 
 page_config='SCHEMA_VERSION=1
 PROFILE=standalone
@@ -2009,23 +2126,21 @@ INTEGRATION_PROFILE=none
 CROSS_REPO_POLICY=explicit-only'
 publish_routing "$page_config"
 printf '%s\n' healthy-all >"$XDG_CONFIG_HOME/fake-codex-health"
-output=$($CLI preflight "$consumer" \
-  --client codex --operation confluence-write --non-interactive)
-assert_contains "$output" 'Confluence root type: page'
-assert_contains "$output" 'Capability: confluence-page-parent-write'
-assert_contains "$output" 'Capability state: SUPPORTED'
-assert_contains "$output" 'Result: PASS'
+if output=$($CLI preflight "$consumer" \
+  --client codex --operation confluence-write --non-interactive 2>&1)
+then
+  fail 'page root-only Confluence preflight passed'
+fi
+assert_contains "$output" 'Result: ROUTING_REQUIRED'
 
 printf '%s\n' healthy-missing-confluence-read \
   >"$XDG_CONFIG_HOME/fake-codex-health"
 if output=$($CLI preflight "$consumer" \
   --client codex --operation confluence-write --non-interactive 2>&1)
 then
-  fail 'complete inventory missing getConfluencePage passed'
+  fail 'missing target reached Confluence capability inspection'
 fi
-assert_contains "$output" 'Capability state: UNSUPPORTED'
-assert_contains "$output" 'Runtime inventory: COMPLETE'
-assert_contains "$output" 'Result: CONNECTOR_CAPABILITY_REQUIRED'
+assert_contains "$output" 'Result: ROUTING_REQUIRED'
 
 board_config='SCHEMA_VERSION=1
 PROFILE=standalone

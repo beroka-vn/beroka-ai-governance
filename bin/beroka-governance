@@ -26,6 +26,10 @@ ROUTE_JIRA_BOARD_ID= ROUTE_CONFLUENCE_SPACE_KEY=
 ROUTE_CONFLUENCE_ROOT_CONTENT_ID= ROUTE_CONFLUENCE_ROOT_CONTENT_TYPE=
 ROUTE_INTEGRATION_PROFILE= ROUTE_CROSS_REPO_POLICY= DEPENDENCY_STATE=
 INTAKE_TARGET_REPOSITORY= INTAKE_TARGET_PROFILE= INTAKE_TARGET_JIRA_PROJECT=
+CONFLUENCE_TARGET_ACTION= CONFLUENCE_TARGET_CONTENT_ID=
+CONFLUENCE_TARGET_CAPABILITY_ID= CONFLUENCE_TARGET_SCOPE=
+CONFLUENCE_TARGET_DOMAIN= CONFLUENCE_TARGET_TRANSPORT=
+CONFLUENCE_TARGET_PARENT_ID= CONFLUENCE_TARGET_REGISTRY_CONTENT_ID=
 GITHUB_ROLE=
 GITHUB_FRONTEND_MEMBER=0 GITHUB_BACKEND_MEMBER=0
 CONNECTOR_PROBE_CLIENT= CONNECTOR_PROBE_OUTPUT= CONNECTOR_PROBE_STATUS=
@@ -66,7 +70,8 @@ usage() {
     '  beroka-governance uninstall [--force]' \
     '  beroka-governance setup-connectors [--client codex|claude|cursor] [--non-interactive]' \
     '  beroka-governance doctor REPO [--client codex|claude|cursor]' \
-    '  beroka-governance preflight REPO --client codex|claude|cursor --operation OPERATION [--non-interactive]' \
+    '  beroka-governance preflight REPO --client codex|claude|cursor --operation OPERATION [--non-interactive] [CONFLUENCE-TARGET-OPTIONS]' \
+    '  Confluence target options: --confluence-action create|update|move --target-content-id ID|new --capability-id ID --scope SCOPE --domain DOMAIN --transport API|WebSocket --expected-parent-id ID --registry-content-id ID' \
     '  beroka-governance context REPO' \
     '  beroka-governance cursor-hook sessionStart|beforeSubmitPrompt|preCompact|beforeMCPExecution|beforeShellExecution' \
     '  beroka-governance show REPO governance|handbook|workflow' \
@@ -3152,6 +3157,13 @@ runtime_capability() {
         CAPABILITY_STATE=UNSUPPORTED
       fi
       ;;
+    confluence-page-read)
+      if [ "$CAPABILITY_INVENTORY_COMPLETE" -eq 1 ] &&
+         ! inventory_has_tool getConfluencePage
+      then
+        CAPABILITY_STATE=UNSUPPORTED
+      fi
+      ;;
     jira-board-verification|confluence-folder-parent-write)
       CAPABILITY_STATE=UNKNOWN
       ;;
@@ -3258,7 +3270,7 @@ load_provider_capability() {
             year < 1 ||
             month < 1 || month > 12 ||
             day < 1 || day > month_days[month] ||
-            $4 !~ /^(jira-issue-write|confluence-page-parent-write|jira-board-verification|confluence-folder-parent-write)$/ ||
+            $4 !~ /^(jira-issue-write|confluence-page-parent-write|confluence-page-read|jira-board-verification|confluence-folder-parent-write)$/ ||
             $5 !~ /^(official-contract|isolated-pilot)$/ ||
             $6 !~ /^(SUPPORTED|UNSUPPORTED)$/) invalid=1
         pair=$1 SUBSEP $4
@@ -3495,6 +3507,122 @@ github_preflight() {
     'Result: PASS'
 }
 
+require_confluence_route() {
+  [ -n "$ROUTE_CONFLUENCE_SPACE_KEY" ] &&
+    [ -n "$ROUTE_CONFLUENCE_ROOT_CONTENT_ID" ] &&
+    [ -n "$ROUTE_CONFLUENCE_ROOT_CONTENT_TYPE" ] ||
+    die ROUTING_REQUIRED \
+      'Confluence space, root content ID, and root type are required'
+}
+
+resolve_confluence_target() {
+  rct_file=$RELEASE_DIR/runtime/integrations/beroka-be-fe.confluence-targets
+  validate_confluence_target_inventory "$rct_file" \
+    "$RELEASE_DIR/runtime/repositories" ||
+    die ROUTING_REQUIRED 'Reviewed Confluence target inventory is unavailable'
+
+  case "$CONFLUENCE_TARGET_ACTION:$CONFLUENCE_TARGET_CONTENT_ID" in
+    create:new) ;;
+    update:[1-9]*|move:[1-9]*)
+      printf '%s\n' "$CONFLUENCE_TARGET_CONTENT_ID" |
+        grep -Eq '^[1-9][0-9]*$' ||
+        die ROUTING_REQUIRED \
+          'A numeric Confluence target content ID is required'
+      ;;
+    *)
+      die ROUTING_REQUIRED \
+        'Confluence action and target content ID conflict'
+      ;;
+  esac
+  printf '%s\n' "$CONFLUENCE_TARGET_CAPABILITY_ID" |
+    grep -Eq '^[A-Z][A-Z0-9]*(-[A-Z0-9]+)*$' ||
+    die ROUTING_REQUIRED \
+      'An uppercase-kebab-case Capability ID is required'
+  case "$CONFLUENCE_TARGET_SCOPE" in
+    Shared|Derivatives|Underlying) ;;
+    *) die ROUTING_REQUIRED 'A reviewed Confluence scope is required' ;;
+  esac
+  case "$CONFLUENCE_TARGET_DOMAIN" in
+    Market|User) ;;
+    *) die ROUTING_REQUIRED 'A reviewed Confluence domain is required' ;;
+  esac
+  case "$CONFLUENCE_TARGET_TRANSPORT" in
+    API|WebSocket) ;;
+    *) die ROUTING_REQUIRED 'API or WebSocket transport is required' ;;
+  esac
+  for rct_id in \
+    "$CONFLUENCE_TARGET_PARENT_ID" \
+    "$CONFLUENCE_TARGET_REGISTRY_CONTENT_ID"
+  do
+    printf '%s\n' "$rct_id" | grep -Eq '^[1-9][0-9]*$' ||
+      die ROUTING_REQUIRED \
+        'Numeric parent and Registry content IDs are required'
+  done
+
+  rct_record=$(awk -F '\t' \
+    -v repository="$REPOSITORY_SLUG" \
+    -v action="$CONFLUENCE_TARGET_ACTION" \
+    -v content="$CONFLUENCE_TARGET_CONTENT_ID" \
+    -v capability="$CONFLUENCE_TARGET_CAPABILITY_ID" '
+      /^#/ || /^[[:space:]]*$/ { next }
+      $1 == repository &&
+        ((action == "create" && $3 == "PLANNED" && $4 == "-" &&
+          $10 == capability) ||
+         (action != "create" && $4 == content)) {
+          matches++
+          row=$0
+        }
+      END {
+        if (matches != 1) exit 1
+        print row
+      }
+    ' "$rct_file") || {
+      if awk -F '\t' \
+        -v repository="$REPOSITORY_SLUG" \
+        -v parent="$CONFLUENCE_TARGET_PARENT_ID" '
+          /^#/ || /^[[:space:]]*$/ { next }
+          $1 == repository && $2 == "folder" && $3 == "LEGACY" &&
+            $4 == parent { found=1 }
+          END { exit !found }
+        ' "$rct_file"
+      then
+        die FOLDER_CREATION_REQUIRED \
+          'The requested parent is a legacy generic folder'
+      fi
+      die ROUTING_REQUIRED 'No exact reviewed Confluence target exists'
+    }
+  IFS="$(printf '\t')" read -r rct_repository rct_type rct_state \
+    rct_content rct_title rct_scope rct_domain rct_transport rct_parent \
+    rct_capability rct_registry <<EOF
+$rct_record
+EOF
+
+  case "$rct_state" in
+    DRIFTED)
+      if [ "$CONFLUENCE_TARGET_TRANSPORT" != "$rct_transport" ]; then
+        printf '%s\n' \
+          "Target content ID: $CONFLUENCE_TARGET_CONTENT_ID" \
+          "Intended transport: $CONFLUENCE_TARGET_TRANSPORT" \
+          "Target transport: $rct_transport"
+        die MAPPING_CONFLICT
+      fi
+      die ROUTING_REQUIRED 'The exact Confluence target is drifted'
+      ;;
+    LEGACY)
+      die FOLDER_CREATION_REQUIRED \
+        'A legacy folder is not a canonical target'
+      ;;
+  esac
+  [ "$rct_scope" = "$CONFLUENCE_TARGET_SCOPE" ] &&
+    [ "$rct_domain" = "$CONFLUENCE_TARGET_DOMAIN" ] &&
+    [ "$rct_transport" = "$CONFLUENCE_TARGET_TRANSPORT" ] &&
+    [ "$rct_parent" = "$CONFLUENCE_TARGET_PARENT_ID" ] &&
+    [ "$rct_capability" = "$CONFLUENCE_TARGET_CAPABILITY_ID" ] &&
+    [ "$rct_registry" = "$CONFLUENCE_TARGET_REGISTRY_CONTENT_ID" ] ||
+    die MAPPING_CONFLICT \
+      'Requested Confluence metadata conflicts with the reviewed target'
+}
+
 require_operation_routing() {
   ror_operation=$1
   case "$ror_operation" in
@@ -3515,14 +3643,14 @@ require_operation_routing() {
       PREFLIGHT_CAPABILITY=jira-issue-write
       ;;
     confluence-write)
-      [ -n "$ROUTE_CONFLUENCE_SPACE_KEY" ] &&
-        [ -n "$ROUTE_CONFLUENCE_ROOT_CONTENT_ID" ] &&
-        [ -n "$ROUTE_CONFLUENCE_ROOT_CONTENT_TYPE" ] ||
-        die ROUTING_REQUIRED 'Confluence space, root content ID, and root type are required'
-      case "$ROUTE_CONFLUENCE_ROOT_CONTENT_TYPE" in
-        page) PREFLIGHT_CAPABILITY=confluence-page-parent-write ;;
-        folder) PREFLIGHT_CAPABILITY=confluence-folder-parent-write ;;
-      esac
+      require_confluence_route
+      resolve_confluence_target
+      PREFLIGHT_CAPABILITY=confluence-page-parent-write
+      ;;
+    confluence-handoff-verify)
+      require_confluence_route
+      resolve_confluence_target
+      PREFLIGHT_CAPABILITY=confluence-page-read
       ;;
     cross-repo-write)
       die ROUTING_REQUIRED \
@@ -3601,11 +3729,19 @@ print_preflight_result() {
         "Jira project: $ROUTE_JIRA_PROJECT_KEY" \
         "Jira board: $ROUTE_JIRA_BOARD_ID"
       ;;
-    confluence-write)
+    confluence-write|confluence-handoff-verify)
       printf '%s\n' \
         "Confluence space: $ROUTE_CONFLUENCE_SPACE_KEY" \
         "Confluence root content: $ROUTE_CONFLUENCE_ROOT_CONTENT_ID" \
-        "Confluence root type: $ROUTE_CONFLUENCE_ROOT_CONTENT_TYPE"
+        "Confluence root type: $ROUTE_CONFLUENCE_ROOT_CONTENT_TYPE" \
+        "Target action: $CONFLUENCE_TARGET_ACTION" \
+        "Target content ID: $CONFLUENCE_TARGET_CONTENT_ID" \
+        "Capability ID: $CONFLUENCE_TARGET_CAPABILITY_ID" \
+        "Target scope: $CONFLUENCE_TARGET_SCOPE" \
+        "Target domain: $CONFLUENCE_TARGET_DOMAIN" \
+        "Target transport: $CONFLUENCE_TARGET_TRANSPORT" \
+        "Expected parent ID: $CONFLUENCE_TARGET_PARENT_ID" \
+        "Registry content ID: $CONFLUENCE_TARGET_REGISTRY_CONTENT_ID"
       ;;
   esac
   printf '%s\n' \
@@ -3620,6 +3756,13 @@ cmd_preflight() {
   pf_repo=$1
   shift
   pf_client= pf_operation= pf_non_interactive=0
+  pf_has_confluence_target=0
+  pf_seen_action=0 pf_seen_content=0 pf_seen_capability=0 pf_seen_scope=0
+  pf_seen_domain=0 pf_seen_transport=0 pf_seen_parent=0 pf_seen_registry=0
+  CONFLUENCE_TARGET_ACTION= CONFLUENCE_TARGET_CONTENT_ID=
+  CONFLUENCE_TARGET_CAPABILITY_ID= CONFLUENCE_TARGET_SCOPE=
+  CONFLUENCE_TARGET_DOMAIN= CONFLUENCE_TARGET_TRANSPORT=
+  CONFLUENCE_TARGET_PARENT_ID= CONFLUENCE_TARGET_REGISTRY_CONTENT_ID=
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --client)
@@ -3642,11 +3785,73 @@ cmd_preflight() {
         pf_non_interactive=1
         shift
         ;;
+      --confluence-action|--target-content-id|--capability-id|--scope|\
+      --domain|--transport|--expected-parent-id|--registry-content-id)
+        pf_target_option=$1
+        pf_target_value=
+        pf_has_confluence_target=1
+        shift
+        if [ "$#" -gt 0 ]; then
+          case "$1" in
+            --*) ;;
+            *) pf_target_value=$1; shift ;;
+          esac
+        fi
+        case "$pf_target_option" in
+          --confluence-action)
+            [ "$pf_seen_action" -eq 0 ] || { usage >&2; exit 2; }
+            pf_seen_action=1
+            CONFLUENCE_TARGET_ACTION=$pf_target_value
+            ;;
+          --target-content-id)
+            [ "$pf_seen_content" -eq 0 ] || { usage >&2; exit 2; }
+            pf_seen_content=1
+            CONFLUENCE_TARGET_CONTENT_ID=$pf_target_value
+            ;;
+          --capability-id)
+            [ "$pf_seen_capability" -eq 0 ] || { usage >&2; exit 2; }
+            pf_seen_capability=1
+            CONFLUENCE_TARGET_CAPABILITY_ID=$pf_target_value
+            ;;
+          --scope)
+            [ "$pf_seen_scope" -eq 0 ] || { usage >&2; exit 2; }
+            pf_seen_scope=1
+            CONFLUENCE_TARGET_SCOPE=$pf_target_value
+            ;;
+          --domain)
+            [ "$pf_seen_domain" -eq 0 ] || { usage >&2; exit 2; }
+            pf_seen_domain=1
+            CONFLUENCE_TARGET_DOMAIN=$pf_target_value
+            ;;
+          --transport)
+            [ "$pf_seen_transport" -eq 0 ] || { usage >&2; exit 2; }
+            pf_seen_transport=1
+            CONFLUENCE_TARGET_TRANSPORT=$pf_target_value
+            ;;
+          --expected-parent-id)
+            [ "$pf_seen_parent" -eq 0 ] || { usage >&2; exit 2; }
+            pf_seen_parent=1
+            CONFLUENCE_TARGET_PARENT_ID=$pf_target_value
+            ;;
+          --registry-content-id)
+            [ "$pf_seen_registry" -eq 0 ] || { usage >&2; exit 2; }
+            pf_seen_registry=1
+            CONFLUENCE_TARGET_REGISTRY_CONTENT_ID=$pf_target_value
+            ;;
+        esac
+        ;;
       *) usage >&2; exit 2 ;;
     esac
   done
   [ -n "$pf_client" ] && [ -n "$pf_operation" ] ||
     { usage >&2; exit 2; }
+  case "$pf_operation" in
+    confluence-write|confluence-handoff-verify) ;;
+    *)
+      [ "$pf_has_confluence_target" -eq 0 ] ||
+        { usage >&2; exit 2; }
+      ;;
+  esac
   [ "$pf_operation" != cross-repo-write ] ||
     require_operation_routing "$pf_operation"
 
