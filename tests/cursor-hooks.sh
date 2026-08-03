@@ -161,7 +161,7 @@ confluence_update=$(printf '%s\n' "$base_input" | jq -c '. + {
   tool_input:{
     pageId:"70713366",
     parentId:"71303169",
-    body:"Capability ID: MARKET-FU-INDEX-API\nRegistry content ID: 900003\nScope: Shared\nDomain: Market\nTransport: API\nConfluence content ID: 70713366"
+    body:"Capability ID: MARKET-FU-INDEX-API\nRegistry content ID: 900003\nScope: Shared\nDomain: Market\nTransport: API\nConfluence content ID: 70713366\nExpected parent ID: 71303169"
   }}')
 assert_denied "$(hook beforeMCPExecution "$confluence_update")" MAPPING_CONFLICT
 bulleted_confluence_body=$(printf '%s\n' "$confluence_update" |
@@ -174,7 +174,8 @@ confluence_private_link=$(printf '%s\n' "$confluence_update" | jq -c \
   '.tool_input.body += "\nRelated repository: git@github.com:beroka-vn/Beroka_Frontend.git"')
 assert_denied "$(hook beforeMCPExecution "$confluence_private_link")" \
   CROSS_TEAM_LINK_SCOPE_DENIED
-assert_denied "$(hook beforeMCPExecution "$(printf '%s\n' "$confluence_update" | jq -c 'del(.tool_input.parentId)')")" ROUTING_REQUIRED
+assert_denied "$(hook beforeMCPExecution "$(printf '%s\n' "$confluence_update" | jq -c 'del(.tool_input.parentId)')")" MAPPING_CONFLICT
+assert_denied "$(hook beforeMCPExecution "$(printf '%s\n' "$confluence_update" | jq -c '.tool_input.parentId="71303170"')")" MAPPING_CONFLICT
 assert_denied "$(hook beforeMCPExecution "$(printf '%s\n' "$confluence_update" | jq -c '.tool_name="confluence.move_page"')")" MAPPING_CONFLICT
 assert_denied "$(hook beforeMCPExecution "$(printf '%s\n' "$confluence_update" | jq -c '.tool_input.body += "\nRegistry content ID: 900004"')")" ROUTING_REQUIRED
 assert_denied "$(hook beforeMCPExecution "$(printf '%s\n' "$confluence_update" | jq -c '.tool_input.body |= sub("Confluence content ID: 70713366"; "Confluence content ID: 70713367")')")" MAPPING_CONFLICT

@@ -1349,6 +1349,13 @@ printf '%s\n' healthy-all >"$XDG_CONFIG_HOME/fake-codex-health"
 mv "$target_file.deny-only" "$target_file"
 pin_test_release v1.1.21
 
+output=$($CLI preflight "$consumer" --client codex \
+  --operation confluence-write --non-interactive \
+  --confluence-action update --target-content-id 123457)
+assert_contains "$output" 'Confluence root content: 123456'
+assert_contains "$output" 'Capability: confluence-page-update'
+assert_contains "$output" 'Result: PASS'
+
 PUBLISH_SERIAL=0
 
 : >"$CALLS"

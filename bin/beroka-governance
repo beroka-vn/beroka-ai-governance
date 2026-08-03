@@ -3601,11 +3601,6 @@ confluence_parent_is_legacy() {
 }
 
 resolve_confluence_target() {
-  rct_file=$RELEASE_DIR/runtime/integrations/beroka-be-fe.confluence-targets
-  validate_confluence_target_inventory "$rct_file" \
-    "$RELEASE_DIR/runtime/repositories" ||
-    die ROUTING_REQUIRED 'Reviewed Confluence target inventory is unavailable'
-
   case "$CONFLUENCE_TARGET_ACTION:$CONFLUENCE_TARGET_CONTENT_ID" in
     create:new) ;;
     update:[1-9]*|move:[1-9]*)
@@ -3619,6 +3614,16 @@ resolve_confluence_target() {
         'Confluence action and target content ID conflict'
       ;;
   esac
+  case "$ROUTE_INTEGRATION_PROFILE:$ROUTE_CROSS_REPO_POLICY" in
+    none:explicit-only) return 0 ;;
+    beroka-be-fe:profile-controlled) ;;
+    *) die ROUTING_REQUIRED 'Exact Confluence target routing is required' ;;
+  esac
+  rct_file=$RELEASE_DIR/runtime/integrations/beroka-be-fe.confluence-targets
+  validate_confluence_target_inventory "$rct_file" \
+    "$RELEASE_DIR/runtime/repositories" ||
+    die ROUTING_REQUIRED 'Reviewed Confluence target inventory is unavailable'
+
   printf '%s\n' "$CONFLUENCE_TARGET_CAPABILITY_ID" |
     grep -Eq '^[A-Z][A-Z0-9]*(-[A-Z0-9]+)*$' ||
     die ROUTING_REQUIRED \
@@ -3725,14 +3730,30 @@ require_operation_routing() {
       ;;
     confluence-write)
       require_confluence_route
-      resolve_confluence_target
       case "$CONFLUENCE_TARGET_ACTION" in
+        '')
+          case "$ROUTE_INTEGRATION_PROFILE:$ROUTE_CROSS_REPO_POLICY" in
+            none:explicit-only)
+              case "$ROUTE_CONFLUENCE_ROOT_CONTENT_TYPE" in
+                page) PREFLIGHT_CAPABILITY=confluence-page-parent-write ;;
+                folder) PREFLIGHT_CAPABILITY=confluence-folder-parent-write ;;
+              esac
+              ;;
+            *) resolve_confluence_target ;;
+          esac
+          ;;
         update) PREFLIGHT_CAPABILITY=confluence-page-update ;;
         create|move) PREFLIGHT_CAPABILITY=confluence-folder-parent-write ;;
+        *) die ROUTING_REQUIRED 'Confluence action is invalid' ;;
       esac
+      [ -n "$CONFLUENCE_TARGET_ACTION" ] && resolve_confluence_target
       ;;
     confluence-handoff-verify)
       require_confluence_route
+      [ "$ROUTE_INTEGRATION_PROFILE" = beroka-be-fe ] &&
+        [ "$ROUTE_CROSS_REPO_POLICY" = profile-controlled ] ||
+        die ROUTING_REQUIRED \
+          'Confluence handoff verification requires an exact integration target'
       case "$CONFLUENCE_TARGET_ACTION:$CONFLUENCE_TARGET_CONTENT_ID" in
         update:[1-9]*) ;;
         *) die ROUTING_REQUIRED \
@@ -4467,13 +4488,13 @@ cursor_confluence_preflight() {
       if length == 1 then .[0] else error("target") end
     ' 2>/dev/null) || return 1
   fi
-  ccp_parent=$(printf '%s\n' "$CURSOR_TOOL_INPUT" | jq -er '
-    [.. | objects | .parentId? | select(type == "string")] | unique |
-    if length == 1 then .[0] else error("parent") end
-  ' 2>/dev/null) || return 1
   ccp_body=$(printf '%s\n' "$CURSOR_TOOL_INPUT" | jq -er '
     [.. | objects | (.body?, .content?) | select(type == "string")] |
     unique | if length == 1 then .[0] else error("body") end
+  ' 2>/dev/null) || return 1
+  ccp_parent=$(printf '%s\n' "$CURSOR_TOOL_INPUT" | jq -er '
+    [.. | objects | .parentId? | select(type == "string")] | unique |
+    if length == 0 then "" elif length == 1 then .[0] else error("parent") end
   ' 2>/dev/null) || return 1
   ccp_capability=$(printf '%s\n' "$ccp_body" |
     cursor_confluence_marker 'Capability ID') || return 1
@@ -4487,7 +4508,10 @@ cursor_confluence_preflight() {
     cursor_confluence_marker Transport) || return 1
   ccp_body_target=$(printf '%s\n' "$ccp_body" |
     cursor_confluence_marker 'Confluence content ID') || return 1
+  ccp_expected_parent=$(printf '%s\n' "$ccp_body" |
+    cursor_confluence_marker 'Expected parent ID') || return 1
   [ "$ccp_target" = "$ccp_body_target" ] || return 2
+  [ -z "$ccp_parent" ] || [ "$ccp_parent" = "$ccp_expected_parent" ] || return 2
   cmd_preflight "$CURSOR_WORKSPACE" --client cursor \
     --operation confluence-write --non-interactive \
     --confluence-action "$ccp_action" \
@@ -4495,7 +4519,7 @@ cursor_confluence_preflight() {
     --capability-id "$ccp_capability" \
     --scope "$ccp_scope" --domain "$ccp_domain" \
     --transport "$ccp_transport" \
-    --expected-parent-id "$ccp_parent" \
+    --expected-parent-id "$ccp_expected_parent" \
     --registry-content-id "$ccp_registry"
 }
 
