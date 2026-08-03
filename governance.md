@@ -329,11 +329,13 @@ repository. Only the canonical opposite-team repository and Jira project
 returned by preflight may receive the intake; ordinary `jira-write`, repository
 role checks, and `cross-repo-write` remain unchanged.
 
-The requester/reporter creates only the intake record. Leave assignee and Sprint
-unset, do not select a receiving-project parent, and treat requested priority
-as input. The receiving team exclusively owns duplicate resolution, issue type,
-active Epic, acceptance/rejection, final priority, Sprint, readiness,
-executor/assignee, and GitHub delivery.
+The requester/reporter creates only the intake record. Leave Sprint and the
+receiving-project parent unset. An exact receiving-team account may be assigned
+only after that accountId is confirmed by the user or receiving team; otherwise
+leave it unset and return `ASSIGNEE_CONFIRMATION_REQUIRED`. The receiving team
+exclusively owns duplicate resolution, issue type, active Epic,
+acceptance/rejection, final priority, Sprint, readiness, executor/assignee, and
+GitHub delivery.
 
 Assignment alone does not authorize a GitHub Issue. The receiving-team agent
 creates exactly one Issue in its repository only after
@@ -345,6 +347,33 @@ Before intake creation, resolve Jira create metadata and verify a supported
 intake state or equivalent field. Otherwise return
 `INTAKE_CONFIGURATION_REQUIRED` with configuration remediation. The lifecycle
 is agent-driven; there is no event listener.
+
+Task, Bug, and Feature intake is symmetric. Opposite-project Epic creation
+requires receiving-team confirmation. FE owns BF updates and BE owns BB
+updates. Cross-team Jira or handoff text containing opposite-team private
+GitHub links returns `CROSS_TEAM_LINK_SCOPE_DENIED`; use the exact accessible
+Confluence page instead.
+
+Before a Confluence create, update, move, or handoff, resolve every target
+field and run target-bound `confluence-write` or
+`confluence-handoff-verify`. Unknown targets return `ROUTING_REQUIRED`; a
+transport or target mismatch returns `MAPPING_CONFLICT`, and the agent asks the
+user and waits.
+
+Provider status is maintained as:
+
+`To Do -> In Progress`: receiving assignee starts accepted, ready work
+
+`In Progress -> In Review`: a human marks the provider PR ready for review
+
+`In Review -> Done`: the reviewed PR is merged and exact Confluence delivery
+and readback are complete.
+
+`Closes #<issue>` normally closes the GitHub Issue. If it remains open, an agent
+may close it only after exact merge/link readback proves the delivered commit
+and the close write is authorized. The provider updates only its own project
+item; the consumer reviews through the exact Confluence handoff and updates its
+own item.
 
 ## Jira post-create readback and backlog verification
 

@@ -99,8 +99,10 @@ the BF backlog after explicit confirmation as `Pending` with owner, but returns
 Frontend → Backend and Backend → Frontend requesters use
 `jira-intake-write` from their own routed repository. Create only in the exact
 opposite-team project returned by preflight. The requester/reporter leaves
-assignee, Sprint, and parent unset; requested priority is not a receiving-team
-commitment.
+Sprint and parent unset; an exact receiving-team account may be assigned only
+after its Atlassian `accountId` is confirmed by the user or receiving team.
+Otherwise leave assignee unset and return `ASSIGNEE_CONFIRMATION_REQUIRED`.
+Requested priority is not a receiving-team commitment.
 
 The receiving team owns duplicate checks, issue type, active Epic,
 accept/reject, final priority, Sprint, readiness, executor assignment, and
@@ -111,7 +113,11 @@ primary GitHub Issue is found.
 
 Return `INTAKE_CONFIGURATION_REQUIRED` if create metadata cannot prove a
 supported intake state or equivalent field. Intake is agent-driven; there is no
-event listener. Keep separate BB/BF items, same-project parents, `Blocks`
+event listener. Task, Bug, and Feature intake is symmetric; opposite-project
+Epic creation requires receiving-team confirmation. FE owns BF updates and BE
+owns BB updates. Opposite-team private GitHub links in cross-team Jira or
+handoff text return `CROSS_TEAM_LINK_SCOPE_DENIED`; use the exact accessible
+Confluence page. Keep separate BB/BF items, same-project parents, `Blocks`
 provider → consumer, and `Relates` for non-blocking same-capability work.
 
 ### Step 2 — Decompose into GitHub Issues
@@ -177,8 +183,8 @@ Before editing for a Story/Task/Bug/Feature:
    `accountId`;
 2. read the current assignee and confirm that person owns the technical GitHub
    work;
-3. if mismatched or unassigned, show a warning and wait for exact receiving-team
-   confirmation;
+3. if mismatched or unassigned, return `ASSIGNEE_CONFIRMATION_REQUIRED`, show a
+   warning, and wait for exact receiving-team confirmation;
 4. assign only the confirmed executor and read back;
 5. verify Definition of Ready and GitHub writer ownership.
 
@@ -246,7 +252,19 @@ a page or space root. After write/move, verify `parentId` and
 `parentType = Folder`, otherwise return `DOC_HIERARCHY_FAILED`. If FE cannot
 open the BE Hub, return `CROSS_SPACE_ACCESS_REQUIRED`. Missing exact Registry,
 scope, domain, transport, parent, Capability ID, or content ID returns
-`ROUTING_REQUIRED`.
+`ROUTING_REQUIRED`. Before every Confluence create, update, move, or handoff,
+run target-bound `confluence-write` or `confluence-handoff-verify`; a target or
+transport mismatch returns `MAPPING_CONFLICT`, and unknown targets require
+asking the user and waiting.
+
+Maintain provider status as `To Do -> In Progress` when accepted work starts,
+`In Progress -> In Review` when a human marks the provider PR ready for review,
+and `In Review -> Done` only after merge and exact Confluence delivery/readback.
+The provider updates only its own project item; the consumer reviews the exact
+Confluence handoff and updates its own item.
+`Closes #<issue>` normally closes the GitHub Issue. If it remains open, an agent
+may close it only after exact merge/link readback proves the delivered commit
+and the close write is authorized; otherwise report the issue as blocked.
 
 Before Jira Done, link all Issues, merged PRs, and completion docs, or record
 `Documentation: N/A — <reason>`.

@@ -72,7 +72,7 @@ Cross-team Jira intake request
 - Requested priority: <input, not commitment>
 - Duplicate search:
 - Create metadata and intake state/equivalent field: VERIFIED | MISSING
-- Assignee: Unassigned
+- Assignee: Unassigned unless receiving-team accountId is explicitly confirmed
 - Sprint: Unset
 - Parent: Unset — receiving team selects
 - Work-item language:
@@ -98,6 +98,36 @@ Assignment alone does not authorize a GitHub Issue. Creation requires
 `Accepted + Ready + Assigned + Definition of Ready PASS` and no existing
 primary GitHub Issue. The requester/reporter remains distinct from the
 executor/assignee. Intake is agent-driven; there is no event listener.
+
+An exact receiving-team account may be assigned only after the user or
+receiving team confirms its Atlassian `accountId`; otherwise return
+`ASSIGNEE_CONFIRMATION_REQUIRED`. FE owns BF updates and BE owns BB updates.
+Task, Bug, and Feature intake is symmetric; opposite-project Epic creation
+requires receiving-team confirmation. Opposite-team private GitHub links in
+cross-team Jira or handoff text return `CROSS_TEAM_LINK_SCOPE_DENIED`; use the
+exact accessible Confluence page.
+
+```text
+CONFLUENCE TARGET
+- Action: create | update | move
+- Target content ID: <numeric ID | new>
+- Capability ID: <UPPERCASE-KEBAB-ID>
+- Scope: Shared | Derivatives | Underlying
+- Domain: Market | User
+- Transport: API | WebSocket
+- Expected parent ID: <numeric ID>
+- Registry content ID: <numeric ID>
+- Preflight: confluence-write | confluence-handoff-verify
+- Result: PASS | ROUTING_REQUIRED | FOLDER_CREATION_REQUIRED | MAPPING_CONFLICT
+```
+
+Before any Confluence write or handoff, resolve every field in the target
+block. Unknown or ambiguous destinations return `ROUTING_REQUIRED`; ask the
+user and wait. A transport mismatch returns `MAPPING_CONFLICT` and must not
+inspect or write the connector. Provider status is `To Do -> In Progress` when
+work starts, `In Progress -> In Review` when a human marks the provider PR
+ready for review, and `In Review -> Done` only after merge and documentation
+readback.
 
 ## Jira Summary Contract
 
@@ -556,7 +586,6 @@ Copy this block into the BE Jira/GitHub Issue or PR when `Frontend impact != Non
 - Paired Backend Epic:
 - Paired Frontend Epic:
 - Backend Jira/GitHub issue and merged PR:
-- Frontend Jira/GitHub issue(s):
 - Epic `Relates` readback:
 - BE-to-BF `Blocks` readback for every BF item:
 - Capability Registry row readback:

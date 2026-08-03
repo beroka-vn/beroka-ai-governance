@@ -79,6 +79,26 @@ require_text governance.md 'one semantic capability, one transport'
 require_text governance.md \
   'Payload references, sanitized examples, and documented delta'
 require_text workflow.md 'Registry row'
+
+for file in templates/agent-entrypoints/AGENTS.md \
+  templates/agent-entrypoints/CLAUDE.md \
+  templates/agent-entrypoints/CURSOR-USER-RULE.txt; do
+  require_text "$file" 'exact Confluence target'
+  require_text "$file" 'ASSIGNEE_CONFIRMATION_REQUIRED'
+  require_text "$file" 'opposite-team private GitHub links'
+done
+for file in runtime/rules/general.md governance.md workflow.md \
+  templates/jira-confluence.md; do
+  require_text "$file" 'confluence-handoff-verify'
+  require_text "$file" 'MAPPING_CONFLICT'
+done
+for file in runtime/rules/work-items.md runtime/integrations/beroka-be-fe.md \
+  governance.md workflow.md templates/jira-confluence.md; do
+  require_text "$file" 'ASSIGNEE_CONFIRMATION_REQUIRED'
+  require_text "$file" 'CROSS_TEAM_LINK_SCOPE_DENIED'
+  require_text "$file" 'In Review'
+done
+reject_text templates/jira-confluence.md 'Frontend Jira/GitHub issue(s):'
 reject_text governance.md 'The Hub row is the canonical mapping'
 
 require_text runtime/rules/general.md 'Confluence content ID'

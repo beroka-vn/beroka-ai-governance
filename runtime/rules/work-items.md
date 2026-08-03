@@ -18,9 +18,12 @@
   Use `jira-intake-write` from the requesting repository only when preflight
   returns its exact opposite-team repository and Jira project.
 - The requester/reporter remains distinct from the executor/assignee. Intake
-  starts unassigned with Sprint unset and no receiving-project parent selected;
-  the receiving team owns triage, issue type, active Epic, final priority,
-  Sprint, readiness, assignment, and technical delivery.
+  starts with Sprint unset and no receiving-project parent selected. An exact
+  receiving-team account may be assigned only after the user or receiving team
+  confirms that accountId; otherwise leave assignee unset and return
+  `ASSIGNEE_CONFIRMATION_REQUIRED`. The receiving team owns triage, issue type,
+  active Epic, final priority, Sprint, readiness, assignment, and technical
+  delivery.
 - Assignment alone does not authorize a GitHub Issue. Create exactly one
   receiving-repository Issue only after
   `Accepted + Ready + Assigned + Definition of Ready PASS` and a search proves
@@ -49,3 +52,13 @@
   priority, and primary Jira linkage; read back Jira project, type, parent or approved
   standalone reason, assignee, and GitHub link. A failed readback is not
   `PASS`.
+- FE owns updates to BF items and BE owns updates to BB items. Cross-team
+  `Task`, `Bug`, and `Feature` intake is allowed; opposite-project `Epic`
+  creation requires receiving-team confirmation. Before a Confluence handoff,
+  resolve the exact target and run `confluence-handoff-verify`; unknown targets
+  return `ROUTING_REQUIRED` and wait.
+- Provider status follows `To Do -> In Progress` when accepted work starts,
+  `In Progress -> In Review` when a human marks the provider PR ready for
+  review, and `In Review -> Done` only after merge and documentation readback.
+- Cross-team updates containing opposite-team private GitHub links return
+  `CROSS_TEAM_LINK_SCOPE_DENIED`; use the exact accessible Confluence page.
