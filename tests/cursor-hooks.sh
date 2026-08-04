@@ -53,6 +53,13 @@ git -C "$known_repo" add README.md
 git -C "$known_repo" commit -qm 'test: initialize known repository'
 git -C "$known_repo" remote add origin https://github.com/beroka-vn/Beroka_Backend.git
 
+other_repo=$TMP_ROOT/other-repository
+new_repo "$other_repo"
+printf '%s\n' '# other' >"$other_repo/README.md"
+git -C "$other_repo" add README.md
+git -C "$other_repo" commit -qm 'test: initialize other repository'
+git -C "$other_repo" remote add origin https://github.com/beroka-vn/Beroka_Frontend.git
+
 base_input=$(jq -nc --arg workspace "$known_repo" '{conversation_id:"conversation-1",generation_id:"generation-1",workspace_roots:[$workspace]}')
 hook() { printf '%s\n' "$2" | "$CLI" cursor-hook "$1"; }
 
@@ -61,6 +68,14 @@ assert_contains "$session" '"additional_context"'
 assert_contains "$session" 'beroka-vn/Beroka_Backend'
 assert_contains "$session" 'Version: v1.1.0'
 assert_contains "$session" 'Routing: ROUTING_ACTIVE'
+
+unstarted_base=$(jq -nc --arg workspace "$known_repo" \
+  '{conversation_id:"conversation-unstarted",generation_id:"generation-unstarted",workspace_roots:[$workspace]}')
+unstarted_prompt=$(printf '%s\n' "$unstarted_base" | jq -c \
+  '. + {prompt:"Work-item language: English"}')
+unstarted_submit=$(hook beforeSubmitPrompt "$unstarted_prompt")
+assert_contains "$unstarted_submit" '"continue":false'
+assert_contains "$unstarted_submit" 'GOVERNANCE_CONTEXT_REQUIRED'
 
 prompt_vi=$(printf '%s\n' "$base_input" | jq -c '. + {prompt:"Work-item language: Vietnamese"}')
 hook beforeSubmitPrompt "$prompt_vi" >/dev/null
@@ -76,10 +91,30 @@ assert_denied "$output" GOVERNANCE_CONTEXT_REQUIRED
 
 for invalid in '{' \
   "$(jq -nc --arg workspace "$TMP_ROOT/not-git" '{conversation_id:"bad",generation_id:"bad",workspace_roots:[$workspace]}')" \
-  "$(jq -nc --arg workspace "$known_repo" '{conversation_id:"bad",generation_id:"bad",workspace_roots:[$workspace,$workspace]}')"; do
+  "$(jq -nc '{conversation_id:"bad",generation_id:"bad",workspace_roots:[]}')"; do
   if output=$(hook sessionStart "$invalid" 2>&1); then fail 'invalid session input passed'; fi
   assert_contains "$output" 'GOVERNANCE_CONTEXT_REQUIRED'
 done
+
+# A non-Git root is ignored when there is one unambiguous Git root.
+multi_root=$(jq -nc --arg a "$TMP_ROOT/not-git" --arg b "$known_repo" \
+  '{conversation_id:"conversation-1",generation_id:"generation-1",workspace_roots:[$a,$b]}')
+multi_root_session=$(hook sessionStart "$multi_root")
+assert_contains "$multi_root_session" 'beroka-vn/Beroka_Backend'
+assert_contains "$multi_root_session" 'Routing: ROUTING_ACTIVE'
+
+same_repo_roots=$(jq -nc --arg a "$known_repo" --arg b "$known_repo/." \
+  '{conversation_id:"same-repository",generation_id:"same-repository",workspace_roots:[$a,$b]}')
+same_repo_session=$(hook sessionStart "$same_repo_roots")
+assert_contains "$same_repo_session" 'beroka-vn/Beroka_Backend'
+
+# Distinct Git roots have no trustworthy target routing and must fail closed.
+ambiguous_roots=$(jq -nc --arg a "$known_repo" --arg b "$other_repo" \
+  '{conversation_id:"ambiguous",generation_id:"ambiguous",workspace_roots:[$a,$b]}')
+if output=$(hook sessionStart "$ambiguous_roots" 2>&1); then
+  fail 'ambiguous multi-root session passed'
+fi
+assert_contains "$output" 'GOVERNANCE_CONTEXT_REQUIRED'
 
 hook sessionStart "$base_input" >/dev/null
 github_write=$(printf '%s\n' "$base_input" | jq -c '. + {tool_name:"github.create_issue",url:"https://github.com",tool_input:{body:"Work-item language: English"}}')
@@ -194,5 +229,29 @@ for command in 'gh issue view 1' 'git status'; do
   output=$(hook beforeShellExecution "$(jq -nc --arg command "$command" '{conversation_id:"shell",generation_id:"shell",workspace_roots:["/tmp/none"],command:$command}')")
   assert_contains "$output" '"permission":"allow"'
 done
+
+# beforeSubmitPrompt blocks a malformed Work-item language directive by emitting
+# {"continue":false} with exit 0 (not a non-zero exit, which Cursor fails open).
+selfheal_base=$(jq -nc --arg workspace "$known_repo" \
+  '{conversation_id:"conversation-heal",generation_id:"generation-heal",workspace_roots:[$workspace]}')
+hook sessionStart "$selfheal_base" >/dev/null
+malformed_prompt=$(printf '%s\n' "$selfheal_base" | jq -c '. + {prompt:"Work-item language: 日本語"}')
+malformed_submit=$(hook beforeSubmitPrompt "$malformed_prompt")
+assert_contains "$malformed_submit" '"continue":false'
+assert_contains "$malformed_submit" 'WORK_ITEM_LANGUAGE_REQUIRED'
+wellformed_prompt=$(printf '%s\n' "$selfheal_base" | jq -c '. + {prompt:"Work-item language: English"}')
+case "$(hook beforeSubmitPrompt "$wellformed_prompt")" in
+  *'"continue":false'*) fail 'well-formed prompt was blocked' ;;
+esac
+
+# After preCompact clears the receipt, a fresh beforeSubmitPrompt re-establishes
+# it within the same conversation so governed writes are not permanently locked.
+selfheal_read=$(printf '%s\n' "$selfheal_base" | jq -c \
+  '. + {tool_name:"github.get_issue",url:"https://github.com",tool_input:{}}')
+assert_contains "$(hook beforeMCPExecution "$selfheal_read")" '"permission":"allow"'
+hook preCompact "$selfheal_base" >/dev/null
+assert_denied "$(hook beforeMCPExecution "$selfheal_read")" GOVERNANCE_CONTEXT_REQUIRED
+hook beforeSubmitPrompt "$wellformed_prompt" >/dev/null
+assert_contains "$(hook beforeMCPExecution "$selfheal_read")" '"permission":"allow"'
 
 printf '%s\n' 'PASS: Cursor hook runtime'
