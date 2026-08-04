@@ -514,6 +514,19 @@ load_active_release() {
     die VERSION_MISMATCH 'Active release commit does not match installed tag'
 }
 
+active_release_present() {
+  ar_version=
+  ar_commit=
+  [ -f "$ACTIVE_RELEASE" ] || return 1
+  ar_version=$(sed -n 's/^VERSION=//p' "$ACTIVE_RELEASE" | head -n 1)
+  ar_commit=$(sed -n 's/^COMMIT=//p' "$ACTIVE_RELEASE" | head -n 1)
+  printf '%s\n' "$ar_version" |
+    grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$' || return 1
+  printf '%s\n' "$ar_commit" |
+    grep -Eq '^[0-9a-f]{40}$' || return 1
+  [ -d "$DATA_ROOT/releases/$ar_version/.git" ] || return 1
+}
+
 assert_detached_release() {
   if git -C "$1" symbolic-ref -q HEAD >/dev/null 2>&1; then
     die VERSION_MISMATCH 'Installed release is not detached'
@@ -972,19 +985,23 @@ cmd_install() {
   assert_safe_user_path "$ACTIVE_RELEASE" 'active release'
   [ ! -e "$ACTIVE_RELEASE" ] || [ -f "$ACTIVE_RELEASE" ] ||
     die GOVERNANCE_NOT_READY 'Active release is not a regular file'
+  ci_has_active=0
   if [ -e "$ACTIVE_RELEASE" ] || [ -L "$ACTIVE_RELEASE" ]; then
-    load_active_release
-    if [ -z "$ci_transition_client" ]; then
-      load_enabled_clients
-      ci_transition_client=${ENABLED_CLIENTS%%,*}
+    if active_release_present; then
+      load_active_release
+      ci_has_active=1
+      if [ -z "$ci_transition_client" ]; then
+        load_enabled_clients
+        ci_transition_client=${ENABLED_CLIENTS%%,*}
+      fi
+      validate_release_transition "$ACTIVE_VERSION" "$ci_version" \
+        "$ci_allow_upgrade" "$ci_transition_client" "$ci_non_interactive"
+    else
+      rm -f "$ACTIVE_RELEASE"
     fi
-    validate_release_transition "$ACTIVE_VERSION" "$ci_version" \
-      "$ci_allow_upgrade" "$ci_transition_client" "$ci_non_interactive"
-  else
-    [ "$ci_allow_upgrade" -eq 0 ] ||
-      die VERSION_MISMATCH \
-        'Bootstrap --upgrade requires an active release'
   fi
+  [ "$ci_allow_upgrade" -eq 0 ] || [ "$ci_has_active" -eq 1 ] ||
+    die VERSION_MISMATCH 'Bootstrap --upgrade requires an active release'
   if [ -z "$ci_expected_commit" ]; then
     remote_release_commit "$ci_version"
     ci_expected_commit=$REMOTE_RELEASE_COMMIT
