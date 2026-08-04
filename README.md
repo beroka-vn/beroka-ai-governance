@@ -21,7 +21,7 @@ bash -e -o pipefail -c '
     --repo beroka-vn/beroka-ai-governance \
     --pattern bootstrap.sh \
     --output - |
-    sh -s -- --client codex
+    sh -s -- . --client codex --ready
 '
 ```
 
@@ -99,6 +99,10 @@ Atlassian connector setup continue in the same process:
 
 ```bash
 bash -e -o pipefail -c 'gh release download v1.0.6 --repo beroka-vn/beroka-ai-governance --pattern bootstrap.sh --output - | sh -s -- --client cursor --upgrade'
+```
+For one command that finishes with immediate readiness check on the current repository, use:
+```bash
+bash -e -o pipefail -c 'gh release download v1.0.6 --repo beroka-vn/beroka-ai-governance --pattern bootstrap.sh --output - | sh -s -- . --client cursor --upgrade --ready'
 ```
 
 ### Upgrade

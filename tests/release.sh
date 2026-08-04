@@ -58,6 +58,7 @@ reject_text handbook.md '`v1.0.2` là capability release được hỗ trợ hi�
 reject_text handbook.md '`v1.0.3` là capability release được hỗ trợ hiện tại.'
 reject_text handbook.md '`v1.0.4` là capability release được hỗ trợ hiện tại.'
 reject_text handbook.md '`v1.0.5` là capability release được hỗ trợ hiện tại.'
+reject_text handbook.md '`v1.0.7` là capability release được hỗ trợ hiện tại.'
 require_text PACKAGE-DESIGN.md \
   '`v1.0.6` is the current supported capability release.'
 reject_text PACKAGE-DESIGN.md \
@@ -72,6 +73,8 @@ reject_text PACKAGE-DESIGN.md \
   '`v1.0.4` is the current supported capability release.'
 reject_text PACKAGE-DESIGN.md \
   '`v1.0.5` is the current supported capability release.'
+reject_text PACKAGE-DESIGN.md \
+  '`v1.0.7` is the current supported capability release.'
 require_text README.md \
   'Bootstrap installs a missing Cursor Agent after one confirmation.'
 require_text README.md \
@@ -155,7 +158,7 @@ bash -e -o pipefail -c '
     --repo beroka-vn/beroka-ai-governance \
     --pattern bootstrap.sh \
     --output - |
-    sh -s -- --client codex
+    sh -s -- . --client codex --ready
 '
 EOF
 )
@@ -265,7 +268,7 @@ GH_AUTH_STATE=required \
   /bin/sh "$behavior_root/quick-start.sh"
 case "$(cat "$behavior_root/gh-calls")" in
   *'gh auth login --hostname github.com --web'*\
-*'sh -s -- --client codex'*) ;;
+*'sh -s -- . --client codex --ready'*) ;;
   *) fail 'README Quick start did not authenticate and install' ;;
 esac
 

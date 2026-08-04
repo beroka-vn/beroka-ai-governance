@@ -71,7 +71,7 @@ bash -e -o pipefail -c '
     --repo beroka-vn/beroka-ai-governance \
     --pattern bootstrap.sh \
     --output - |
-    sh -s -- --client codex
+    sh -s -- . --client codex --ready
 '
 ```
 

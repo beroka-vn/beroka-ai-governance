@@ -74,12 +74,18 @@ unstarted_base=$(jq -nc --arg workspace "$known_repo" \
 unstarted_prompt=$(printf '%s\n' "$unstarted_base" | jq -c \
   '. + {prompt:"Work-item language: English"}')
 unstarted_submit=$(hook beforeSubmitPrompt "$unstarted_prompt")
-assert_contains "$unstarted_submit" '"continue":false'
-assert_contains "$unstarted_submit" 'GOVERNANCE_CONTEXT_REQUIRED'
+case "$unstarted_submit" in
+  *'"continue":false'*) fail 'fresh beforeSubmitPrompt required manual session start' ;;
+esac
+unstarted_receipt=$(printf '%s' 'conversation-unstarted' | sha256sum | awk '{print $1}')
+unstarted_receipt_file=$XDG_STATE_HOME/beroka-ai-governance/cursor/$unstarted_receipt.json
+[ -f "$unstarted_receipt_file" ] || fail 'fresh Cursor receipt was not created'
+assert_contains "$(jq -r .language "$unstarted_receipt_file")" en
 
 prompt_vi=$(printf '%s\n' "$base_input" | jq -c '. + {prompt:"Work-item language: Vietnamese"}')
 hook beforeSubmitPrompt "$prompt_vi" >/dev/null
-receipt=$(find "$XDG_STATE_HOME/beroka-ai-governance/cursor" -type f)
+base_receipt=$(printf '%s' 'conversation-1' | sha256sum | awk '{print $1}')
+receipt=$XDG_STATE_HOME/beroka-ai-governance/cursor/$base_receipt.json
 assert_contains "$(jq -r .language "$receipt")" vi
 generation_two=$(printf '%s\n' "$base_input" | jq -c '.generation_id="generation-2"')
 hook beforeSubmitPrompt "$generation_two" >/dev/null
@@ -186,7 +192,7 @@ jira_transition=$(printf '%s\n' "$base_input" | jq -c '. + {
     status:"In Review",
     body:"Work-item language: English"
   }}')
-assert_denied "$(hook beforeMCPExecution "$jira_transition")" DEPENDENCY_MISSING
+assert_denied "$(hook beforeMCPExecution "$jira_transition")" GITHUB_AUTH_REQUIRED
 jira_cross_team_transition=$(printf '%s\n' "$jira_transition" | jq -c \
   '.tool_input.issueKey="BF-123"')
 assert_denied "$(hook beforeMCPExecution "$jira_cross_team_transition")" ROUTING_REQUIRED

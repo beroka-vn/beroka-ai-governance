@@ -65,7 +65,7 @@ pass_result() {
 usage() {
   printf '%s\n' \
     'Usage:' \
-    '  beroka-governance bootstrap [REPO] --client codex|claude|cursor [--version vX.Y.Z] [--upgrade] [--non-interactive]' \
+    '  beroka-governance bootstrap [REPO] --client codex|claude|cursor [--version vX.Y.Z] [--upgrade] [--ready] [--non-interactive]' \
     '  beroka-governance install VERSION' \
     '  beroka-governance uninstall [--force]' \
     '  beroka-governance setup-connectors [--client codex|claude|cursor] [--non-interactive]' \
@@ -1438,7 +1438,7 @@ cmd_bootstrap() {
     case "$1" in --*) ;; *) bs_requested=$1; shift ;; esac
   fi
   bs_client= bs_version= bs_expected_commit=
-  bs_non_interactive=0 bs_upgrade=0
+  bs_non_interactive=0 bs_upgrade=0 bs_ready=0
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --client)
@@ -1479,9 +1479,21 @@ cmd_bootstrap() {
         bs_upgrade=1
         shift
         ;;
+      --ready)
+        bs_ready=1
+        shift
+        ;;
       *) usage >&2; exit 2 ;;
     esac
   done
+
+  if [ "$bs_ready" -eq 1 ] && [ -z "$bs_requested" ] && [ "$bs_non_interactive" -eq 1 ]; then
+    usage >&2
+    exit 2
+  fi
+  if [ "$bs_ready" -eq 1 ] && [ -z "$bs_requested" ]; then
+    bs_requested=$(canonical_repo '.')
+  fi
 
   bs_interactive=0
   if [ "$bs_non_interactive" -eq 0 ] && [ -t 0 ] && [ -t 1 ]; then
@@ -1538,10 +1550,12 @@ cmd_bootstrap() {
   fi
   configure_github_role "$bs_client" "$bs_interactive"
 
-  if [ -n "$bs_requested" ]; then
+  if [ "$bs_ready" -eq 1 ]; then
+    cmd_doctor "$bs_requested" --client "$bs_client"
+  elif [ -n "$bs_requested" ]; then
     cmd_context "$bs_requested"
   fi
-  printf '%s\n' 'Result: PASS'
+  [ "$bs_ready" -eq 1 ] || printf '%s\n' 'Result: PASS'
 }
 
 cmd_uninstall() {
@@ -4154,7 +4168,24 @@ cmd_doctor() {
     connector_health "$doctor_client" || doctor_health=$?
     case "$doctor_health" in
       0) ;;
-      1) auth_required "$doctor_client" ;;
+      1)
+        doctor_interactive=0
+        [ -t 0 ] && [ -t 1 ] && doctor_interactive=1
+        [ "$doctor_interactive" -eq 1 ] ||
+          auth_required "$doctor_client"
+        printf '%s\n' \
+          "Client: $doctor_client" \
+          'Provider: atlassian' \
+          'Authentication: AUTH_REQUIRED'
+        run_oauth "$doctor_client" || auth_required "$doctor_client"
+        doctor_health=0
+        connector_health "$doctor_client" || doctor_health=$?
+        case "$doctor_health" in
+          0) ;;
+          1) auth_required "$doctor_client" ;;
+          *) connector_health_unavailable "$doctor_client" ;;
+        esac
+        ;;
       *) connector_health_unavailable "$doctor_client" ;;
     esac
     printf '%s\n' "Client: $doctor_client" 'Connector: PASS' 'Authentication: PASS'
@@ -4395,11 +4426,6 @@ cmd_cursor_before_submit_prompt() {
   # explicit decision so the governed submit-time checks actually take effect.
   cursor_read_request || { printf '%s\n' '{}'; return; }
   cursor_context
-  cursor_receipt_matches 0 || {
-    cursor_block_prompt GOVERNANCE_CONTEXT_REQUIRED \
-      'Run cursor-hook sessionStart before submitting a governed prompt.'
-    return
-  }
   cursor_prompt=$(printf '%s\n' "$CURSOR_REQUEST" | jq -er '.prompt // "" | if type == "string" then . else error("prompt") end') || {
     cursor_block_prompt WORK_ITEM_LANGUAGE_REQUIRED 'Prompt must be text.'
     return
@@ -4412,6 +4438,17 @@ cmd_cursor_before_submit_prompt() {
     return
   fi
   [ -n "$cursor_language" ] || cursor_language=en
+  if ! cursor_receipt_matches 0; then
+    cursor_receipt=$(cursor_receipt_path) || {
+      cursor_block_prompt GOVERNANCE_CONTEXT_REQUIRED 'Cannot derive Cursor receipt path.'
+      return
+    }
+    if [ -f "$cursor_receipt" ] && [ ! -L "$cursor_receipt" ]; then
+      cursor_block_prompt GOVERNANCE_CONTEXT_REQUIRED \
+        'Run cursor-hook sessionStart before submitting a governed prompt.'
+      return
+    fi
+  fi
   cursor_write_receipt "$cursor_language"
   printf '%s\n' '{}'
 }
