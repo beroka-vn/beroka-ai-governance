@@ -876,6 +876,12 @@ cmp -s "$cursor_ack_before_format_change" \
 
 cursor_hooks_healthy=$TEST_ROOT/cursor-hooks-healthy
 cp "$cursor_hooks" "$cursor_hooks_healthy"
+jq 'del(.version)' "$cursor_hooks_healthy" >"$cursor_hooks"
+if output=$($CLI doctor "$repo" --client cursor 2>&1); then
+  fail 'Cursor Doctor accepted a hooks config without schema version'
+fi
+assert_not_contains "$output" 'Runtime hook: INSTALLED'
+cp "$cursor_hooks_healthy" "$cursor_hooks"
 jq 'del(.hooks.beforeMCPExecution)' "$cursor_hooks_healthy" >"$cursor_hooks"
 if output=$($CLI doctor "$repo" --client cursor 2>&1); then
   fail 'Cursor Doctor accepted missing security hook'

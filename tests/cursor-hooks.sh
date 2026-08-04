@@ -53,6 +53,13 @@ git -C "$known_repo" add README.md
 git -C "$known_repo" commit -qm 'test: initialize known repository'
 git -C "$known_repo" remote add origin https://github.com/beroka-vn/Beroka_Backend.git
 
+other_repo=$TMP_ROOT/other-repository
+new_repo "$other_repo"
+printf '%s\n' '# other' >"$other_repo/README.md"
+git -C "$other_repo" add README.md
+git -C "$other_repo" commit -qm 'test: initialize other repository'
+git -C "$other_repo" remote add origin https://github.com/beroka-vn/Beroka_Frontend.git
+
 base_input=$(jq -nc --arg workspace "$known_repo" '{conversation_id:"conversation-1",generation_id:"generation-1",workspace_roots:[$workspace]}')
 hook() { printf '%s\n' "$2" | "$CLI" cursor-hook "$1"; }
 
@@ -61,6 +68,14 @@ assert_contains "$session" '"additional_context"'
 assert_contains "$session" 'beroka-vn/Beroka_Backend'
 assert_contains "$session" 'Version: v1.1.0'
 assert_contains "$session" 'Routing: ROUTING_ACTIVE'
+
+unstarted_base=$(jq -nc --arg workspace "$known_repo" \
+  '{conversation_id:"conversation-unstarted",generation_id:"generation-unstarted",workspace_roots:[$workspace]}')
+unstarted_prompt=$(printf '%s\n' "$unstarted_base" | jq -c \
+  '. + {prompt:"Work-item language: English"}')
+unstarted_submit=$(hook beforeSubmitPrompt "$unstarted_prompt")
+assert_contains "$unstarted_submit" '"continue":false'
+assert_contains "$unstarted_submit" 'GOVERNANCE_CONTEXT_REQUIRED'
 
 prompt_vi=$(printf '%s\n' "$base_input" | jq -c '. + {prompt:"Work-item language: Vietnamese"}')
 hook beforeSubmitPrompt "$prompt_vi" >/dev/null
@@ -81,12 +96,25 @@ for invalid in '{' \
   assert_contains "$output" 'GOVERNANCE_CONTEXT_REQUIRED'
 done
 
-# A multi-root workspace resolves the first Git root instead of hard-failing.
+# A non-Git root is ignored when there is one unambiguous Git root.
 multi_root=$(jq -nc --arg a "$TMP_ROOT/not-git" --arg b "$known_repo" \
   '{conversation_id:"conversation-1",generation_id:"generation-1",workspace_roots:[$a,$b]}')
 multi_root_session=$(hook sessionStart "$multi_root")
 assert_contains "$multi_root_session" 'beroka-vn/Beroka_Backend'
 assert_contains "$multi_root_session" 'Routing: ROUTING_ACTIVE'
+
+same_repo_roots=$(jq -nc --arg a "$known_repo" --arg b "$known_repo/." \
+  '{conversation_id:"same-repository",generation_id:"same-repository",workspace_roots:[$a,$b]}')
+same_repo_session=$(hook sessionStart "$same_repo_roots")
+assert_contains "$same_repo_session" 'beroka-vn/Beroka_Backend'
+
+# Distinct Git roots have no trustworthy target routing and must fail closed.
+ambiguous_roots=$(jq -nc --arg a "$known_repo" --arg b "$other_repo" \
+  '{conversation_id:"ambiguous",generation_id:"ambiguous",workspace_roots:[$a,$b]}')
+if output=$(hook sessionStart "$ambiguous_roots" 2>&1); then
+  fail 'ambiguous multi-root session passed'
+fi
+assert_contains "$output" 'GOVERNANCE_CONTEXT_REQUIRED'
 
 hook sessionStart "$base_input" >/dev/null
 github_write=$(printf '%s\n' "$base_input" | jq -c '. + {tool_name:"github.create_issue",url:"https://github.com",tool_input:{body:"Work-item language: English"}}')
