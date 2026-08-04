@@ -82,27 +82,27 @@ governed repository work begins.
 
 Tracked legacy governance files remain until a repository owner explicitly
 authorizes a separate cleanup. The new CLI ignores them for release selection
-and routing. `v1.0.6` is the current supported capability release. Every
+and routing. `v1.0.7` is the current supported capability release. Every
 published tag is immutable.
 
-### v1.0.6 release
+### v1.0.7 release
 
-This release binds Confluence writes to reviewed target metadata and transport,
-aligns Cursor client hooks with the official Cursor hook contract, and requires
-exact Confluence content target details before governed writes.
+This release lets `FULL_STACK` open the exact Backend+Frontend Cursor multi-root
+pair with explicit BB/BF targeting, prefers catalog remotes over fork `origin`,
+keeps browser MCP available under ambiguous multi-root, and accepts templated GitHub CLI creates after `github-write` preflight PASS.
 
-### v1.0.6 upgrade
+### v1.0.7 upgrade
 
 Bootstrap installs a missing Cursor Agent after one confirmation. Developers
-upgrading from `v1.0.0` through `v1.0.5` run this once; installation and
+upgrading from `v1.0.0` through `v1.0.6` run this once; installation and
 Atlassian connector setup continue in the same process:
 
 ```bash
-bash -e -o pipefail -c 'gh release download v1.0.6 --repo beroka-vn/beroka-ai-governance --pattern bootstrap.sh --output - | sh -s -- --client cursor --upgrade'
+bash -e -o pipefail -c 'gh release download v1.0.7 --repo beroka-vn/beroka-ai-governance --pattern bootstrap.sh --output - | sh -s -- --client cursor --upgrade'
 ```
 For one command that finishes with immediate readiness check on the current repository, use:
 ```bash
-bash -e -o pipefail -c 'gh release download v1.0.6 --repo beroka-vn/beroka-ai-governance --pattern bootstrap.sh --output - | sh -s -- . --client cursor --upgrade --ready'
+bash -e -o pipefail -c 'gh release download v1.0.7 --repo beroka-vn/beroka-ai-governance --pattern bootstrap.sh --output - | sh -s -- . --client cursor --upgrade --ready'
 ```
 
 ### Upgrade
