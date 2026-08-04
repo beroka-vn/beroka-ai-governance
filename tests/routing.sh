@@ -847,6 +847,20 @@ assert_contains "$canonical_frontend_output" \
 assert_contains "$canonical_frontend_output" 'Routing: ROUTING_ACTIVE'
 assert_contains "$canonical_frontend_output" 'Jira project: BF'
 
+# Fork origin plus a catalog remote named beroka resolves to the catalog slug.
+forked_backend=$TEST_ROOT/forked-backend
+new_repo "$forked_backend"
+git -C "$forked_backend" remote add origin \
+  https://github.com/hungnx77/Beroka_Backend.git
+git -C "$forked_backend" remote add beroka \
+  https://github.com/beroka-vn/Beroka_Backend.git
+printf '%s\n' FULL_STACK >"$role_file"
+forked_backend_output=$($CLI context "$forked_backend")
+assert_contains "$forked_backend_output" 'Repository: beroka-vn/Beroka_Backend'
+assert_contains "$forked_backend_output" 'Routing: ROUTING_ACTIVE'
+assert_contains "$forked_backend_output" 'Jira project: BB'
+assert_not_contains "$forked_backend_output" 'hungnx77/Beroka_Backend'
+
 printf '%s\n' FE >"$role_file"
 if output=$($CLI context "$canonical_backend" 2>&1); then
   fail 'FE role loaded Backend routing'

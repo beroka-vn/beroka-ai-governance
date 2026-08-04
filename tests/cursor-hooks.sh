@@ -15,6 +15,7 @@ git config --global advice.detachedHead false
 
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 assert_contains() { case "$1" in *"$2"*) ;; *) fail "expected [$2] in [$1]" ;; esac; }
+assert_not_contains() { case "$1" in *"$2"*) fail "unexpected [$2] in [$1]" ;; esac; }
 assert_denied() { assert_contains "$1" '"permission":"deny"'; assert_contains "$1" "$2"; }
 
 new_repo() {
@@ -74,12 +75,18 @@ unstarted_base=$(jq -nc --arg workspace "$known_repo" \
 unstarted_prompt=$(printf '%s\n' "$unstarted_base" | jq -c \
   '. + {prompt:"Work-item language: English"}')
 unstarted_submit=$(hook beforeSubmitPrompt "$unstarted_prompt")
-assert_contains "$unstarted_submit" '"continue":false'
-assert_contains "$unstarted_submit" 'GOVERNANCE_CONTEXT_REQUIRED'
+case "$unstarted_submit" in
+  *'"continue":false'*) fail 'fresh beforeSubmitPrompt required manual session start' ;;
+esac
+unstarted_receipt=$(printf '%s' 'conversation-unstarted' | sha256sum | awk '{print $1}')
+unstarted_receipt_file=$XDG_STATE_HOME/beroka-ai-governance/cursor/$unstarted_receipt.json
+[ -f "$unstarted_receipt_file" ] || fail 'fresh Cursor receipt was not created'
+assert_contains "$(jq -r .language "$unstarted_receipt_file")" en
 
 prompt_vi=$(printf '%s\n' "$base_input" | jq -c '. + {prompt:"Work-item language: Vietnamese"}')
 hook beforeSubmitPrompt "$prompt_vi" >/dev/null
-receipt=$(find "$XDG_STATE_HOME/beroka-ai-governance/cursor" -type f)
+base_receipt=$(printf '%s' 'conversation-1' | sha256sum | awk '{print $1}')
+receipt=$XDG_STATE_HOME/beroka-ai-governance/cursor/$base_receipt.json
 assert_contains "$(jq -r .language "$receipt")" vi
 generation_two=$(printf '%s\n' "$base_input" | jq -c '.generation_id="generation-2"')
 hook beforeSubmitPrompt "$generation_two" >/dev/null
@@ -108,13 +115,42 @@ same_repo_roots=$(jq -nc --arg a "$known_repo" --arg b "$known_repo/." \
 same_repo_session=$(hook sessionStart "$same_repo_roots")
 assert_contains "$same_repo_session" 'beroka-vn/Beroka_Backend'
 
-# Distinct Git roots have no trustworthy target routing and must fail closed.
+# Distinct Git roots fail closed unless FULL_STACK opens the exact BE+FE pair.
 ambiguous_roots=$(jq -nc --arg a "$known_repo" --arg b "$other_repo" \
   '{conversation_id:"ambiguous",generation_id:"ambiguous",workspace_roots:[$a,$b]}')
 if output=$(hook sessionStart "$ambiguous_roots" 2>&1); then
-  fail 'ambiguous multi-root session passed'
+  fail 'BE role accepted Backend+Frontend multi-root'
 fi
 assert_contains "$output" 'GOVERNANCE_CONTEXT_REQUIRED'
+
+# Browser and other non-governed MCP tools must not be blanket-denied solely by
+# an ambiguous multi-root shape.
+browser_ambiguous=$(printf '%s\n' "$ambiguous_roots" | jq -c \
+  '. + {tool_name:"browser_navigate",url:"https://example.com",tool_input:{}}')
+assert_contains "$(hook beforeMCPExecution "$browser_ambiguous")" '"permission":"allow"'
+jira_ambiguous=$(printf '%s\n' "$ambiguous_roots" | jq -c \
+  '. + {tool_name:"jira.create_issue",url:"https://example.atlassian.net",tool_input:{body:"Work-item language: English"}}')
+assert_denied "$(hook beforeMCPExecution "$jira_ambiguous")" GOVERNANCE_CONTEXT_REQUIRED
+
+printf '%s\n' FULL_STACK >"$XDG_CONFIG_HOME/beroka-ai-governance/github-role"
+fullstack_roots=$(jq -nc --arg a "$known_repo" --arg b "$other_repo" \
+  '{conversation_id:"fullstack",generation_id:"fullstack",workspace_roots:[$a,$b]}')
+fullstack_session=$(hook sessionStart "$fullstack_roots")
+assert_contains "$fullstack_session" 'Multi-root mode: FULL_STACK'
+assert_contains "$fullstack_session" 'beroka-vn/Beroka_Backend'
+assert_contains "$fullstack_session" 'beroka-vn/Beroka_Frontend'
+assert_contains "$fullstack_session" 'Jira project: BB'
+assert_contains "$fullstack_session" 'Jira project: BF'
+fullstack_browser=$(printf '%s\n' "$fullstack_roots" | jq -c \
+  '. + {tool_name:"browser_navigate",url:"https://example.com",tool_input:{}}')
+assert_contains "$(hook beforeMCPExecution "$fullstack_browser")" '"permission":"allow"'
+fullstack_jira_untargeted=$(printf '%s\n' "$fullstack_roots" | jq -c \
+  '. + {tool_name:"jira.create_issue",url:"https://example.atlassian.net",tool_input:{body:"Work-item language: English"}}')
+assert_denied "$(hook beforeMCPExecution "$fullstack_jira_untargeted")" GOVERNANCE_CONTEXT_REQUIRED
+fullstack_jira_bb=$(printf '%s\n' "$fullstack_roots" | jq -c \
+  '. + {tool_name:"jira.create_issue",url:"https://example.atlassian.net",tool_input:{projectKey:"BB",body:"Work-item language: English"}}')
+assert_denied "$(hook beforeMCPExecution "$fullstack_jira_bb")" WORK_ITEM_TEMPLATE_REQUIRED
+printf '%s\n' BE >"$XDG_CONFIG_HOME/beroka-ai-governance/github-role"
 
 hook sessionStart "$base_input" >/dev/null
 github_write=$(printf '%s\n' "$base_input" | jq -c '. + {tool_name:"github.create_issue",url:"https://github.com",tool_input:{body:"Work-item language: English"}}')
@@ -186,7 +222,7 @@ jira_transition=$(printf '%s\n' "$base_input" | jq -c '. + {
     status:"In Review",
     body:"Work-item language: English"
   }}')
-assert_denied "$(hook beforeMCPExecution "$jira_transition")" DEPENDENCY_MISSING
+assert_denied "$(hook beforeMCPExecution "$jira_transition")" GITHUB_AUTH_REQUIRED
 jira_cross_team_transition=$(printf '%s\n' "$jira_transition" | jq -c \
   '.tool_input.issueKey="BF-123"')
 assert_denied "$(hook beforeMCPExecution "$jira_cross_team_transition")" ROUTING_REQUIRED
@@ -229,6 +265,14 @@ for command in 'gh issue view 1' 'git status'; do
   output=$(hook beforeShellExecution "$(jq -nc --arg command "$command" '{conversation_id:"shell",generation_id:"shell",workspace_roots:["/tmp/none"],command:$command}')")
   assert_contains "$output" '"permission":"allow"'
 done
+# Templated gh issue create advances past the template gate when workspace roots
+# resolve; further connector auth may still deny.
+templated_create='gh issue create --title "Fix opaque session" --body "Work-item language: English" --label area:governance --label priority:p1 --label type:technical --repo beroka-vn/Beroka_Backend'
+templated_shell=$(jq -nc --arg command "$templated_create" --arg workspace "$known_repo" \
+  '{conversation_id:"shell-template",generation_id:"shell-template",workspace_roots:[$workspace],command:$command}')
+templated_output=$(hook beforeShellExecution "$templated_shell")
+assert_denied "$templated_output" GITHUB_AUTH_REQUIRED
+assert_not_contains "$templated_output" WORK_ITEM_TEMPLATE_REQUIRED
 
 # beforeSubmitPrompt blocks a malformed Work-item language directive by emitting
 # {"continue":false} with exit 0 (not a non-zero exit, which Cursor fails open).
