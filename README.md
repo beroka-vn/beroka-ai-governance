@@ -178,7 +178,13 @@ similar repository name.
 
 Bootstrap derives `FE`, `BE`, or `FULL_STACK` from exact `beroka-vn` GitHub
 Team membership. Context denies a routed profile outside that stored role, and
-eligible preflights revalidate membership before external writes.
+eligible preflights revalidate membership before external writes. `FULL_STACK`
+may open a Cursor multi-root workspace that contains exactly the catalog
+`Beroka_Backend` and `Beroka_Frontend` pair; governed writes must name the exact
+BB/BF project or repository target. When `origin` is a fork, governance prefers
+another remote whose slug has an exact catalog record (for example `beroka` or
+`upstream`). Unknown repositories stay source-only and never inherit BE/FE
+routing.
 
 - Manager/coordinator: use the [operating workflow](workflow.md), then the
   [Jira and Confluence template](templates/jira-confluence.md) and [GitHub

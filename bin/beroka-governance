@@ -179,20 +179,58 @@ resolve_canonical_remote() {
   rcr_repo=$1 rcr_expected=${2:-}
   CANONICAL_REMOTE_NAME= CANONICAL_REMOTE_URL=
   rcr_matches=0
+  if [ -n "$rcr_expected" ]; then
+    for rcr_name in $(git -C "$rcr_repo" remote); do
+      rcr_url=$(git -C "$rcr_repo" config --get "remote.$rcr_name.url" 2>/dev/null) ||
+        continue
+      rcr_slug=$(normalize_github_url "$rcr_url") || continue
+      [ "$rcr_slug" = "$rcr_expected" ] || continue
+      rcr_matches=$((rcr_matches + 1))
+      CANONICAL_REMOTE_NAME=$rcr_name
+      CANONICAL_REMOTE_URL=$rcr_url
+    done
+    [ "$rcr_matches" -eq 1 ] ||
+      die REMOTE_MISMATCH "Cannot resolve expected remote $rcr_expected"
+    return
+  fi
+
+  # Prefer an exact Central catalog remote even when origin is a fork
+  # (for example origin=hungnx77/... and beroka=beroka-vn/Beroka_Backend).
+  # Unknown remotes stay standalone; never invent BE/FE routing.
+  if [ -n "${RELEASE_DIR:-}" ]; then
+    rcr_catalog_matches=0
+    rcr_catalog_name= rcr_catalog_url=
+    for rcr_name in $(git -C "$rcr_repo" remote); do
+      rcr_url=$(git -C "$rcr_repo" config --get "remote.$rcr_name.url" 2>/dev/null) ||
+        continue
+      rcr_slug=$(normalize_github_url "$rcr_url") || continue
+      catalog_record_for_slug "$rcr_slug" || continue
+      [ -f "$CATALOG_RECORD" ] || continue
+      rcr_catalog_matches=$((rcr_catalog_matches + 1))
+      rcr_catalog_name=$rcr_name
+      rcr_catalog_url=$rcr_url
+    done
+    if [ "$rcr_catalog_matches" -eq 1 ]; then
+      CANONICAL_REMOTE_NAME=$rcr_catalog_name
+      CANONICAL_REMOTE_URL=$rcr_catalog_url
+      return
+    fi
+    if [ "$rcr_catalog_matches" -gt 1 ]; then
+      die REMOTE_MISMATCH \
+        'Multiple catalog remotes found; keep exactly one beroka-vn catalog remote'
+    fi
+  fi
+
   for rcr_name in $(git -C "$rcr_repo" remote); do
     rcr_url=$(git -C "$rcr_repo" config --get "remote.$rcr_name.url" 2>/dev/null) ||
       continue
     rcr_slug=$(normalize_github_url "$rcr_url") || continue
-    if [ -n "$rcr_expected" ]; then
-      [ "$rcr_slug" = "$rcr_expected" ] || continue
-    elif [ "$rcr_name" != origin ]; then
-      continue
-    fi
+    [ "$rcr_name" = origin ] || continue
     rcr_matches=$((rcr_matches + 1))
     CANONICAL_REMOTE_NAME=$rcr_name
     CANONICAL_REMOTE_URL=$rcr_url
   done
-  if [ -z "$rcr_expected" ] && [ "$rcr_matches" -eq 0 ]; then
+  if [ "$rcr_matches" -eq 0 ]; then
     for rcr_name in $(git -C "$rcr_repo" remote); do
       rcr_url=$(git -C "$rcr_repo" config --get "remote.$rcr_name.url" 2>/dev/null) ||
         continue
@@ -4293,6 +4331,11 @@ cursor_require_jq() {
 cursor_read_request() {
   cursor_require_jq
   CURSOR_REQUEST=$(cat) || return 1
+  cursor_parse_request_fields || return 1
+  cursor_resolve_workspaces
+}
+
+cursor_parse_request_fields() {
   printf '%s\n' "$CURSOR_REQUEST" | jq -se '
     length == 1 and (.[] |
       type == "object" and
@@ -4303,22 +4346,123 @@ cursor_read_request() {
   ' >/dev/null 2>&1 || return 1
   CURSOR_CONVERSATION=$(printf '%s\n' "$CURSOR_REQUEST" | jq -r .conversation_id) || return 1
   CURSOR_GENERATION=$(printf '%s\n' "$CURSOR_REQUEST" | jq -r .generation_id) || return 1
-  # Multi-root workspaces are safe only when every Git root resolves to the
-  # same repository; tool input does not identify which repository it targets.
+}
+
+cursor_probe_workspace_profile() {
+  # Print "profile\tslug\trouting" for a git toplevel without altering caller state.
+  cpw_top=$1
+  (
+    load_active_release
+    resolve_repository_context "$cpw_top"
+    printf '%s\t%s\t%s\n' "$ROUTE_PROFILE" "$REPOSITORY_SLUG" "$ROUTING_STATE"
+  )
+}
+
+cursor_resolve_workspaces() {
   CURSOR_WORKSPACE=
+  CURSOR_WORKSPACE_MODE=single
+  CURSOR_BACKEND_WORKSPACE=
+  CURSOR_FRONTEND_WORKSPACE=
+  CURSOR_WORKSPACES=
+  crr_count=0
+  crr_list=
   while IFS= read -r crr_root; do
     [ -n "$crr_root" ] || continue
     crr_top=$(git -C "$crr_root" rev-parse --show-toplevel 2>/dev/null) || continue
-    if [ -z "$CURSOR_WORKSPACE" ]; then
-      CURSOR_WORKSPACE=$crr_top
-    elif [ "$CURSOR_WORKSPACE" != "$crr_top" ]; then
-      return 1
-    fi
+    crr_top=$(CDPATH= cd -- "$crr_top" && pwd -P) || continue
+    case "$crr_list" in
+      *"|$crr_top|"*) continue ;;
+    esac
+    crr_list="$crr_list|$crr_top|"
+    crr_count=$((crr_count + 1))
+    CURSOR_WORKSPACES="$CURSOR_WORKSPACES
+$crr_top"
   done <<CURSOR_ROOTS_EOF
 $(printf '%s\n' "$CURSOR_REQUEST" | jq -r '.workspace_roots[]')
 CURSOR_ROOTS_EOF
-  [ -n "$CURSOR_WORKSPACE" ] || return 1
-  CURSOR_WORKSPACE=$(CDPATH= cd -- "$CURSOR_WORKSPACE" && pwd -P) || return 1
+  CURSOR_WORKSPACES=$(printf '%s\n' "$CURSOR_WORKSPACES" | sed '/^$/d')
+  [ "$crr_count" -ge 1 ] || return 1
+  if [ "$crr_count" -eq 1 ]; then
+    CURSOR_WORKSPACE=$CURSOR_WORKSPACES
+    CURSOR_WORKSPACE_MODE=single
+    return 0
+  fi
+
+  # FULL_STACK may open the exact Backend+Frontend catalog pair. Any other
+  # multi-root shape stays fail-closed so unknown repos never inherit BE/FE.
+  load_active_release || return 1
+  read_github_role || return 1
+  [ "$GITHUB_ROLE" = FULL_STACK ] || return 1
+  [ "$crr_count" -eq 2 ] || return 1
+  crr_backend=
+  crr_frontend=
+  while IFS= read -r crr_top; do
+    [ -n "$crr_top" ] || continue
+    crr_probe=$(cursor_probe_workspace_profile "$crr_top") || return 1
+    crr_profile=${crr_probe%%	*}
+    crr_rest=${crr_probe#*	}
+    crr_slug=${crr_rest%%	*}
+    crr_routing=${crr_rest##*	}
+    [ "$crr_routing" = ROUTING_ACTIVE ] || return 1
+    case "$crr_profile:$crr_slug" in
+      backend:beroka-vn/Beroka_Backend)
+        [ -z "$crr_backend" ] || return 1
+        crr_backend=$crr_top
+        ;;
+      frontend:beroka-vn/Beroka_Frontend)
+        [ -z "$crr_frontend" ] || return 1
+        crr_frontend=$crr_top
+        ;;
+      *) return 1 ;;
+    esac
+  done <<CURSOR_PAIR_EOF
+$CURSOR_WORKSPACES
+CURSOR_PAIR_EOF
+  [ -n "$crr_backend" ] && [ -n "$crr_frontend" ] || return 1
+  CURSOR_BACKEND_WORKSPACE=$crr_backend
+  CURSOR_FRONTEND_WORKSPACE=$crr_frontend
+  CURSOR_WORKSPACE=$crr_backend
+  CURSOR_WORKSPACE_MODE=be-fe
+  return 0
+}
+
+cursor_select_be_fe_workspace() {
+  [ "$CURSOR_WORKSPACE_MODE" = be-fe ] || return 1
+  csw_text=$(printf '%s\n' "$CURSOR_REQUEST" | tr '[:upper:]' '[:lower:]')
+  csw_be=0
+  csw_fe=0
+  case "$csw_text" in
+    *beroka_backend*|*beroka-backend*|*berokaback*) csw_be=1 ;;
+  esac
+  case "$csw_text" in
+    *beroka_frontend*|*beroka-frontend*|*berokafront*) csw_fe=1 ;;
+  esac
+  csw_project=$(
+    printf '%s\n' "$CURSOR_REQUEST" | jq -r '
+      [
+        .. | objects |
+        (.projectKey?, .project?, .issueKey?, .issue_key?, .issueIdOrKey?) |
+        select(type == "string") |
+        if test("^[A-Z][A-Z0-9_]*$") then .
+        elif test("^[A-Z][A-Z0-9_]*-[1-9][0-9]*$") then
+          capture("^(?<project>[A-Z][A-Z0-9_]*)-").project
+        else empty end
+      ] | unique | if length == 1 then .[0] else empty end
+    ' 2>/dev/null
+  ) || csw_project=
+  case "$csw_project" in
+    BB) csw_be=1 ;;
+    BF) csw_fe=1 ;;
+  esac
+  if [ "$csw_be" -eq 1 ] && [ "$csw_fe" -eq 0 ]; then
+    CURSOR_WORKSPACE=$CURSOR_BACKEND_WORKSPACE
+    return 0
+  fi
+  if [ "$csw_fe" -eq 1 ] && [ "$csw_be" -eq 0 ]; then
+    CURSOR_WORKSPACE=$CURSOR_FRONTEND_WORKSPACE
+    return 0
+  fi
+  return 1
 }
 
 cursor_receipt_path() {
@@ -4334,6 +4478,33 @@ cursor_write_receipt() {
   cursor_receipt=$(cursor_receipt_path) || die GOVERNANCE_NOT_READY 'Cannot derive Cursor receipt path'
   cursor_tmp=$(umask 077; mktemp "$CURSOR_STATE_ROOT/.receipt.XXXXXX") ||
     die GOVERNANCE_NOT_READY 'Cannot create Cursor receipt'
+  if [ "$CURSOR_WORKSPACE_MODE" = be-fe ]; then
+    if ! jq -nc \
+      --arg workspace "$CURSOR_WORKSPACE" \
+      --arg repository "$REPOSITORY_SLUG" \
+      --arg backend "$CURSOR_BACKEND_WORKSPACE" \
+      --arg frontend "$CURSOR_FRONTEND_WORKSPACE" \
+      --arg generation "$CURSOR_GENERATION" \
+      --arg version "$ACTIVE_VERSION" \
+      --arg commit "$ACTIVE_COMMIT" \
+      --arg language "$cursor_language" \
+      '{
+         mode:"be-fe",
+         workspace:$workspace,
+         repository:$repository,
+         workspaces:[$backend,$frontend],
+         repositories:["beroka-vn/Beroka_Backend","beroka-vn/Beroka_Frontend"],
+         generation:$generation,
+         version:$version,
+         commit:$commit,
+         language:$language
+       }' >"$cursor_tmp" || ! chmod 600 "$cursor_tmp" || ! mv "$cursor_tmp" "$cursor_receipt"
+    then
+      rm -f "$cursor_tmp" || :
+      die GOVERNANCE_NOT_READY 'Cannot write Cursor receipt'
+    fi
+    return
+  fi
   if ! jq -nc \
     --arg workspace "$CURSOR_WORKSPACE" \
     --arg repository "$REPOSITORY_SLUG" \
@@ -4341,7 +4512,7 @@ cursor_write_receipt() {
     --arg version "$ACTIVE_VERSION" \
     --arg commit "$ACTIVE_COMMIT" \
     --arg language "$cursor_language" \
-    '{workspace:$workspace,repository:$repository,generation:$generation,version:$version,commit:$commit,language:$language}' \
+    '{mode:"single",workspace:$workspace,repository:$repository,generation:$generation,version:$version,commit:$commit,language:$language}' \
     >"$cursor_tmp" || ! chmod 600 "$cursor_tmp" || ! mv "$cursor_tmp" "$cursor_receipt"; then
     rm -f "$cursor_tmp" || :
     die GOVERNANCE_NOT_READY 'Cannot write Cursor receipt'
@@ -4370,18 +4541,41 @@ cursor_receipt_matches() {
       --arg generation "$CURSOR_GENERATION" \
       --arg version "$ACTIVE_VERSION" \
       --arg commit "$ACTIVE_COMMIT" \
-      '.workspace == $workspace and .repository == $repository and
-       .generation == $generation and .version == $version and .commit == $commit and
-       (.language | type == "string" and length > 0)' "$cursor_receipt" >/dev/null 2>&1 || return 1
+      --arg mode "$CURSOR_WORKSPACE_MODE" \
+      '
+       .version == $version and .commit == $commit and
+       .generation == $generation and
+       (.language | type == "string" and length > 0) and
+       (
+         ((.mode // "single") == "single" and $mode == "single" and
+          .workspace == $workspace and .repository == $repository) or
+         ((.mode // "single") == "be-fe" and $mode == "be-fe" and
+          (.workspaces | type == "array") and
+          (.repositories | type == "array") and
+          any(.workspaces[]; . == $workspace) and
+          any(.repositories[]; . == $repository))
+       )
+      ' "$cursor_receipt" >/dev/null 2>&1 || return 1
   else
     jq -e \
       --arg workspace "$CURSOR_WORKSPACE" \
       --arg repository "$REPOSITORY_SLUG" \
       --arg version "$ACTIVE_VERSION" \
       --arg commit "$ACTIVE_COMMIT" \
-      '.workspace == $workspace and .repository == $repository and
+      --arg mode "$CURSOR_WORKSPACE_MODE" \
+      '
        .version == $version and .commit == $commit and
-       (.language | type == "string" and length > 0)' "$cursor_receipt" >/dev/null 2>&1 || return 1
+       (.language | type == "string" and length > 0) and
+       (
+         ((.mode // "single") == "single" and $mode == "single" and
+          .workspace == $workspace and .repository == $repository) or
+         ((.mode // "single") == "be-fe" and $mode == "be-fe" and
+          (.workspaces | type == "array") and
+          (.repositories | type == "array") and
+          any(.workspaces[]; . == $workspace) and
+          any(.repositories[]; . == $repository))
+       )
+      ' "$cursor_receipt" >/dev/null 2>&1 || return 1
   fi
   CURSOR_LANGUAGE=$(jq -r .language "$cursor_receipt") || return 1
 }
@@ -4429,9 +4623,22 @@ cursor_context() {
 }
 
 cmd_cursor_session_start() {
-  cursor_read_request || die GOVERNANCE_CONTEXT_REQUIRED 'Cursor hook input requires one Git workspace'
-  cursor_context
-  cursor_context_output=$(cmd_context "$CURSOR_WORKSPACE") || die GOVERNANCE_CONTEXT_REQUIRED
+  cursor_read_request || die GOVERNANCE_CONTEXT_REQUIRED \
+    'Cursor hook input requires one Git workspace or a FULL_STACK Backend+Frontend pair.'
+  if [ "$CURSOR_WORKSPACE_MODE" = be-fe ]; then
+    cursor_backend_context=$(cmd_context "$CURSOR_BACKEND_WORKSPACE") ||
+      die GOVERNANCE_CONTEXT_REQUIRED
+    cursor_frontend_context=$(cmd_context "$CURSOR_FRONTEND_WORKSPACE") ||
+      die GOVERNANCE_CONTEXT_REQUIRED
+    CURSOR_WORKSPACE=$CURSOR_BACKEND_WORKSPACE
+    cursor_context
+    cursor_context_output=$(printf '%s\n%s\n\n%s\n' \
+      'Multi-root mode: FULL_STACK Backend+Frontend. Governed writes must name the exact BB/BF project or beroka-vn Backend/Frontend repository target.' \
+      "$cursor_backend_context" "$cursor_frontend_context")
+  else
+    cursor_context
+    cursor_context_output=$(cmd_context "$CURSOR_WORKSPACE") || die GOVERNANCE_CONTEXT_REQUIRED
+  fi
   cursor_write_receipt en
   jq -nc --arg context "$cursor_context_output" \
     '{env:{BEROKA_GOVERNANCE_CONTEXT:"PASS"},additional_context:$context}'
@@ -4441,7 +4648,11 @@ cmd_cursor_before_submit_prompt() {
   # Cursor only blocks a submission on {"continue":false} (exit 0) or exit code 2;
   # any other non-zero exit is treated as a hook failure and fails open. Emit an
   # explicit decision so the governed submit-time checks actually take effect.
-  cursor_read_request || { printf '%s\n' '{}'; return; }
+  cursor_read_request || {
+    cursor_block_prompt GOVERNANCE_CONTEXT_REQUIRED \
+      'Cursor hook input requires one Git workspace or a FULL_STACK Backend+Frontend pair.'
+    return
+  }
   cursor_context
   cursor_prompt=$(printf '%s\n' "$CURSOR_REQUEST" | jq -er '.prompt // "" | if type == "string" then . else error("prompt") end') || {
     cursor_block_prompt WORK_ITEM_LANGUAGE_REQUIRED 'Prompt must be text.'
@@ -4680,17 +4891,46 @@ cursor_validate_template() {
 }
 
 cmd_cursor_before_mcp_execution() {
-  if ! cursor_read_request; then
-    cursor_deny GOVERNANCE_CONTEXT_REQUIRED 'Provide one recognized Git workspace and start a new governance session.'
+  cursor_require_jq
+  CURSOR_REQUEST=$(cat) || {
+    cursor_deny GOVERNANCE_CONTEXT_REQUIRED 'Provide Cursor hook input.'
     return
+  }
+  if ! cursor_parse_request_fields; then
+    cursor_deny GOVERNANCE_CONTEXT_REQUIRED \
+      'Provide one recognized Git workspace and start a new governance session.'
+    return
+  fi
+  if ! cursor_resolve_workspaces; then
+    # Peek the tool before denying so browser and other non-governed MCP tools
+    # are not blocked solely by an ambiguous FE+BE workspace shape.
+    if cursor_tool_provider && {
+         [ -z "$CURSOR_PROVIDER" ] || [ "$CURSOR_TOOL_WRITE" -eq 0 ]
+       }
+    then
+      cursor_allow
+      return
+    fi
+    cursor_deny GOVERNANCE_CONTEXT_REQUIRED \
+      'Provide one recognized Git workspace or a FULL_STACK Backend+Frontend pair and start a new governance session.'
+    return
+  fi
+  cursor_tool_provider || {
+    cursor_deny WORK_ITEM_TEMPLATE_REQUIRED 'Provide structured tool input for the governed write.'
+    return
+  }
+  if [ "$CURSOR_WORKSPACE_MODE" = be-fe ] &&
+     [ -n "$CURSOR_PROVIDER" ] && [ "$CURSOR_TOOL_WRITE" -eq 1 ]
+  then
+    if ! cursor_select_be_fe_workspace; then
+      cursor_deny GOVERNANCE_CONTEXT_REQUIRED \
+        'Name the exact Backend or Frontend target (BB/BF project or beroka-vn repository) for this governed write.'
+      return
+    fi
   fi
   cursor_context
   cursor_receipt_matches 1 || {
     cursor_deny GOVERNANCE_CONTEXT_REQUIRED 'Run cursor-hook sessionStart again for this generation and workspace.'
-    return
-  }
-  cursor_tool_provider || {
-    cursor_deny WORK_ITEM_TEMPLATE_REQUIRED 'Provide structured tool input for the governed write.'
     return
   }
   [ -n "$CURSOR_PROVIDER" ] && [ "$CURSOR_TOOL_WRITE" -eq 1 ] || { cursor_allow; return; }
@@ -4767,6 +5007,55 @@ cmd_cursor_before_mcp_execution() {
   fi
 }
 
+cursor_shell_governed_github_write() {
+  # Allow templated gh issue/pr create when workspace roots resolve and the
+  # command carries the language marker plus required GitHub labels. Keep
+  # unstructured gh api mutates denied. Return 0 on preflight PASS, 2 when the
+  # template matched but preflight denied, and 1 when the template is incomplete.
+  csg_command=$1
+  CURSOR_SHELL_PREFLIGHT_RESULT=
+  CURSOR_SHELL_PREFLIGHT_DETAIL=
+  case " $csg_command " in
+    *gh\ issue\ create\ *|*gh\ pr\ create\ *) ;;
+    *) return 1 ;;
+  esac
+  cursor_parse_request_fields >/dev/null 2>&1 || return 1
+  cursor_resolve_workspaces || return 1
+  case " $csg_command " in
+    *beroka-vn/Beroka_Frontend*|*Beroka_Frontend*)
+      if [ "$CURSOR_WORKSPACE_MODE" = be-fe ]; then
+        CURSOR_WORKSPACE=$CURSOR_FRONTEND_WORKSPACE
+      fi
+      ;;
+    *beroka-vn/Beroka_Backend*|*Beroka_Backend*)
+      if [ "$CURSOR_WORKSPACE_MODE" = be-fe ]; then
+        CURSOR_WORKSPACE=$CURSOR_BACKEND_WORKSPACE
+      fi
+      ;;
+  esac
+  printf '%s\n' "$csg_command" |
+    grep -Eq 'Work-item language: (English|Vietnamese|[a-z][a-z0-9-]{1,31})' ||
+    return 1
+  printf '%s\n' "$csg_command" | grep -Eq -- '--label(=|[[:space:]])area:' || return 1
+  printf '%s\n' "$csg_command" | grep -Eq -- '--label(=|[[:space:]])priority:' || return 1
+  [ "$(printf '%s\n' "$csg_command" |
+    grep -Eoc -- '--label(=|[[:space:]])priority:' |
+    tr -d ' ')" -eq 1 ] || return 1
+  printf '%s\n' "$csg_command" |
+    grep -Eq -- '--label(=|[[:space:]])type:|--label(=|[[:space:]])(Bug|Feature|Task)' ||
+    return 1
+  CURSOR_SHELL_PREFLIGHT_DETAIL=$(cmd_preflight "$CURSOR_WORKSPACE" --client cursor \
+    --operation github-write --non-interactive 2>&1) || true
+  if printf '%s\n' "$CURSOR_SHELL_PREFLIGHT_DETAIL" | grep -F 'Result: PASS' >/dev/null; then
+    return 0
+  fi
+  CURSOR_SHELL_PREFLIGHT_RESULT=$(printf '%s\n' "$CURSOR_SHELL_PREFLIGHT_DETAIL" |
+    awk '/^Result: / { result=$0 } END { sub(/^Result: /, "", result); print result }')
+  [ -n "$CURSOR_SHELL_PREFLIGHT_RESULT" ] ||
+    CURSOR_SHELL_PREFLIGHT_RESULT=GOVERNANCE_CONTEXT_REQUIRED
+  return 2
+}
+
 cmd_cursor_before_shell_execution() {
   cursor_require_jq
   CURSOR_REQUEST=$(cat) || die GOVERNANCE_CONTEXT_REQUIRED
@@ -4775,8 +5064,27 @@ cmd_cursor_before_shell_execution() {
     return
   }
   case " $cursor_command " in
-    *gh\ issue\ create\ *|*gh\ issue\ edit\ *|*gh\ pr\ create\ *|*gh\ pr\ edit\ *)
-      cursor_deny WORK_ITEM_TEMPLATE_REQUIRED 'Create or edit GitHub work items through a governed MCP write.'
+    *gh\ issue\ create\ *|*gh\ pr\ create\ *)
+      cursor_shell_state=0
+      cursor_shell_governed_github_write "$cursor_command" || cursor_shell_state=$?
+      case "$cursor_shell_state" in
+        0)
+          cursor_allow
+          return
+          ;;
+        2)
+          cursor_deny "$CURSOR_SHELL_PREFLIGHT_RESULT" \
+            "${CURSOR_SHELL_PREFLIGHT_DETAIL:-Governed GitHub create preflight failed.}"
+          return
+          ;;
+      esac
+      cursor_deny WORK_ITEM_TEMPLATE_REQUIRED \
+        'Create GitHub work items through a governed MCP write or a templated gh issue/pr create with Work-item language, area, priority, and type labels after github-write preflight PASS.'
+      return
+      ;;
+    *gh\ issue\ edit\ *|*gh\ pr\ edit\ *)
+      cursor_deny WORK_ITEM_TEMPLATE_REQUIRED \
+        'Edit GitHub work items through a governed MCP write.'
       return
       ;;
   esac
@@ -4785,7 +5093,8 @@ cmd_cursor_before_shell_execution() {
     *gh\ api\ *)
       if printf '%s\n' "$cursor_upper" | grep -Eq '(^|[[:space:]])(-X|--METHOD)([[:space:]]|=)(POST|PUT|PATCH|DELETE)' &&
          printf '%s\n' "$cursor_command" | grep -Eq '/(issues|pulls|comments)(/|[[:space:]]|$)'; then
-        cursor_deny WORK_ITEM_TEMPLATE_REQUIRED 'Create or edit GitHub work items through a governed MCP write.'
+        cursor_deny WORK_ITEM_TEMPLATE_REQUIRED \
+          'Create or edit GitHub work items through a governed MCP write.'
         return
       fi
       ;;

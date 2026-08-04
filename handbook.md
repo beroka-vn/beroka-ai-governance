@@ -64,7 +64,11 @@ Bootstrap xác minh membership của GitHub Team `beroka-vn/frontend` và
 Không thuộc Team nào trả `GITHUB_ROLE_REQUIRED`; thuộc cả hai Team nhưng chưa
 chọn role ở non-interactive mode trả `GITHUB_ROLE_SELECTION_REQUIRED`.
 Preflight hợp lệ xác minh lại membership và trả `ROLE_SCOPE_DENIED` nếu role
-không cho phép profile của repository.
+không cho phép profile của repository. `FULL_STACK` được mở Cursor multi-root
+đúng cặp catalog `Beroka_Backend` + `Beroka_Frontend`; governed write phải chỉ
+đúng project BB/BF hoặc repository target. Khi `origin` là fork, governance ưu
+tiên remote khác có exact catalog record (ví dụ `beroka`/`upstream`). Repository
+unknown vẫn source-only và không thừa kế routing BE/FE.
 
 Cursor Individual không có supported CLI để ghi User Rules. Với `cursor`, copy
 User Rule được in ra vào **Cursor Settings > Rules** một lần, rồi xác nhận khi
