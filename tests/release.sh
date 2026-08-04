@@ -39,25 +39,27 @@ reject_text() {
   fi
 }
 
-[ "$(cat "$ROOT/VERSION")" = v1.0.5 ] ||
-  fail 'VERSION is not v1.0.5'
+[ "$(cat "$ROOT/VERSION")" = v1.0.6 ] ||
+  fail 'VERSION is not v1.0.6'
 
-require_text README.md '`v1.0.5` is the current supported capability release.'
+require_text README.md '`v1.0.6` is the current supported capability release.'
 reject_text README.md '`v1.0.0` is the current supported capability release.'
 reject_text README.md '`v1.0.1` is the current supported capability release.'
 reject_text README.md '`v1.0.2` is the current supported capability release.'
 reject_text README.md '`v1.0.3` is the current supported capability release.'
 reject_text README.md '`v1.0.4` is the current supported capability release.'
+reject_text README.md '`v1.0.5` is the current supported capability release.'
 require_text handbook.md \
-  '`v1.0.5` là capability release được hỗ trợ hiện tại.'
+  '`v1.0.6` là capability release được hỗ trợ hiện tại.'
 reject_text handbook.md \
   '`v1.0.0` là capability release được hỗ trợ hiện tại.'
 reject_text handbook.md '`v1.0.1` là capability release được hỗ trợ hiện tại.'
 reject_text handbook.md '`v1.0.2` là capability release được hỗ trợ hiện tại.'
 reject_text handbook.md '`v1.0.3` là capability release được hỗ trợ hiện tại.'
 reject_text handbook.md '`v1.0.4` là capability release được hỗ trợ hiện tại.'
+reject_text handbook.md '`v1.0.5` là capability release được hỗ trợ hiện tại.'
 require_text PACKAGE-DESIGN.md \
-  '`v1.0.5` is the current supported capability release.'
+  '`v1.0.6` is the current supported capability release.'
 reject_text PACKAGE-DESIGN.md \
   '`v1.0.0` is the current supported capability release.'
 reject_text PACKAGE-DESIGN.md \
@@ -68,16 +70,18 @@ reject_text PACKAGE-DESIGN.md \
   '`v1.0.3` is the current supported capability release.'
 reject_text PACKAGE-DESIGN.md \
   '`v1.0.4` is the current supported capability release.'
+reject_text PACKAGE-DESIGN.md \
+  '`v1.0.5` is the current supported capability release.'
 require_text README.md \
   'Bootstrap installs a missing Cursor Agent after one confirmation.'
 require_text README.md \
-  'gh release download v1.0.5 --repo beroka-vn/beroka-ai-governance'
+  'gh release download v1.0.6 --repo beroka-vn/beroka-ai-governance'
 require_text README.md \
-  'upgrading from `v1.0.0` through `v1.0.4` run this once'
-require_text README.md '### v1.0.5 release'
-require_text README.md 'Atlassian reauthentication'
-require_text README.md 'Jira summary naming contracts'
-require_text README.md 'symmetric cross-team Jira intake'
+  'upgrading from `v1.0.0` through `v1.0.5` run this once'
+require_text README.md '### v1.0.6 release'
+require_text README.md 'reviewed target metadata and transport'
+require_text README.md 'official Cursor hook contract'
+require_text README.md 'exact Confluence content target details'
 require_text handbook.md \
   'Bootstrap tự cài Cursor Agent còn thiếu sau một lần xác nhận.'
 require_text PACKAGE-DESIGN.md 'Cursor MCP commands run from `/`'
