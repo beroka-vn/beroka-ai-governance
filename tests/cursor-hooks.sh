@@ -298,4 +298,26 @@ assert_denied "$(hook beforeMCPExecution "$selfheal_read")" GOVERNANCE_CONTEXT_R
 hook beforeSubmitPrompt "$wellformed_prompt" >/dev/null
 assert_contains "$(hook beforeMCPExecution "$selfheal_read")" '"permission":"allow"'
 
+# A stale receipt from a previous release must self-heal on beforeSubmitPrompt
+# so an upgrade does not force the user to open a new Cursor chat.
+stale_base=$(jq -nc --arg workspace "$known_repo" \
+  '{conversation_id:"conversation-stale",generation_id:"generation-stale",workspace_roots:[$workspace]}')
+hook sessionStart "$stale_base" >/dev/null
+stale_receipt=$(printf '%s' 'conversation-stale' | sha256sum | awk '{print $1}')
+stale_receipt_file=$XDG_STATE_HOME/beroka-ai-governance/cursor/$stale_receipt.json
+[ -f "$stale_receipt_file" ] || fail 'stale-upgrade receipt was not created'
+jq '.version = "v1.0.6" | .commit = "0000000000000000000000000000000000000000"' \
+  "$stale_receipt_file" >"$TMP_ROOT/stale-receipt.json"
+mv "$TMP_ROOT/stale-receipt.json" "$stale_receipt_file"
+stale_prompt=$(printf '%s\n' "$stale_base" | jq -c \
+  '. + {prompt:"Work-item language: English"}')
+case "$(hook beforeSubmitPrompt "$stale_prompt")" in
+  *'"continue":false'*) fail 'stale receipt blocked beforeSubmitPrompt after upgrade' ;;
+esac
+assert_contains "$(jq -r .version "$stale_receipt_file")" v1.1.0
+assert_contains "$(jq -r .commit "$stale_receipt_file")" "$release_commit"
+stale_read=$(printf '%s\n' "$stale_base" | jq -c \
+  '. + {tool_name:"github.get_issue",url:"https://github.com",tool_input:{}}')
+assert_contains "$(hook beforeMCPExecution "$stale_read")" '"permission":"allow"'
+
 printf '%s\n' 'PASS: Cursor hook runtime'

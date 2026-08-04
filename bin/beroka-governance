@@ -1024,10 +1024,12 @@ cmd_install() {
   [ ! -e "$ACTIVE_RELEASE" ] || [ -f "$ACTIVE_RELEASE" ] ||
     die GOVERNANCE_NOT_READY 'Active release is not a regular file'
   ci_has_active=0
+  ci_previous_version=
   if [ -e "$ACTIVE_RELEASE" ] || [ -L "$ACTIVE_RELEASE" ]; then
     if active_release_present; then
       load_active_release
       ci_has_active=1
+      ci_previous_version=$ACTIVE_VERSION
       if [ -z "$ci_transition_client" ]; then
         load_enabled_clients
         ci_transition_client=${ENABLED_CLIENTS%%,*}
@@ -1060,6 +1062,9 @@ cmd_install() {
   activate_cli
   apply_user_file "$TX_DIR/work/active-release" "$ACTIVE_RELEASE" active-release
   tx_commit
+  if [ -n "$ci_previous_version" ] && [ "$ci_previous_version" != "$ci_version" ]; then
+    cursor_clear_receipts
+  fi
   printf '%s\n' "Installed: $ci_version"
   pass_result
 }
@@ -4530,6 +4535,20 @@ cursor_invalidate_receipt() {
   fi
 }
 
+cursor_clear_receipts() {
+  assert_safe_user_path "$CURSOR_STATE_ROOT" 'Cursor state'
+  [ ! -e "$CURSOR_STATE_ROOT" ] || [ -d "$CURSOR_STATE_ROOT" ] ||
+    die GOVERNANCE_NOT_READY 'Cursor state is not a directory'
+  [ -d "$CURSOR_STATE_ROOT" ] || return 0
+  for cursor_receipt in "$CURSOR_STATE_ROOT"/*.json; do
+    [ -e "$cursor_receipt" ] || continue
+    [ -f "$cursor_receipt" ] && [ ! -L "$cursor_receipt" ] ||
+      die GOVERNANCE_NOT_READY 'Unsafe Cursor receipt'
+    rm -f "$cursor_receipt" ||
+      die GOVERNANCE_NOT_READY 'Cannot clear Cursor receipt'
+  done
+}
+
 cursor_receipt_matches() {
   cursor_generation_required=$1
   cursor_receipt=$(cursor_receipt_path) || return 1
@@ -4666,17 +4685,8 @@ cmd_cursor_before_submit_prompt() {
     return
   fi
   [ -n "$cursor_language" ] || cursor_language=en
-  if ! cursor_receipt_matches 0; then
-    cursor_receipt=$(cursor_receipt_path) || {
-      cursor_block_prompt GOVERNANCE_CONTEXT_REQUIRED 'Cannot derive Cursor receipt path.'
-      return
-    }
-    if [ -f "$cursor_receipt" ] && [ ! -L "$cursor_receipt" ]; then
-      cursor_block_prompt GOVERNANCE_CONTEXT_REQUIRED \
-        'Run cursor-hook sessionStart before submitting a governed prompt.'
-      return
-    fi
-  fi
+  # Missing or stale receipts (for example after a release upgrade) are
+  # rewritten here. Cursor does not re-fire sessionStart mid-conversation.
   cursor_write_receipt "$cursor_language"
   printf '%s\n' '{}'
 }

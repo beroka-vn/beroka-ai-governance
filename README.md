@@ -89,7 +89,9 @@ published tag is immutable.
 
 This release lets `FULL_STACK` open the exact Backend+Frontend Cursor multi-root
 pair with explicit BB/BF targeting, prefers catalog remotes over fork `origin`,
-keeps browser MCP available under ambiguous multi-root, and accepts templated GitHub CLI creates after `github-write` preflight PASS.
+keeps browser MCP available under ambiguous multi-root, and accepts templated GitHub CLI creates after `github-write` preflight PASS. After upgrade it also
+refreshes stale Cursor conversation receipts so the same chat can continue
+without opening a new session.
 
 ### v1.0.7 upgrade
 
