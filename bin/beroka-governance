@@ -3743,15 +3743,7 @@ require_operation_routing() {
       require_confluence_route
       case "$CONFLUENCE_TARGET_ACTION" in
         '')
-          case "$ROUTE_INTEGRATION_PROFILE:$ROUTE_CROSS_REPO_POLICY" in
-            none:explicit-only)
-              case "$ROUTE_CONFLUENCE_ROOT_CONTENT_TYPE" in
-                page) PREFLIGHT_CAPABILITY=confluence-page-parent-write ;;
-                folder) PREFLIGHT_CAPABILITY=confluence-folder-parent-write ;;
-              esac
-              ;;
-            *) resolve_confluence_target ;;
-          esac
+          die ROUTING_REQUIRED 'Confluence content target details are required'
           ;;
         update) PREFLIGHT_CAPABILITY=confluence-page-update ;;
         create|move) PREFLIGHT_CAPABILITY=confluence-folder-parent-write ;;
