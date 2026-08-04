@@ -3757,7 +3757,9 @@ require_operation_routing() {
         create|move) PREFLIGHT_CAPABILITY=confluence-folder-parent-write ;;
         *) die ROUTING_REQUIRED 'Confluence action is invalid' ;;
       esac
-      [ -n "$CONFLUENCE_TARGET_ACTION" ] && resolve_confluence_target
+      if [ -n "$CONFLUENCE_TARGET_ACTION" ]; then
+        resolve_confluence_target
+      fi
       ;;
     confluence-handoff-verify)
       require_confluence_route
