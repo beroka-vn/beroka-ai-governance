@@ -82,29 +82,37 @@ governed repository work begins.
 
 Tracked legacy governance files remain until a repository owner explicitly
 authorizes a separate cleanup. The new CLI ignores them for release selection
-and routing. `v1.0.7` is the current supported capability release. Every
+and routing. `v1.0.8` is the current supported capability release. Every
 published tag is immutable.
 
-### v1.0.7 release
+### v1.0.8 release
 
-This release lets `FULL_STACK` open the exact Backend+Frontend Cursor multi-root
-pair with explicit BB/BF targeting, prefers catalog remotes over fork `origin`,
-keeps browser MCP available under ambiguous multi-root, and accepts templated GitHub CLI creates after `github-write` preflight PASS. After upgrade it also
-refreshes stale Cursor conversation receipts so the same chat can continue
-without opening a new session.
+This release keeps the `FULL_STACK` Backend+Frontend Cursor multi-root pair
+usable for governed writes and adds Confluence target bootstrap for issue #51.
+Multiple remotes that normalize to the same catalog slug (for example `origin`
+and `beroka` both pointing at `beroka-vn/Beroka_*`) resolve instead of failing
+closed. Multi-root Jira writes may target BB/BF through `projectKey` or
+parent/epic issue keys such as `BB-34`; missing target signals return
+`TARGET_REQUIRED` instead of `GOVERNANCE_CONTEXT_REQUIRED`.
 
-### v1.0.7 upgrade
+When Confluence inventory is legacy-only or missing an ACTIVE folder/Registry,
+agents run read-only `confluence-discover`, then authorized
+`confluence-bootstrap-plan` → human-confirmed MCP create → capture → verify, and
+open a reviewed governance inventory PR before ordinary target-bound writes.
+`FOLDER_CREATION_REQUIRED` includes that remediation path.
+
+### v1.0.8 upgrade
 
 Bootstrap installs a missing Cursor Agent after one confirmation. Developers
-upgrading from `v1.0.0` through `v1.0.6` run this once; installation and
+upgrading from `v1.0.0` through `v1.0.7` run this once; installation and
 Atlassian connector setup continue in the same process:
 
 ```bash
-bash -e -o pipefail -c 'gh release download v1.0.7 --repo beroka-vn/beroka-ai-governance --pattern bootstrap.sh --output - | sh -s -- --client cursor --upgrade'
+bash -e -o pipefail -c 'gh release download v1.0.8 --repo beroka-vn/beroka-ai-governance --pattern bootstrap.sh --output - | sh -s -- --client cursor --upgrade'
 ```
 For one command that finishes with immediate readiness check on the current repository, use:
 ```bash
-bash -e -o pipefail -c 'gh release download v1.0.7 --repo beroka-vn/beroka-ai-governance --pattern bootstrap.sh --output - | sh -s -- . --client cursor --upgrade --ready'
+bash -e -o pipefail -c 'gh release download v1.0.8 --repo beroka-vn/beroka-ai-governance --pattern bootstrap.sh --output - | sh -s -- . --client cursor --upgrade --ready'
 ```
 
 ### Upgrade
@@ -183,10 +191,11 @@ Team membership. Context denies a routed profile outside that stored role, and
 eligible preflights revalidate membership before external writes. `FULL_STACK`
 may open a Cursor multi-root workspace that contains exactly the catalog
 `Beroka_Backend` and `Beroka_Frontend` pair; governed writes must name the exact
-BB/BF project or repository target. When `origin` is a fork, governance prefers
-another remote whose slug has an exact catalog record (for example `beroka` or
-`upstream`). Unknown repositories stay source-only and never inherit BE/FE
-routing.
+BB/BF project, parent/epic key, or repository target. When `origin` is a fork,
+governance prefers another remote whose slug has an exact catalog record (for
+example `beroka` or `upstream`). Multiple remotes for the same catalog slug are
+accepted and prefer `origin`. Unknown repositories stay source-only and never
+inherit BE/FE routing.
 
 - Manager/coordinator: use the [operating workflow](workflow.md), then the
   [Jira and Confluence template](templates/jira-confluence.md) and [GitHub

@@ -861,6 +861,18 @@ assert_contains "$forked_backend_output" 'Routing: ROUTING_ACTIVE'
 assert_contains "$forked_backend_output" 'Jira project: BB'
 assert_not_contains "$forked_backend_output" 'hungnx77/Beroka_Backend'
 
+# Duplicate remotes for the same catalog slug still resolve (prefer origin).
+duplicate_catalog_backend=$TEST_ROOT/duplicate-catalog-backend
+new_repo "$duplicate_catalog_backend"
+git -C "$duplicate_catalog_backend" remote add origin \
+  https://github.com/beroka-vn/Beroka_Backend.git
+git -C "$duplicate_catalog_backend" remote add beroka \
+  https://github.com/beroka-vn/Beroka_Backend.git
+duplicate_catalog_output=$($CLI context "$duplicate_catalog_backend")
+assert_contains "$duplicate_catalog_output" 'Repository: beroka-vn/Beroka_Backend'
+assert_contains "$duplicate_catalog_output" 'Routing: ROUTING_ACTIVE'
+assert_contains "$duplicate_catalog_output" 'Jira project: BB'
+
 printf '%s\n' FE >"$role_file"
 if output=$($CLI context "$canonical_backend" 2>&1); then
   fail 'FE role loaded Backend routing'
@@ -1224,6 +1236,60 @@ then
   fail 'legacy generic API folder passed as a canonical parent'
 fi
 assert_contains "$output" 'Result: FOLDER_CREATION_REQUIRED'
+assert_contains "$output" 'Remediation: beroka-governance confluence-discover'
+assert_contains "$output" 'Then: beroka-governance confluence-bootstrap-plan'
+assert_contains "$output" '--scope Shared --domain Market --transport API'
+
+# Issue #51: discover → plan → capture → verify on deny-only inventory.
+discover_output=$($CLI confluence-discover "$canonical_backend" \
+  --scope Shared --domain Market --transport API)
+assert_contains "$discover_output" 'Result: DISCOVERY_COMPLETE'
+assert_contains "$discover_output" 'Legacy folders:'
+assert_contains "$discover_output" 'Requested folder (Shared — Market — API): MISSING'
+assert_contains "$discover_output" 'confluence-bootstrap-plan'
+assert_contains "$discover_output" 'Phase: authorized bootstrap'
+
+plan_output=$($CLI confluence-bootstrap-plan "$canonical_backend" \
+  --scope Shared --domain Market --transport API)
+assert_contains "$plan_output" 'Result: BOOTSTRAP_PLAN'
+assert_contains "$plan_output" 'title: Shared — Market — API'
+assert_contains "$plan_output" 'title: Backend Capability Registry'
+assert_contains "$plan_output" 'parentId: 65962274'
+assert_contains "$plan_output" 'Authorization: obtain explicit human confirmation'
+
+if output=$($CLI confluence-bootstrap-capture "$canonical_backend" \
+  --folder-id 71237633 --registry-id 900010 \
+  --scope Shared --domain Market --transport API 2>&1)
+then
+  fail 'bootstrap capture accepted a LEGACY folder content ID'
+fi
+assert_contains "$output" 'Result: MAPPING_CONFLICT'
+
+capture_output=$($CLI confluence-bootstrap-capture "$canonical_backend" \
+  --folder-id 910001 --registry-id 910002 \
+  --scope Shared --domain Market --transport API)
+assert_contains "$capture_output" 'Result: BOOTSTRAP_CAPTURED'
+assert_contains "$capture_output" 'Captured folder ID: 910001'
+assert_contains "$capture_output" 'Captured Registry ID: 910002'
+
+if output=$($CLI confluence-bootstrap-verify "$canonical_backend" \
+  --folder-id 910001 --registry-id 910002 \
+  --folder-parent-id 1 --registry-parent-id 65962274 2>&1)
+then
+  fail 'bootstrap verify accepted a wrong folder parent'
+fi
+assert_contains "$output" 'Result: DOC_HIERARCHY_FAILED'
+
+verify_output=$($CLI confluence-bootstrap-verify "$canonical_backend" \
+  --folder-id 910001 --registry-id 910002 \
+  --folder-parent-id 65962274 --registry-parent-id 65962274 \
+  --folder-title 'Shared — Market — API' \
+  --registry-title 'Backend Capability Registry')
+assert_contains "$verify_output" 'Result: BOOTSTRAP_VERIFIED'
+assert_contains "$verify_output" 'Result: INVENTORY_UPDATE_REQUIRED'
+assert_contains "$verify_output" \
+  'beroka-vn/Beroka_Backend	folder	ACTIVE	910001	Shared — Market — API	Shared	Market	API	65962274	-	-'
+assert_contains "$verify_output" 'Reviewed Registry content ID: 910002'
 
 target_file=$source_repo/runtime/integrations/beroka-be-fe.confluence-targets
 cp "$target_file" "$target_file.deny-only"
@@ -1276,6 +1342,7 @@ then
   fail 'active target passed with a legacy generic parent'
 fi
 assert_contains "$output" 'Result: FOLDER_CREATION_REQUIRED'
+assert_contains "$output" 'Remediation: beroka-governance confluence-discover'
 [ ! -s "$CALLS" ] || fail 'legacy parent inspected a connector'
 
 if output=$($CLI preflight "$canonical_backend" --client codex \
@@ -2511,8 +2578,8 @@ grep -F 'beroka-governance preflight' "$ROOT/README.md" >/dev/null ||
 grep -F 'CONNECTOR_CAPABILITY_REQUIRED' "$ROOT/handbook.md" >/dev/null ||
   fail 'handbook does not document capability remediation'
 
-[ "$(sed -n '1p' "$ROOT/VERSION")" = v1.0.7 ] ||
-  fix_wave_fail 'root VERSION does not select v1.0.7'
+[ "$(sed -n '1p' "$ROOT/VERSION")" = v1.0.8 ] ||
+  fix_wave_fail 'root VERSION does not select v1.0.8'
 grep -F -- 'gh release download' "$ROOT/README.md" >/dev/null ||
   fix_wave_fail 'README does not select the authenticated release launcher'
 

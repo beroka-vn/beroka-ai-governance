@@ -408,9 +408,11 @@ page as a fallback.
 FOLDER_CREATION_REQUIRED
 - Jira Epic: exact key and summary
 - Confluence space: exact key and URL
-- Required native Folder title: Jira Epic key — Epic summary
-- Required parent location: exact space parent
-- Required action: developer creates the native Folder and returns URL/ID
+- Required native Folder title: <Scope> — <Domain> — <Transport> or
+  Jira Epic key — Epic summary
+- Required parent location: exact catalog Confluence root for capability folders
+- Required action: confluence-discover → confluence-bootstrap-plan → human
+  confirm → MCP create → capture → verify → reviewed inventory PR
 - Work that may continue safely: explicit independent scope or None
 ```
 

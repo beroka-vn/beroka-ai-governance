@@ -36,7 +36,7 @@ Legacy tracked files không bị CLI parse, sửa, hay xóa. Repository owner c�
 
 - Có POSIX shell, `gh`, `jq`, và selected Codex/Claude client. Interactive Cursor bootstrap tự cài Cursor Agent nếu còn thiếu. Native Windows PowerShell không thuộc V1; dùng WSL trên Windows.
 - `gh` phải authenticate để download private release. Không yêu cầu, in, sao chép, ghi log hoặc lưu token.
-- `v1.0.7` là capability release được hỗ trợ hiện tại.
+- `v1.0.8` là capability release được hỗ trợ hiện tại.
 
 ### Bootstrap và install
 
@@ -57,7 +57,7 @@ bash -e -o pipefail -c '
 
 `gh auth setup-git --hostname github.com` dùng lại client-owned GitHub OAuth cho private HTTPS clone. Thay `codex` bằng `claude` hoặc `cursor`; mỗi run chỉ enroll đúng client đã chọn và giữ nguyên healthy setup của các client khác.
 
-Bootstrap có thể hỏi cài `jq` hoặc `curl` bằng `apt-get`, `dnf`, hoặc `brew`. Từ chối trả `DEPENDENCY_MISSING`. Bootstrap tự cài Cursor Agent còn thiếu sau một lần xác nhận. Developer đang ở `v1.0.0` đến `v1.0.6` dùng đúng một lệnh trong [v1.0.7 upgrade](README.md#v107-upgrade). Atlassian OAuth vẫn do client đã chọn sở hữu. Thiếu OAuth trả remediation của client đó; `AUTH_PENDING` không làm mất user setup.
+Bootstrap có thể hỏi cài `jq` hoặc `curl` bằng `apt-get`, `dnf`, hoặc `brew`. Từ chối trả `DEPENDENCY_MISSING`. Bootstrap tự cài Cursor Agent còn thiếu sau một lần xác nhận. Developer đang ở `v1.0.0` đến `v1.0.7` dùng đúng một lệnh trong [v1.0.8 upgrade](README.md#v108-upgrade). Atlassian OAuth vẫn do client đã chọn sở hữu. Thiếu OAuth trả remediation của client đó; `AUTH_PENDING` không làm mất user setup.
 
 Bootstrap xác minh membership của GitHub Team `beroka-vn/frontend` và
 `beroka-vn/backend`, rồi lưu role `FE`, `BE`, hoặc `FULL_STACK` ở user scope.
@@ -66,9 +66,14 @@ chọn role ở non-interactive mode trả `GITHUB_ROLE_SELECTION_REQUIRED`.
 Preflight hợp lệ xác minh lại membership và trả `ROLE_SCOPE_DENIED` nếu role
 không cho phép profile của repository. `FULL_STACK` được mở Cursor multi-root
 đúng cặp catalog `Beroka_Backend` + `Beroka_Frontend`; governed write phải chỉ
-đúng project BB/BF hoặc repository target. Khi `origin` là fork, governance ưu
-tiên remote khác có exact catalog record (ví dụ `beroka`/`upstream`). Repository
-unknown vẫn source-only và không thừa kế routing BE/FE.
+đúng project BB/BF, parent/epic key, hoặc repository target. Khi `origin` là
+fork, governance ưu tiên remote khác có exact catalog record (ví dụ
+`beroka`/`upstream`). Nhiều remote cùng một catalog slug được chấp nhận và ưu
+tiên `origin`. Confluence documentation dùng ba phase: `confluence-discover`
+(read-only), authorized bootstrap (`confluence-bootstrap-plan` → MCP create →
+capture → verify → inventory PR), rồi ordinary target-bound write.
+`FOLDER_CREATION_REQUIRED` có Remediation trỏ bootstrap. Repository unknown vẫn
+source-only và không thừa kế routing BE/FE.
 
 Cursor Individual không có supported CLI để ghi User Rules. Với `cursor`, copy
 User Rule được in ra vào **Cursor Settings > Rules** một lần, rồi xác nhận khi

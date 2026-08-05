@@ -29,8 +29,12 @@ operation-specific preflight and continue only when it returns `Result: PASS`.
 Repository-specific instructions may narrow central governance. They must not
 broaden authority or bypass a central stop condition.
 
-Before a Confluence write, identify the exact Confluence target and run its
-target-bound preflight; if any target field is unknown, ask the user and wait.
+Before a Confluence write, run read-only `beroka-governance confluence-discover`
+when the target inventory may be legacy-only or missing. Use authorized
+bootstrap (`confluence-bootstrap-plan` → human-confirmed MCP create → capture →
+verify → reviewed inventory PR) before ordinary documentation updates. Identify
+the exact Confluence target and run its target-bound preflight; if any target
+field is unknown, ask the user and wait.
 Before a Jira update, compare the authenticated and current-assignee Atlassian
 account IDs; mismatch or unassigned returns `ASSIGNEE_CONFIRMATION_REQUIRED`.
 Never place opposite-team private GitHub links in cross-team Jira or handoff

@@ -277,9 +277,13 @@ Documentation location confirmation
 FOLDER_CREATION_REQUIRED
 - Jira Epic: exact key and summary
 - Confluence space: exact key and URL
-- Required native Folder title: Jira Epic key — Epic summary
-- Required parent location: exact space parent
-- Required action: developer creates the native Folder and returns URL/ID
+- Required native Folder title: <Scope> — <Domain> — <Transport> (capability)
+  or Jira Epic key — Epic summary (Epic-only planning folder)
+- Required parent location: exact catalog Confluence root for capability folders
+- Required action: run beroka-governance confluence-discover REPO, then
+  confluence-bootstrap-plan with exact scope/domain/transport; obtain human
+  confirmation; create via governed MCP; capture and verify returned IDs; open a
+  reviewed governance inventory PR. Do not infer a location or identifier.
 - Work that may continue safely: explicit independent scope or None
 ```
 

@@ -146,7 +146,10 @@ fullstack_browser=$(printf '%s\n' "$fullstack_roots" | jq -c \
 assert_contains "$(hook beforeMCPExecution "$fullstack_browser")" '"permission":"allow"'
 fullstack_jira_untargeted=$(printf '%s\n' "$fullstack_roots" | jq -c \
   '. + {tool_name:"jira.create_issue",url:"https://example.atlassian.net",tool_input:{body:"Work-item language: English"}}')
-assert_denied "$(hook beforeMCPExecution "$fullstack_jira_untargeted")" GOVERNANCE_CONTEXT_REQUIRED
+assert_denied "$(hook beforeMCPExecution "$fullstack_jira_untargeted")" TARGET_REQUIRED
+fullstack_jira_parent=$(printf '%s\n' "$fullstack_roots" | jq -c \
+  '. + {tool_name:"jira.create_issue",url:"https://example.atlassian.net",tool_input:{parent:"BB-34",body:"Work-item language: English"}}')
+assert_denied "$(hook beforeMCPExecution "$fullstack_jira_parent")" WORK_ITEM_TEMPLATE_REQUIRED
 fullstack_jira_bb=$(printf '%s\n' "$fullstack_roots" | jq -c \
   '. + {tool_name:"jira.create_issue",url:"https://example.atlassian.net",tool_input:{projectKey:"BB",body:"Work-item language: English"}}')
 assert_denied "$(hook beforeMCPExecution "$fullstack_jira_bb")" WORK_ITEM_TEMPLATE_REQUIRED
