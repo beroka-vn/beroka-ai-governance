@@ -39,10 +39,10 @@ reject_text() {
   fi
 }
 
-[ "$(cat "$ROOT/VERSION")" = v1.0.8 ] ||
-  fail 'VERSION is not v1.0.8'
+[ "$(cat "$ROOT/VERSION")" = v1.0.9 ] ||
+  fail 'VERSION is not v1.0.9'
 
-require_text README.md '`v1.0.8` is the current supported capability release.'
+require_text README.md '`v1.0.9` is the current supported capability release.'
 reject_text README.md '`v1.0.0` is the current supported capability release.'
 reject_text README.md '`v1.0.1` is the current supported capability release.'
 reject_text README.md '`v1.0.2` is the current supported capability release.'
@@ -51,8 +51,9 @@ reject_text README.md '`v1.0.4` is the current supported capability release.'
 reject_text README.md '`v1.0.5` is the current supported capability release.'
 reject_text README.md '`v1.0.6` is the current supported capability release.'
 reject_text README.md '`v1.0.7` is the current supported capability release.'
+reject_text README.md '`v1.0.8` is the current supported capability release.'
 require_text handbook.md \
-  '`v1.0.8` là capability release được hỗ trợ hiện tại.'
+  '`v1.0.9` là capability release được hỗ trợ hiện tại.'
 reject_text handbook.md \
   '`v1.0.0` là capability release được hỗ trợ hiện tại.'
 reject_text handbook.md '`v1.0.1` là capability release được hỗ trợ hiện tại.'
@@ -62,9 +63,10 @@ reject_text handbook.md '`v1.0.4` là capability release được hỗ trợ hi�
 reject_text handbook.md '`v1.0.5` là capability release được hỗ trợ hiện tại.'
 reject_text handbook.md '`v1.0.6` là capability release được hỗ trợ hiện tại.'
 reject_text handbook.md '`v1.0.7` là capability release được hỗ trợ hiện tại.'
-reject_text handbook.md '`v1.0.9` là capability release được hỗ trợ hiện tại.'
+reject_text handbook.md '`v1.0.8` là capability release được hỗ trợ hiện tại.'
+reject_text handbook.md '`v1.0.10` là capability release được hỗ trợ hiện tại.'
 require_text PACKAGE-DESIGN.md \
-  '`v1.0.8` is the current supported capability release.'
+  '`v1.0.9` is the current supported capability release.'
 reject_text PACKAGE-DESIGN.md \
   '`v1.0.0` is the current supported capability release.'
 reject_text PACKAGE-DESIGN.md \
@@ -82,22 +84,27 @@ reject_text PACKAGE-DESIGN.md \
 reject_text PACKAGE-DESIGN.md \
   '`v1.0.7` is the current supported capability release.'
 reject_text PACKAGE-DESIGN.md \
-  '`v1.0.9` is the current supported capability release.'
+  '`v1.0.8` is the current supported capability release.'
+reject_text PACKAGE-DESIGN.md \
+  '`v1.0.10` is the current supported capability release.'
 require_text README.md \
   'Bootstrap installs a missing Cursor Agent after one confirmation.'
 require_text README.md \
-  'gh release download v1.0.8 --repo beroka-vn/beroka-ai-governance'
+  'gh release download v1.0.9 --repo beroka-vn/beroka-ai-governance'
 require_text README.md \
-  'upgrading from `v1.0.0` through `v1.0.7` run this once'
-require_text README.md '### v1.0.8 release'
-require_text README.md 'FULL_STACK'
-require_text README.md 'same catalog slug'
-require_text README.md 'parent/epic'
-require_text README.md 'TARGET_REQUIRED'
-require_text README.md 'confluence-discover'
-require_text README.md 'confluence-bootstrap-plan'
+  'upgrading from `v1.0.0` through `v1.0.8` run this once'
+require_text README.md '### v1.0.9 release'
+require_text README.md 'createJiraIssue'
+require_text README.md 'issueTypeName'
+require_text README.md 'assignee_account_id'
+require_text README.md 'Missing:'
 require_text handbook.md \
   'Bootstrap tự cài Cursor Agent còn thiếu sau một lần xác nhận.'
+require_text runtime/rules/general.md 'createJiraIssue'
+require_text runtime/rules/general.md 'issueTypeName'
+require_text runtime/rules/general.md 'never tell the user raw governance codes'
+require_text templates/agent-entrypoints/AGENTS.md 'createJiraIssue'
+require_text templates/agent-entrypoints/CURSOR-USER-RULE.txt 'Missing:'
 require_text handbook.md 'parent/epic key'
 require_text handbook.md 'cùng một catalog slug'
 require_text handbook.md 'confluence-discover'
@@ -145,14 +152,16 @@ require_text runtime/integrations/beroka-be-fe.intake \
   'beroka-vn/Beroka_Backend	beroka-vn/Beroka_Frontend	frontend	BF'
 target_inventory=$ROOT/runtime/integrations/beroka-be-fe.confluence-targets
 [ -f "$target_inventory" ] || fail 'missing Confluence target inventory'
-[ "$(sed '/^#/d;/^[[:space:]]*$/d' "$target_inventory" | wc -l | tr -d ' ')" = 3 ] ||
-  fail 'Confluence target inventory must contain three observed deny-only records'
+[ "$(sed '/^#/d;/^[[:space:]]*$/d' "$target_inventory" | wc -l | tr -d ' ')" = 4 ] ||
+  fail 'Confluence target inventory must contain three deny-only records plus one ACTIVE folder'
 require_text runtime/integrations/beroka-be-fe.confluence-targets \
   "$(printf 'beroka-vn/Beroka_Backend\tfolder\tLEGACY\t71237633\tMarket — API')"
 require_text runtime/integrations/beroka-be-fe.confluence-targets \
   "$(printf 'beroka-vn/Beroka_Backend\tfolder\tLEGACY\t71303169\tMarket — WS')"
 require_text runtime/integrations/beroka-be-fe.confluence-targets \
   "$(printf 'beroka-vn/Beroka_Backend\tpage\tDRIFTED\t70713366\tBB-11 — Market Data — Derivative Quote Stream Contract')"
+require_text runtime/integrations/beroka-be-fe.confluence-targets \
+  "$(printf 'beroka-vn/Beroka_Backend\tfolder\tACTIVE\t76808195\tDerivatives — Market — API')"
 for alias in Beroka_Backend Beroka_Frontend; do
   alias_slug="cuongngo1801-beroka/$alias"
   alias_record="runtime/repositories/$alias_slug.conf"
