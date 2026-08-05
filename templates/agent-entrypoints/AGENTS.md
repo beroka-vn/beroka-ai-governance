@@ -35,6 +35,12 @@ bootstrap (`confluence-bootstrap-plan` → human-confirmed MCP create → captur
 verify → reviewed inventory PR) before ordinary documentation updates. Identify
 the exact Confluence target and run its target-bound preflight; if any target
 field is unknown, ask the user and wait.
+Create Jira items with Atlassian MCP `createJiraIssue` using official fields
+(`projectKey`, `issueTypeName`, `parent`, `assignee_account_id`,
+`additional_fields.priority.name`) and put `Work-item language: English` plus
+`GitHub: <url|N/A>` in `description`. On `WORK_ITEM_TEMPLATE_REQUIRED`, read
+`Missing:` from the hook message, fix once, and retry — do not surface raw
+governance codes to the user.
 Before a Jira update, compare the authenticated and current-assignee Atlassian
 account IDs; mismatch or unassigned returns `ASSIGNEE_CONFIRMATION_REQUIRED`.
 Never place opposite-team private GitHub links in cross-team Jira or handoff

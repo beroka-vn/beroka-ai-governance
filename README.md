@@ -82,37 +82,30 @@ governed repository work begins.
 
 Tracked legacy governance files remain until a repository owner explicitly
 authorizes a separate cleanup. The new CLI ignores them for release selection
-and routing. `v1.0.8` is the current supported capability release. Every
+and routing. `v1.0.9` is the current supported capability release. Every
 published tag is immutable.
 
-### v1.0.8 release
+### v1.0.9 release
 
-This release keeps the `FULL_STACK` Backend+Frontend Cursor multi-root pair
-usable for governed writes and adds Confluence target bootstrap for issue #51.
-Multiple remotes that normalize to the same catalog slug (for example `origin`
-and `beroka` both pointing at `beroka-vn/Beroka_*`) resolve instead of failing
-closed. Multi-root Jira writes may target BB/BF through `projectKey` or
-parent/epic issue keys such as `BB-34`; missing target signals return
-`TARGET_REQUIRED` instead of `GOVERNANCE_CONTEXT_REQUIRED`.
+This release lets Cursor agents create Jira work items through official
+Atlassian MCP `createJiraIssue` fields. Governance accepts `issueTypeName`,
+`assignee_account_id`, and `additional_fields.priority.name` as aliases of the
+legacy template names, reads `GitHub: N/A` or a GitHub URL from `description`,
+and returns `Missing:` field hints so agents can retry without surfacing raw
+codes to users. Quoted `gh --label` values are accepted for templated creates.
 
-When Confluence inventory is legacy-only or missing an ACTIVE folder/Registry,
-agents run read-only `confluence-discover`, then authorized
-`confluence-bootstrap-plan` → human-confirmed MCP create → capture → verify, and
-open a reviewed governance inventory PR before ordinary target-bound writes.
-`FOLDER_CREATION_REQUIRED` includes that remediation path.
-
-### v1.0.8 upgrade
+### v1.0.9 upgrade
 
 Bootstrap installs a missing Cursor Agent after one confirmation. Developers
-upgrading from `v1.0.0` through `v1.0.7` run this once; installation and
+upgrading from `v1.0.0` through `v1.0.8` run this once; installation and
 Atlassian connector setup continue in the same process:
 
 ```bash
-bash -e -o pipefail -c 'gh release download v1.0.8 --repo beroka-vn/beroka-ai-governance --pattern bootstrap.sh --output - | sh -s -- --client cursor --upgrade'
+bash -e -o pipefail -c 'gh release download v1.0.9 --repo beroka-vn/beroka-ai-governance --pattern bootstrap.sh --output - | sh -s -- --client cursor --upgrade'
 ```
 For one command that finishes with immediate readiness check on the current repository, use:
 ```bash
-bash -e -o pipefail -c 'gh release download v1.0.8 --repo beroka-vn/beroka-ai-governance --pattern bootstrap.sh --output - | sh -s -- . --client cursor --upgrade --ready'
+bash -e -o pipefail -c 'gh release download v1.0.9 --repo beroka-vn/beroka-ai-governance --pattern bootstrap.sh --output - | sh -s -- . --client cursor --upgrade --ready'
 ```
 
 ### Upgrade

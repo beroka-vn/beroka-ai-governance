@@ -178,6 +178,33 @@ done
 
 jira_write=$(printf '%s\n' "$base_input" | jq -c '. + {tool_name:"jira.create_issue",url:"https://example.atlassian.net",tool_input:{body:"Work-item language: English"}}')
 assert_denied "$(hook beforeMCPExecution "$jira_write")" WORK_ITEM_TEMPLATE_REQUIRED
+
+# Official Atlassian MCP createJiraIssue shape must pass template checks.
+atlassian_create=$(printf '%s\n' "$base_input" | jq -c '
+  . + {
+    tool_name:"createJiraIssue",
+    url:"https://example.atlassian.net",
+    tool_input:{
+      cloudId:"cloud",
+      projectKey:"BB",
+      issueTypeName:"Bug",
+      parent:"BB-34",
+      assignee_account_id:"712020:aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+      summary:"Pending wait for in-flight opaque SID rotation",
+      description:"Work-item language: English\n\nGitHub: N/A\n\nFix concurrent refresh cookie clear.",
+      additional_fields:{priority:{name:"Highest"}}
+    }
+  }')
+atlassian_create_output=$(hook beforeMCPExecution "$atlassian_create")
+assert_not_contains "$atlassian_create_output" 'WORK_ITEM_TEMPLATE_REQUIRED'
+assert_not_contains "$atlassian_create_output" 'Missing:'
+
+atlassian_missing_assignee=$(printf '%s\n' "$atlassian_create" | jq -c 'del(.tool_input.assignee_account_id)')
+atlassian_missing_output=$(hook beforeMCPExecution "$atlassian_missing_assignee")
+assert_denied "$atlassian_missing_output" WORK_ITEM_TEMPLATE_REQUIRED
+assert_contains "$atlassian_missing_output" 'Missing:'
+assert_contains "$atlassian_missing_output" 'assignee_account_id|assignee|owner'
+
 jira_update_by_key=$(printf '%s\n' "$base_input" | jq -c \
   '. + {tool_name:"jira.update_issue",url:"https://example.atlassian.net",tool_input:{issueKey:"BB-123",body:"Work-item language: English"}}')
 assert_denied "$(hook beforeMCPExecution "$jira_update_by_key")" CLIENT_INSTRUCTION_REQUIRED
@@ -276,6 +303,12 @@ templated_shell=$(jq -nc --arg command "$templated_create" --arg workspace "$kno
 templated_output=$(hook beforeShellExecution "$templated_shell")
 assert_denied "$templated_output" GITHUB_AUTH_REQUIRED
 assert_not_contains "$templated_output" WORK_ITEM_TEMPLATE_REQUIRED
+quoted_create='gh issue create --title "Fix opaque session" --body "Work-item language: English" --label "area:governance" --label "priority:p1" --label "Task" --repo beroka-vn/Beroka_Backend'
+quoted_shell=$(jq -nc --arg command "$quoted_create" --arg workspace "$known_repo" \
+  '{conversation_id:"shell-quoted",generation_id:"shell-quoted",workspace_roots:[$workspace],command:$command}')
+quoted_output=$(hook beforeShellExecution "$quoted_shell")
+assert_denied "$quoted_output" GITHUB_AUTH_REQUIRED
+assert_not_contains "$quoted_output" WORK_ITEM_TEMPLATE_REQUIRED
 
 # beforeSubmitPrompt blocks a malformed Work-item language directive by emitting
 # {"continue":false} with exit 0 (not a non-zero exit, which Cursor fails open).

@@ -5299,6 +5299,77 @@ cursor_has_value() {
     '.. | objects | .[$field]? | select(. != null and . != "")' >/dev/null 2>&1
 }
 
+# Atlassian MCP createJiraIssue uses issueTypeName / assignee_account_id /
+# additional_fields.priority{name} and forbids unknown top-level keys. Accept
+# those official shapes as aliases of the governance template fields.
+cursor_jira_has_project() {
+  cursor_has_nonempty_field project ||
+    cursor_has_nonempty_field projectKey
+}
+
+cursor_jira_has_issue_type() {
+  cursor_has_nonempty_field issue_type ||
+    cursor_has_nonempty_field issueTypeName ||
+    cursor_has_nonempty_field issueType ||
+    cursor_has_nonempty_field issuetype
+}
+
+cursor_jira_has_priority() {
+  cursor_has_nonempty_field priority && return 0
+  printf '%s\n' "$CURSOR_TOOL_INPUT" | jq -e '
+    any(
+      .. | objects | .priority?;
+      (type == "string" and length > 0) or
+      (type == "object" and
+        ((.name // .id // "") | type == "string" and length > 0))
+    )
+  ' >/dev/null 2>&1
+}
+
+cursor_jira_has_assignee() {
+  cursor_has_nonempty_field assignee ||
+    cursor_has_nonempty_field owner ||
+    cursor_has_nonempty_field assignee_account_id ||
+    cursor_has_nonempty_field accountId
+}
+
+cursor_jira_has_parent_or_standalone() {
+  cursor_has_nonempty_field parent ||
+    cursor_has_nonempty_field parentKey ||
+    cursor_has_nonempty_field standalone_reason
+}
+
+cursor_jira_has_github_link() {
+  cursor_has_nonempty_field github && return 0
+  # Accept explicit N/A or a GitHub URL/marker inside description/body text so
+  # agents need not smuggle a github key into Atlassian MCP (additionalProperties
+  # false on createJiraIssue).
+  printf '%s\n' "$CURSOR_TOOL_INPUT" |
+    jq -r '
+      [
+        .. | objects |
+        (.github?, .description?, .body?, .content?, .summary?) |
+        select(type == "string" and length > 0)
+      ] | join("\n")
+    ' 2>/dev/null |
+    grep -Ei '(^|[^A-Za-z])N/A([^A-Za-z]|$)|github\.com|[[:space:]]GitHub:' >/dev/null
+}
+
+cursor_jira_has_assignee_like() {
+  cursor_has_value assignee ||
+    cursor_has_value owner ||
+    cursor_has_value assignee_account_id ||
+    cursor_has_value accountId
+}
+
+cursor_template_missing_push() {
+  if [ -z "${CURSOR_TEMPLATE_MISSING:-}" ]; then
+    CURSOR_TEMPLATE_MISSING=$1
+  else
+    CURSOR_TEMPLATE_MISSING="$CURSOR_TEMPLATE_MISSING, $1"
+  fi
+}
+
 cursor_jira_operation() {
   cjo_project=$(cursor_extract_single_jira_project "$CURSOR_TOOL_INPUT") || cjo_project=
   [ -n "$cjo_project" ] || return 2
@@ -5390,47 +5461,78 @@ cursor_language_label() {
 }
 
 cursor_validate_template() {
+  CURSOR_TEMPLATE_MISSING=
   cursor_marker="Work-item language: $(cursor_language_label)"
   printf '%s\n' "$CURSOR_TOOL_INPUT" | grep -F "$cursor_marker" >/dev/null || return 3
   case "$CURSOR_TOOL_TEXT" in
     *transition*)
       cursor_has_nonempty_field status ||
-        cursor_has_nonempty_field transition || return 1
+        cursor_has_nonempty_field transition || {
+          cursor_template_missing_push 'status|transition'
+          return 1
+        }
       return 0
       ;;
     *update*|*edit*|*comment*)
-      cursor_has_nonempty_field body || cursor_has_nonempty_field content || return 1
+      cursor_has_nonempty_field body || cursor_has_nonempty_field content ||
+        cursor_has_nonempty_field description || {
+          cursor_template_missing_push 'body|content|description'
+          return 1
+        }
       return 0
       ;;
   esac
   case "$CURSOR_PROVIDER" in
     github)
-      cursor_has_nonempty_field owner || cursor_has_nonempty_field assignee || return 1
+      cursor_has_nonempty_field owner || cursor_has_nonempty_field assignee || {
+        cursor_template_missing_push 'owner|assignee'
+        return 1
+      }
       cursor_labels=$(printf '%s\n' "$CURSOR_TOOL_INPUT" | jq -r '.. | objects | .labels? | arrays | .[]? | strings')
-      printf '%s\n' "$cursor_labels" | grep -Eq '^area:' || return 2
-      [ "$(printf '%s\n' "$cursor_labels" | grep -Ec '^priority:')" -eq 1 ] || return 2
-      cursor_has_nonempty_field type || printf '%s\n' "$cursor_labels" | grep -Eq '^type:' || return 2
-      cursor_has_nonempty_field jira || printf '%s\n' "$CURSOR_TOOL_INPUT" | grep -F 'N/A' >/dev/null || return 1
+      printf '%s\n' "$cursor_labels" | grep -Eq '^area:' || {
+        cursor_template_missing_push 'labels area:*'
+        return 2
+      }
+      [ "$(printf '%s\n' "$cursor_labels" | grep -Ec '^priority:')" -eq 1 ] || {
+        cursor_template_missing_push 'labels one priority:*'
+        return 2
+      }
+      cursor_has_nonempty_field type || printf '%s\n' "$cursor_labels" | grep -Eq '^type:' || {
+        cursor_template_missing_push 'type or labels type:*'
+        return 2
+      }
+      cursor_has_nonempty_field jira || printf '%s\n' "$CURSOR_TOOL_INPUT" | grep -F 'N/A' >/dev/null || {
+        cursor_template_missing_push 'jira or N/A'
+        return 1
+      }
       ;;
     jira)
-      cursor_has_nonempty_field project ||
-        cursor_has_nonempty_field projectKey || return 1
-      cursor_has_nonempty_field issue_type || return 1
-      cursor_has_nonempty_field priority || return 1
-      cursor_has_nonempty_field github || printf '%s\n' "$CURSOR_TOOL_INPUT" | grep -F 'N/A' >/dev/null || return 1
+      cursor_jira_has_project || cursor_template_missing_push 'projectKey|project'
+      cursor_jira_has_issue_type ||
+        cursor_template_missing_push 'issueTypeName|issue_type'
+      cursor_jira_has_priority ||
+        cursor_template_missing_push 'priority or additional_fields.priority.name'
+      cursor_jira_has_github_link ||
+        cursor_template_missing_push 'GitHub URL or GitHub: N/A in description'
       if [ "$cursor_operation" = jira-intake-write ]; then
         cursor_has_nonempty_field reporter ||
-          cursor_has_nonempty_field requester || return 1
-        ! cursor_has_value assignee &&
-          ! cursor_has_value owner &&
-          ! cursor_has_value parent &&
-          ! cursor_has_value sprint || return 1
+          cursor_has_nonempty_field requester ||
+          cursor_template_missing_push 'reporter|requester'
+        if cursor_jira_has_assignee_like ||
+           cursor_has_value parent ||
+           cursor_has_value parentKey ||
+           cursor_has_value sprint
+        then
+          cursor_template_missing_push \
+            'intake must omit assignee/owner/parent/sprint'
+        fi
       else
-        cursor_has_nonempty_field assignee ||
-          cursor_has_nonempty_field owner || return 1
-        cursor_has_nonempty_field parent ||
-          cursor_has_nonempty_field standalone_reason || return 1
+        cursor_jira_has_assignee ||
+          cursor_template_missing_push 'assignee_account_id|assignee|owner'
+        cursor_jira_has_parent_or_standalone ||
+          cursor_template_missing_push 'parent|standalone_reason'
       fi
+      [ -z "${CURSOR_TEMPLATE_MISSING:-}" ] || return 1
       ;;
   esac
 }
@@ -5538,9 +5640,21 @@ cmd_cursor_before_mcp_execution() {
   cursor_validate_template || cursor_template_state=$?
   case "$cursor_template_state" in
     0) ;;
-    2) cursor_deny LABEL_CONFIGURATION_REQUIRED 'Use one configured type label, one area label, and one priority label.'; return ;;
-    3) cursor_deny WORK_ITEM_LANGUAGE_REQUIRED 'Use the current Work-item language marker in the structured payload.'; return ;;
-    *) cursor_deny WORK_ITEM_TEMPLATE_REQUIRED 'Include the language marker and all required governed work-item fields.'; return ;;
+    2)
+      cursor_deny LABEL_CONFIGURATION_REQUIRED \
+        "Use one configured type label, one area label, and one priority label.${CURSOR_TEMPLATE_MISSING:+ Missing: $CURSOR_TEMPLATE_MISSING}"
+      return
+      ;;
+    3)
+      cursor_deny WORK_ITEM_LANGUAGE_REQUIRED \
+        'Put "Work-item language: English" (or Vietnamese) in the Jira description/body, then retry createJiraIssue.'
+      return
+      ;;
+    *)
+      cursor_deny WORK_ITEM_TEMPLATE_REQUIRED \
+        "Retry createJiraIssue with Atlassian MCP fields only: projectKey, issueTypeName, parent, assignee_account_id, additional_fields.priority={name}, and description containing Work-item language plus GitHub URL or GitHub: N/A.${CURSOR_TEMPLATE_MISSING:+ Missing: $CURSOR_TEMPLATE_MISSING}"
+      return
+      ;;
   esac
   if cursor_preflight=$(cmd_preflight "$CURSOR_WORKSPACE" --client cursor --operation "$cursor_operation" --non-interactive 2>&1) &&
      printf '%s\n' "$cursor_preflight" | grep -F 'Result: PASS' >/dev/null; then
@@ -5581,13 +5695,15 @@ cursor_shell_governed_github_write() {
   printf '%s\n' "$csg_command" |
     grep -Eq 'Work-item language: (English|Vietnamese|[a-z][a-z0-9-]{1,31})' ||
     return 1
-  printf '%s\n' "$csg_command" | grep -Eq -- '--label(=|[[:space:]])area:' || return 1
-  printf '%s\n' "$csg_command" | grep -Eq -- '--label(=|[[:space:]])priority:' || return 1
+  printf '%s\n' "$csg_command" |
+    grep -Eq -- '--label(=|[[:space:]]"?area:)' || return 1
+  printf '%s\n' "$csg_command" |
+    grep -Eq -- '--label(=|[[:space:]]"?priority:)' || return 1
   [ "$(printf '%s\n' "$csg_command" |
-    grep -Eoc -- '--label(=|[[:space:]])priority:' |
+    grep -Eoc -- '--label(=|[[:space:]]"?priority:)' |
     tr -d ' ')" -eq 1 ] || return 1
   printf '%s\n' "$csg_command" |
-    grep -Eq -- '--label(=|[[:space:]])type:|--label(=|[[:space:]])(Bug|Feature|Task)' ||
+    grep -Eq -- '--label(=|[[:space:]]"?type:)|--label(=|[[:space:]]"?)(Bug|Feature|Task)("|[[:space:]]|$)' ||
     return 1
   CURSOR_SHELL_PREFLIGHT_DETAIL=$(cmd_preflight "$CURSOR_WORKSPACE" --client cursor \
     --operation github-write --non-interactive 2>&1) || true

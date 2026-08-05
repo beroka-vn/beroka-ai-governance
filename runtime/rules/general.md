@@ -43,6 +43,16 @@
   reviewed governance inventory PR. Only after ACTIVE folder rows exist, use
   ordinary target-bound documentation updates. Never guess Capability ID,
   Registry ID, parent ID, or title similarity.
+- When creating a Jira work item from Cursor, call Atlassian MCP
+  `createJiraIssue` with official fields only: `projectKey`, `issueTypeName`,
+  `parent` (or standalone reason in description), `assignee_account_id`,
+  `additional_fields.priority` as `{ "name": "Highest"|"High"|"Medium"|"Low" }`,
+  and `description` that starts with `Work-item language: English` plus
+  `GitHub: <url>` or `GitHub: N/A`. Do not invent top-level `issue_type`,
+  string `priority`, `assignee`, or `github` keys — Atlassian rejects unknown
+  properties and governance accepts the official aliases. If the hook denies
+  with `WORK_ITEM_TEMPLATE_REQUIRED`, read `agent_message` for `Missing: …`,
+  fix those fields once, and retry; never tell the user raw governance codes.
 - Before any Jira field, description, comment, or status update, read the
   authenticated and current-assignee Atlassian `accountId`. A mismatch or
   unassigned item returns `ASSIGNEE_CONFIRMATION_REQUIRED` and waits for exact
