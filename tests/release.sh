@@ -39,10 +39,10 @@ reject_text() {
   fi
 }
 
-[ "$(cat "$ROOT/VERSION")" = v1.0.7 ] ||
-  fail 'VERSION is not v1.0.7'
+[ "$(cat "$ROOT/VERSION")" = v1.0.8 ] ||
+  fail 'VERSION is not v1.0.8'
 
-require_text README.md '`v1.0.7` is the current supported capability release.'
+require_text README.md '`v1.0.8` is the current supported capability release.'
 reject_text README.md '`v1.0.0` is the current supported capability release.'
 reject_text README.md '`v1.0.1` is the current supported capability release.'
 reject_text README.md '`v1.0.2` is the current supported capability release.'
@@ -50,8 +50,9 @@ reject_text README.md '`v1.0.3` is the current supported capability release.'
 reject_text README.md '`v1.0.4` is the current supported capability release.'
 reject_text README.md '`v1.0.5` is the current supported capability release.'
 reject_text README.md '`v1.0.6` is the current supported capability release.'
+reject_text README.md '`v1.0.7` is the current supported capability release.'
 require_text handbook.md \
-  '`v1.0.7` là capability release được hỗ trợ hiện tại.'
+  '`v1.0.8` là capability release được hỗ trợ hiện tại.'
 reject_text handbook.md \
   '`v1.0.0` là capability release được hỗ trợ hiện tại.'
 reject_text handbook.md '`v1.0.1` là capability release được hỗ trợ hiện tại.'
@@ -60,9 +61,10 @@ reject_text handbook.md '`v1.0.3` là capability release được hỗ trợ hi�
 reject_text handbook.md '`v1.0.4` là capability release được hỗ trợ hiện tại.'
 reject_text handbook.md '`v1.0.5` là capability release được hỗ trợ hiện tại.'
 reject_text handbook.md '`v1.0.6` là capability release được hỗ trợ hiện tại.'
-reject_text handbook.md '`v1.0.8` là capability release được hỗ trợ hiện tại.'
+reject_text handbook.md '`v1.0.7` là capability release được hỗ trợ hiện tại.'
+reject_text handbook.md '`v1.0.9` là capability release được hỗ trợ hiện tại.'
 require_text PACKAGE-DESIGN.md \
-  '`v1.0.7` is the current supported capability release.'
+  '`v1.0.8` is the current supported capability release.'
 reject_text PACKAGE-DESIGN.md \
   '`v1.0.0` is the current supported capability release.'
 reject_text PACKAGE-DESIGN.md \
@@ -78,19 +80,27 @@ reject_text PACKAGE-DESIGN.md \
 reject_text PACKAGE-DESIGN.md \
   '`v1.0.6` is the current supported capability release.'
 reject_text PACKAGE-DESIGN.md \
-  '`v1.0.8` is the current supported capability release.'
+  '`v1.0.7` is the current supported capability release.'
+reject_text PACKAGE-DESIGN.md \
+  '`v1.0.9` is the current supported capability release.'
 require_text README.md \
   'Bootstrap installs a missing Cursor Agent after one confirmation.'
 require_text README.md \
-  'gh release download v1.0.7 --repo beroka-vn/beroka-ai-governance'
+  'gh release download v1.0.8 --repo beroka-vn/beroka-ai-governance'
 require_text README.md \
-  'upgrading from `v1.0.0` through `v1.0.6` run this once'
-require_text README.md '### v1.0.7 release'
+  'upgrading from `v1.0.0` through `v1.0.7` run this once'
+require_text README.md '### v1.0.8 release'
 require_text README.md 'FULL_STACK'
-require_text README.md 'catalog remotes over fork'
-require_text README.md 'templated GitHub CLI creates'
+require_text README.md 'same catalog slug'
+require_text README.md 'parent/epic'
+require_text README.md 'TARGET_REQUIRED'
+require_text README.md 'confluence-discover'
+require_text README.md 'confluence-bootstrap-plan'
 require_text handbook.md \
   'Bootstrap tự cài Cursor Agent còn thiếu sau một lần xác nhận.'
+require_text handbook.md 'parent/epic key'
+require_text handbook.md 'cùng một catalog slug'
+require_text handbook.md 'confluence-discover'
 require_text PACKAGE-DESIGN.md 'Cursor MCP commands run from `/`'
 require_text README.md 'Backend and Frontend repositories'
 require_text README.md 'beroka-vn/Beroka_Backend'
@@ -98,6 +108,13 @@ require_text README.md 'beroka-vn/Beroka_Frontend'
 require_text README.md 'workspace or current Git repository changes'
 require_text handbook.md 'beroka-vn/Beroka_Backend'
 reject_text handbook.md 'hungnx77/Beroka_Backend'
+require_text runtime/rules/general.md 'confluence-discover'
+require_text runtime/rules/general.md 'authorized bootstrap'
+require_text templates/jira-confluence.md 'confluence-bootstrap-plan'
+require_text templates/ai-agent-assignment.md 'confluence-discover'
+require_text templates/agent-entrypoints/AGENTS.md 'confluence-discover'
+require_text docs/superpowers/specs/2026-08-05-confluence-target-bootstrap-design.md \
+  'DISCOVERY_COMPLETE'
 require_text handbook.md 'Chuyển quyết định cho developer'
 require_text README.md 'gh release download'
 require_text README.md 'one client on each execution environment'

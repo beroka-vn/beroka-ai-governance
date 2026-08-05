@@ -7,6 +7,7 @@ DATA_ROOT=${XDG_DATA_HOME:-$HOME/.local/share}/beroka-ai-governance
 CONFIG_ROOT=${XDG_CONFIG_HOME:-$HOME/.config}/beroka-ai-governance
 STATE_ROOT=${XDG_STATE_HOME:-$HOME/.local/state}/beroka-ai-governance
 CURSOR_STATE_ROOT=$STATE_ROOT/cursor
+CONFLUENCE_BOOTSTRAP_STATE_ROOT=$STATE_ROOT/confluence-bootstrap
 BIN_DIR=${BEROKA_GOV_BIN_DIR:-$HOME/.local/bin}
 REMOTE_URL=https://github.com/beroka-vn/beroka-ai-governance.git
 ATLASSIAN_MCP_URL=https://mcp.atlassian.com/v1/mcp/authv2
@@ -73,6 +74,10 @@ usage() {
     '  beroka-governance preflight REPO --client codex|claude|cursor --operation OPERATION [--non-interactive] [CONFLUENCE-TARGET-OPTIONS]' \
     '  Confluence target options: --confluence-action create|update|move --target-content-id ID|new --capability-id ID --scope SCOPE --domain DOMAIN --transport API|WebSocket --expected-parent-id ID --registry-content-id ID' \
     '  beroka-governance context REPO' \
+    '  beroka-governance confluence-discover REPO [--scope SCOPE --domain DOMAIN --transport API|WebSocket]' \
+    '  beroka-governance confluence-bootstrap-plan REPO --scope SCOPE --domain DOMAIN --transport API|WebSocket' \
+    '  beroka-governance confluence-bootstrap-capture REPO --folder-id ID --registry-id ID --scope SCOPE --domain DOMAIN --transport API|WebSocket' \
+    '  beroka-governance confluence-bootstrap-verify REPO --folder-id ID --registry-id ID --folder-parent-id ID --registry-parent-id ID [--folder-title TITLE] [--registry-title TITLE]' \
     '  beroka-governance cursor-hook sessionStart|beforeSubmitPrompt|preCompact|beforeMCPExecution|beforeShellExecution' \
     '  beroka-governance show REPO governance|handbook|workflow' \
     '  beroka-governance show REPO template ai-agent-assignment|github-issue|jira-confluence|pull-request' \
@@ -196,28 +201,48 @@ resolve_canonical_remote() {
 
   # Prefer an exact Central catalog remote even when origin is a fork
   # (for example origin=hungnx77/... and beroka=beroka-vn/Beroka_Backend).
-  # Unknown remotes stay standalone; never invent BE/FE routing.
+  # Multiple remotes that normalize to the same catalog slug are fine; prefer
+  # origin among them. Distinct catalog slugs stay fail-closed. Unknown remotes
+  # stay standalone; never invent BE/FE routing.
   if [ -n "${RELEASE_DIR:-}" ]; then
-    rcr_catalog_matches=0
-    rcr_catalog_name= rcr_catalog_url=
+    rcr_seen_slugs=
+    rcr_unique_slugs=0
+    rcr_pick_name= rcr_pick_url=
+    rcr_origin_name= rcr_origin_url=
     for rcr_name in $(git -C "$rcr_repo" remote); do
       rcr_url=$(git -C "$rcr_repo" config --get "remote.$rcr_name.url" 2>/dev/null) ||
         continue
       rcr_slug=$(normalize_github_url "$rcr_url") || continue
       catalog_record_for_slug "$rcr_slug" || continue
       [ -f "$CATALOG_RECORD" ] || continue
-      rcr_catalog_matches=$((rcr_catalog_matches + 1))
-      rcr_catalog_name=$rcr_name
-      rcr_catalog_url=$rcr_url
+      case "$rcr_seen_slugs" in
+        *"|$rcr_slug|"*) ;;
+        *)
+          rcr_seen_slugs="$rcr_seen_slugs|$rcr_slug|"
+          rcr_unique_slugs=$((rcr_unique_slugs + 1))
+          ;;
+      esac
+      if [ "$rcr_name" = origin ]; then
+        rcr_origin_name=$rcr_name
+        rcr_origin_url=$rcr_url
+      elif [ -z "$rcr_pick_name" ]; then
+        rcr_pick_name=$rcr_name
+        rcr_pick_url=$rcr_url
+      fi
     done
-    if [ "$rcr_catalog_matches" -eq 1 ]; then
-      CANONICAL_REMOTE_NAME=$rcr_catalog_name
-      CANONICAL_REMOTE_URL=$rcr_catalog_url
+    if [ "$rcr_unique_slugs" -eq 1 ]; then
+      if [ -n "$rcr_origin_name" ]; then
+        CANONICAL_REMOTE_NAME=$rcr_origin_name
+        CANONICAL_REMOTE_URL=$rcr_origin_url
+      else
+        CANONICAL_REMOTE_NAME=$rcr_pick_name
+        CANONICAL_REMOTE_URL=$rcr_pick_url
+      fi
       return
     fi
-    if [ "$rcr_catalog_matches" -gt 1 ]; then
+    if [ "$rcr_unique_slugs" -gt 1 ]; then
       die REMOTE_MISMATCH \
-        'Multiple catalog remotes found; keep exactly one beroka-vn catalog remote'
+        'Multiple distinct catalog remotes found; keep remotes for exactly one beroka-vn catalog repository'
     fi
   fi
 
@@ -3685,6 +3710,479 @@ confluence_parent_is_legacy() {
     ' "$cpl_file"
 }
 
+confluence_targets_path() {
+  printf '%s\n' "$RELEASE_DIR/runtime/integrations/beroka-be-fe.confluence-targets"
+}
+
+die_folder_creation_required() {
+  dfc_message=$1
+  dfc_repo=${REPO:-$REPOSITORY_SLUG}
+  [ -n "$dfc_repo" ] || dfc_repo=REPO
+  printf '%s\n' "Result: FOLDER_CREATION_REQUIRED" >&2
+  printf '%s\n' "$dfc_message" >&2
+  printf '%s\n' "Remediation: beroka-governance confluence-discover $dfc_repo" >&2
+  if [ -n "${CONFLUENCE_TARGET_SCOPE:-}" ] &&
+     [ -n "${CONFLUENCE_TARGET_DOMAIN:-}" ] &&
+     [ -n "${CONFLUENCE_TARGET_TRANSPORT:-}" ]
+  then
+    printf '%s\n' \
+      "Then: beroka-governance confluence-bootstrap-plan $dfc_repo --scope $CONFLUENCE_TARGET_SCOPE --domain $CONFLUENCE_TARGET_DOMAIN --transport $CONFLUENCE_TARGET_TRANSPORT" \
+      >&2
+  else
+    printf '%s\n' \
+      'Then: beroka-governance confluence-bootstrap-plan REPO --scope SCOPE --domain DOMAIN --transport API|WebSocket' \
+      >&2
+  fi
+  cleanup_personal_stage || :
+  exit 1
+}
+
+require_confluence_triple() {
+  case "$1" in
+    Shared|Derivatives|Underlying) ;;
+    *) die ROUTING_REQUIRED 'A reviewed Confluence scope is required' ;;
+  esac
+  case "$2" in
+    Market|User) ;;
+    *) die ROUTING_REQUIRED 'A reviewed Confluence domain is required' ;;
+  esac
+  case "$3" in
+    API|WebSocket) ;;
+    *) die ROUTING_REQUIRED 'API or WebSocket transport is required' ;;
+  esac
+}
+
+confluence_folder_title() {
+  printf '%s — %s — %s\n' "$1" "$2" "$3"
+}
+
+confluence_bootstrap_state_file() {
+  cbs_slug=$1
+  printf '%s\n' "$cbs_slug" |
+    grep -Eq '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' ||
+    die GOVERNANCE_NOT_READY 'Invalid repository slug for bootstrap state'
+  cbs_safe=$(printf '%s' "$cbs_slug" | tr '/' '-')
+  printf '%s\n' "$CONFLUENCE_BOOTSTRAP_STATE_ROOT/$cbs_safe.json"
+}
+
+confluence_inventory_has_active_folder() {
+  cih_file=$1 cih_scope=$2 cih_domain=$3 cih_transport=$4
+  awk -F '\t' \
+    -v repository="$REPOSITORY_SLUG" \
+    -v scope="$cih_scope" \
+    -v domain="$cih_domain" \
+    -v transport="$cih_transport" '
+      /^#/ || /^[[:space:]]*$/ { next }
+      $1 == repository && $2 == "folder" && $3 == "ACTIVE" &&
+        $6 == scope && $7 == domain && $8 == transport { found=1 }
+      END { exit !found }
+    ' "$cih_file"
+}
+
+confluence_inventory_has_active_registry() {
+  cir_file=$1
+  awk -F '\t' \
+    -v repository="$REPOSITORY_SLUG" '
+      /^#/ || /^[[:space:]]*$/ { next }
+      $1 == repository && $2 == "page" &&
+        ($3 == "ACTIVE" || $3 == "PLANNED") &&
+        ($5 == "Backend Capability Registry" || $11 != "-") {
+          found=1
+        }
+      END { exit !found }
+    ' "$cir_file"
+}
+
+confluence_inventory_content_state() {
+  # Print STATE for an exact content id in the current repository, or empty.
+  cic_file=$1 cic_id=$2
+  awk -F '\t' \
+    -v repository="$REPOSITORY_SLUG" \
+    -v content="$cic_id" '
+      /^#/ || /^[[:space:]]*$/ { next }
+      $1 == repository && $4 == content { print $3; found=1; exit }
+      END { if (!found) exit 0 }
+    ' "$cic_file"
+}
+
+prepare_confluence_bootstrap_repo() {
+  load_active_release
+  resolve_repository_context "$1"
+  require_confluence_route
+  case "$ROUTE_PROFILE" in
+    backend) ;;
+    *)
+      die ROUTING_REQUIRED \
+        'Confluence target bootstrap is supported for Backend profile repositories only'
+      ;;
+  esac
+  CONFLUENCE_TARGETS_FILE=$(confluence_targets_path)
+  validate_confluence_target_inventory "$CONFLUENCE_TARGETS_FILE" \
+    "$RELEASE_DIR/runtime/repositories" ||
+    die ROUTING_REQUIRED 'Reviewed Confluence target inventory is unavailable'
+}
+
+cmd_confluence_discover() {
+  ccd_repo=$1
+  shift
+  ccd_scope= ccd_domain= ccd_transport=
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --scope)
+        [ "$#" -ge 2 ] || { usage >&2; exit 2; }
+        ccd_scope=$2
+        shift 2
+        ;;
+      --domain)
+        [ "$#" -ge 2 ] || { usage >&2; exit 2; }
+        ccd_domain=$2
+        shift 2
+        ;;
+      --transport)
+        [ "$#" -ge 2 ] || { usage >&2; exit 2; }
+        ccd_transport=$2
+        shift 2
+        ;;
+      *) usage >&2; exit 2 ;;
+    esac
+  done
+  if [ -n "$ccd_scope$ccd_domain$ccd_transport" ]; then
+    [ -n "$ccd_scope" ] && [ -n "$ccd_domain" ] && [ -n "$ccd_transport" ] ||
+      { usage >&2; exit 2; }
+    require_confluence_triple "$ccd_scope" "$ccd_domain" "$ccd_transport"
+  fi
+  prepare_confluence_bootstrap_repo "$ccd_repo"
+  ccd_legacy=0 ccd_drifted=0 ccd_active_folders=0 ccd_active_pages=0
+  ccd_planned=0 ccd_registry=0
+  while IFS="$(printf '\t')" read -r \
+    ccd_r ccd_type ccd_state ccd_id ccd_title ccd_sc ccd_dom ccd_tr \
+    ccd_parent ccd_cap ccd_reg
+  do
+    case "$ccd_r" in \#*|'') continue ;; esac
+    [ "$ccd_r" = "$REPOSITORY_SLUG" ] || continue
+    case "$ccd_state:$ccd_type" in
+      LEGACY:folder) ccd_legacy=$((ccd_legacy + 1)) ;;
+      DRIFTED:page) ccd_drifted=$((ccd_drifted + 1)) ;;
+      ACTIVE:folder) ccd_active_folders=$((ccd_active_folders + 1)) ;;
+      ACTIVE:page)
+        ccd_active_pages=$((ccd_active_pages + 1))
+        [ "$ccd_title" = 'Backend Capability Registry' ] && ccd_registry=1
+        ;;
+      PLANNED:page) ccd_planned=$((ccd_planned + 1)) ;;
+    esac
+  done <"$CONFLUENCE_TARGETS_FILE"
+  printf '%s\n' \
+    "Repository: $REPOSITORY_SLUG" \
+    "Confluence space: $ROUTE_CONFLUENCE_SPACE_KEY" \
+    "Confluence root content ID: $ROUTE_CONFLUENCE_ROOT_CONTENT_ID" \
+    "Legacy folders: $ccd_legacy" \
+    "Drifted pages: $ccd_drifted" \
+    "Active folders: $ccd_active_folders" \
+    "Active pages: $ccd_active_pages" \
+    "Planned pages: $ccd_planned" \
+    "Active Backend Capability Registry: $ccd_registry"
+  if [ -n "$ccd_scope" ]; then
+    ccd_title=$(confluence_folder_title "$ccd_scope" "$ccd_domain" "$ccd_transport")
+    if confluence_inventory_has_active_folder "$CONFLUENCE_TARGETS_FILE" \
+         "$ccd_scope" "$ccd_domain" "$ccd_transport"
+    then
+      printf '%s\n' "Requested folder ($ccd_title): ACTIVE"
+    else
+      printf '%s\n' "Requested folder ($ccd_title): MISSING"
+    fi
+  fi
+  if [ "$ccd_registry" -eq 1 ] &&
+     { [ -z "$ccd_scope" ] || confluence_inventory_has_active_folder \
+         "$CONFLUENCE_TARGETS_FILE" "$ccd_scope" "$ccd_domain" "$ccd_transport"; }
+  then
+    printf '%s\n' \
+      'Next: ordinary target-bound confluence-write' \
+      'Phase: ordinary documentation update' \
+      'Result: DISCOVERY_COMPLETE'
+    return 0
+  fi
+  if [ -n "$ccd_scope" ]; then
+    printf '%s\n' \
+      "Next: beroka-governance confluence-bootstrap-plan $REPO --scope $ccd_scope --domain $ccd_domain --transport $ccd_transport"
+  else
+    printf '%s\n' \
+      "Next: beroka-governance confluence-bootstrap-plan $REPO --scope SCOPE --domain DOMAIN --transport API|WebSocket"
+  fi
+  printf '%s\n' \
+    'Phase: authorized bootstrap required before ordinary documentation updates' \
+    'Result: DISCOVERY_COMPLETE'
+}
+
+cmd_confluence_bootstrap_plan() {
+  cbp_repo=$1
+  shift
+  cbp_scope= cbp_domain= cbp_transport=
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --scope)
+        [ "$#" -ge 2 ] || { usage >&2; exit 2; }
+        cbp_scope=$2
+        shift 2
+        ;;
+      --domain)
+        [ "$#" -ge 2 ] || { usage >&2; exit 2; }
+        cbp_domain=$2
+        shift 2
+        ;;
+      --transport)
+        [ "$#" -ge 2 ] || { usage >&2; exit 2; }
+        cbp_transport=$2
+        shift 2
+        ;;
+      *) usage >&2; exit 2 ;;
+    esac
+  done
+  [ -n "$cbp_scope" ] && [ -n "$cbp_domain" ] && [ -n "$cbp_transport" ] ||
+    { usage >&2; exit 2; }
+  require_confluence_triple "$cbp_scope" "$cbp_domain" "$cbp_transport"
+  prepare_confluence_bootstrap_repo "$cbp_repo"
+  cbp_title=$(confluence_folder_title "$cbp_scope" "$cbp_domain" "$cbp_transport")
+  if confluence_inventory_has_active_folder "$CONFLUENCE_TARGETS_FILE" \
+       "$cbp_scope" "$cbp_domain" "$cbp_transport"
+  then
+    die ROUTING_REQUIRED \
+      "An ACTIVE folder already exists for $cbp_title"
+  fi
+  if confluence_inventory_has_active_registry "$CONFLUENCE_TARGETS_FILE"
+  then
+    die ROUTING_REQUIRED \
+      'An ACTIVE Backend Capability Registry already exists'
+  fi
+  printf '%s\n' \
+    'Phase: authorized bootstrap' \
+    'Authorization: obtain explicit human confirmation before any Confluence create' \
+    "Repository: $REPOSITORY_SLUG" \
+    "Confluence space: $ROUTE_CONFLUENCE_SPACE_KEY" \
+    "Catalog root parent ID: $ROUTE_CONFLUENCE_ROOT_CONTENT_ID" \
+    "Catalog root parent type: $ROUTE_CONFLUENCE_ROOT_CONTENT_TYPE" \
+    'Create 1 — canonical folder:' \
+    "  title: $cbp_title" \
+    '  record-type: folder' \
+    "  parentId: $ROUTE_CONFLUENCE_ROOT_CONTENT_ID" \
+    "  scope: $cbp_scope" \
+    "  domain: $cbp_domain" \
+    "  transport: $cbp_transport" \
+    'Create 2 — Backend Capability Registry page:' \
+    '  title: Backend Capability Registry' \
+    '  record-type: page' \
+    "  parentId: $ROUTE_CONFLUENCE_ROOT_CONTENT_ID" \
+    '  body: use Backend Capability Registry Template from jira-confluence template' \
+    'After MCP create, capture exact returned content IDs:' \
+    "  beroka-governance confluence-bootstrap-capture $REPO --folder-id FOLDER_ID --registry-id REGISTRY_ID --scope $cbp_scope --domain $cbp_domain --transport $cbp_transport" \
+    'Then verify with MCP read-back parent IDs before any ACTIVE inventory PR.' \
+    'Result: BOOTSTRAP_PLAN'
+}
+
+cmd_confluence_bootstrap_capture() {
+  cbc_repo=$1
+  shift
+  cbc_folder= cbc_registry= cbc_scope= cbc_domain= cbc_transport=
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --folder-id)
+        [ "$#" -ge 2 ] || { usage >&2; exit 2; }
+        cbc_folder=$2
+        shift 2
+        ;;
+      --registry-id)
+        [ "$#" -ge 2 ] || { usage >&2; exit 2; }
+        cbc_registry=$2
+        shift 2
+        ;;
+      --scope)
+        [ "$#" -ge 2 ] || { usage >&2; exit 2; }
+        cbc_scope=$2
+        shift 2
+        ;;
+      --domain)
+        [ "$#" -ge 2 ] || { usage >&2; exit 2; }
+        cbc_domain=$2
+        shift 2
+        ;;
+      --transport)
+        [ "$#" -ge 2 ] || { usage >&2; exit 2; }
+        cbc_transport=$2
+        shift 2
+        ;;
+      *) usage >&2; exit 2 ;;
+    esac
+  done
+  [ -n "$cbc_folder" ] && [ -n "$cbc_registry" ] &&
+    [ -n "$cbc_scope" ] && [ -n "$cbc_domain" ] && [ -n "$cbc_transport" ] ||
+    { usage >&2; exit 2; }
+  require_confluence_triple "$cbc_scope" "$cbc_domain" "$cbc_transport"
+  printf '%s\n' "$cbc_folder" | grep -Eq '^[1-9][0-9]*$' ||
+    die ROUTING_REQUIRED 'A numeric folder content ID is required'
+  printf '%s\n' "$cbc_registry" | grep -Eq '^[1-9][0-9]*$' ||
+    die ROUTING_REQUIRED 'A numeric Registry content ID is required'
+  [ "$cbc_folder" != "$cbc_registry" ] ||
+    die MAPPING_CONFLICT 'Folder and Registry content IDs must differ'
+  prepare_confluence_bootstrap_repo "$cbc_repo"
+  cbc_title=$(confluence_folder_title "$cbc_scope" "$cbc_domain" "$cbc_transport")
+  for cbc_id in "$cbc_folder" "$cbc_registry"; do
+    cbc_state=$(confluence_inventory_content_state "$CONFLUENCE_TARGETS_FILE" "$cbc_id") ||
+      cbc_state=
+    case "$cbc_state" in
+      LEGACY|DRIFTED)
+        die MAPPING_CONFLICT \
+          "Content ID $cbc_id is already recorded as $cbc_state"
+        ;;
+      ACTIVE)
+        die MAPPING_CONFLICT \
+          "Content ID $cbc_id is already ACTIVE in the reviewed inventory"
+        ;;
+    esac
+  done
+  assert_safe_user_path "$CONFLUENCE_BOOTSTRAP_STATE_ROOT" 'Confluence bootstrap state'
+  mkdir -p "$CONFLUENCE_BOOTSTRAP_STATE_ROOT" ||
+    die GOVERNANCE_NOT_READY 'Cannot create Confluence bootstrap state directory'
+  chmod 700 "$CONFLUENCE_BOOTSTRAP_STATE_ROOT" ||
+    die GOVERNANCE_NOT_READY 'Cannot secure Confluence bootstrap state directory'
+  cbc_file=$(confluence_bootstrap_state_file "$REPOSITORY_SLUG") ||
+    die GOVERNANCE_NOT_READY 'Cannot derive Confluence bootstrap state path'
+  assert_safe_user_path "$cbc_file" 'Confluence bootstrap receipt'
+  cbc_tmp=$(umask 077; mktemp "$CONFLUENCE_BOOTSTRAP_STATE_ROOT/.capture.XXXXXX") ||
+    die GOVERNANCE_NOT_READY 'Cannot stage Confluence bootstrap capture'
+  if ! jq -nc \
+    --arg repository "$REPOSITORY_SLUG" \
+    --arg folder "$cbc_folder" \
+    --arg registry "$cbc_registry" \
+    --arg scope "$cbc_scope" \
+    --arg domain "$cbc_domain" \
+    --arg transport "$cbc_transport" \
+    --arg folder_title "$cbc_title" \
+    --arg registry_title 'Backend Capability Registry' \
+    --arg root "$ROUTE_CONFLUENCE_ROOT_CONTENT_ID" \
+    '{
+       repository:$repository,
+       folder_id:$folder,
+       registry_id:$registry,
+       scope:$scope,
+       domain:$domain,
+       transport:$transport,
+       folder_title:$folder_title,
+       registry_title:$registry_title,
+       catalog_root_id:$root
+     }' >"$cbc_tmp" || ! chmod 600 "$cbc_tmp" || ! mv "$cbc_tmp" "$cbc_file"
+  then
+    rm -f "$cbc_tmp" || :
+    die GOVERNANCE_NOT_READY 'Cannot write Confluence bootstrap capture'
+  fi
+  printf '%s\n' \
+    'Phase: authorized bootstrap' \
+    "Staged capture: $cbc_file" \
+    "Captured folder ID: $cbc_folder" \
+    "Captured Registry ID: $cbc_registry" \
+    "Folder title: $cbc_title" \
+    "Registry title: Backend Capability Registry" \
+    "Next: beroka-governance confluence-bootstrap-verify $REPO --folder-id $cbc_folder --registry-id $cbc_registry --folder-parent-id $ROUTE_CONFLUENCE_ROOT_CONTENT_ID --registry-parent-id $ROUTE_CONFLUENCE_ROOT_CONTENT_ID" \
+    'Result: BOOTSTRAP_CAPTURED'
+}
+
+cmd_confluence_bootstrap_verify() {
+  cbv_repo=$1
+  shift
+  cbv_folder= cbv_registry= cbv_folder_parent= cbv_registry_parent=
+  cbv_folder_title= cbv_registry_title=
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --folder-id)
+        [ "$#" -ge 2 ] || { usage >&2; exit 2; }
+        cbv_folder=$2
+        shift 2
+        ;;
+      --registry-id)
+        [ "$#" -ge 2 ] || { usage >&2; exit 2; }
+        cbv_registry=$2
+        shift 2
+        ;;
+      --folder-parent-id)
+        [ "$#" -ge 2 ] || { usage >&2; exit 2; }
+        cbv_folder_parent=$2
+        shift 2
+        ;;
+      --registry-parent-id)
+        [ "$#" -ge 2 ] || { usage >&2; exit 2; }
+        cbv_registry_parent=$2
+        shift 2
+        ;;
+      --folder-title)
+        [ "$#" -ge 2 ] || { usage >&2; exit 2; }
+        cbv_folder_title=$2
+        shift 2
+        ;;
+      --registry-title)
+        [ "$#" -ge 2 ] || { usage >&2; exit 2; }
+        cbv_registry_title=$2
+        shift 2
+        ;;
+      *) usage >&2; exit 2 ;;
+    esac
+  done
+  [ -n "$cbv_folder" ] && [ -n "$cbv_registry" ] &&
+    [ -n "$cbv_folder_parent" ] && [ -n "$cbv_registry_parent" ] ||
+    { usage >&2; exit 2; }
+  for cbv_id in "$cbv_folder" "$cbv_registry" "$cbv_folder_parent" \
+    "$cbv_registry_parent"
+  do
+    printf '%s\n' "$cbv_id" | grep -Eq '^[1-9][0-9]*$' ||
+      die ROUTING_REQUIRED 'Numeric Confluence content IDs are required'
+  done
+  prepare_confluence_bootstrap_repo "$cbv_repo"
+  cbv_file=$(confluence_bootstrap_state_file "$REPOSITORY_SLUG") ||
+    die GOVERNANCE_NOT_READY 'Cannot derive Confluence bootstrap state path'
+  [ -f "$cbv_file" ] && [ ! -L "$cbv_file" ] ||
+    die ROUTING_REQUIRED 'Run confluence-bootstrap-capture before verify'
+  cbv_cap_folder=$(jq -r .folder_id "$cbv_file") ||
+    die GOVERNANCE_NOT_READY 'Corrupt Confluence bootstrap capture'
+  cbv_cap_registry=$(jq -r .registry_id "$cbv_file") ||
+    die GOVERNANCE_NOT_READY 'Corrupt Confluence bootstrap capture'
+  cbv_scope=$(jq -r .scope "$cbv_file") ||
+    die GOVERNANCE_NOT_READY 'Corrupt Confluence bootstrap capture'
+  cbv_domain=$(jq -r .domain "$cbv_file") ||
+    die GOVERNANCE_NOT_READY 'Corrupt Confluence bootstrap capture'
+  cbv_transport=$(jq -r .transport "$cbv_file") ||
+    die GOVERNANCE_NOT_READY 'Corrupt Confluence bootstrap capture'
+  cbv_expected_folder_title=$(jq -r .folder_title "$cbv_file") ||
+    die GOVERNANCE_NOT_READY 'Corrupt Confluence bootstrap capture'
+  cbv_expected_registry_title=$(jq -r .registry_title "$cbv_file") ||
+    die GOVERNANCE_NOT_READY 'Corrupt Confluence bootstrap capture'
+  cbv_root=$(jq -r .catalog_root_id "$cbv_file") ||
+    die GOVERNANCE_NOT_READY 'Corrupt Confluence bootstrap capture'
+  [ "$cbv_folder" = "$cbv_cap_folder" ] &&
+    [ "$cbv_registry" = "$cbv_cap_registry" ] ||
+    die MAPPING_CONFLICT 'Verify IDs do not match the staged bootstrap capture'
+  [ "$cbv_root" = "$ROUTE_CONFLUENCE_ROOT_CONTENT_ID" ] ||
+    die MAPPING_CONFLICT 'Staged catalog root no longer matches active routing'
+  [ "$cbv_folder_parent" = "$ROUTE_CONFLUENCE_ROOT_CONTENT_ID" ] ||
+    die DOC_HIERARCHY_FAILED \
+      'Folder parent read-back must equal the catalog Confluence root'
+  [ "$cbv_registry_parent" = "$ROUTE_CONFLUENCE_ROOT_CONTENT_ID" ] ||
+    die DOC_HIERARCHY_FAILED \
+      'Registry parent read-back must equal the catalog Confluence root'
+  [ -z "$cbv_folder_title" ] ||
+    [ "$cbv_folder_title" = "$cbv_expected_folder_title" ] ||
+    die MAPPING_CONFLICT 'Folder title read-back does not match the bootstrap plan'
+  [ -z "$cbv_registry_title" ] ||
+    [ "$cbv_registry_title" = "$cbv_expected_registry_title" ] ||
+    die MAPPING_CONFLICT 'Registry title read-back does not match the bootstrap plan'
+  printf '%s\n' \
+    'Phase: authorized bootstrap' \
+    'Inventory update required: open a reviewed governance PR that appends this ACTIVE folder row to runtime/integrations/beroka-be-fe.confluence-targets' \
+    "ACTIVE folder:	$REPOSITORY_SLUG	folder	ACTIVE	$cbv_folder	$cbv_expected_folder_title	$cbv_scope	$cbv_domain	$cbv_transport	$ROUTE_CONFLUENCE_ROOT_CONTENT_ID	-	-" \
+    "Reviewed Registry content ID: $cbv_registry" \
+    'Use that Registry content ID as registry-content-id on later ACTIVE/PLANNED capability pages.' \
+    'Do not guess IDs. Do not write ACTIVE rows into a local installed release.' \
+    'After the inventory release is active, use ordinary target-bound confluence-write.' \
+    'Result: BOOTSTRAP_VERIFIED' \
+    'Result: INVENTORY_UPDATE_REQUIRED'
+}
+
 resolve_confluence_target() {
   case "$CONFLUENCE_TARGET_ACTION:$CONFLUENCE_TARGET_CONTENT_ID" in
     create:new) ;;
@@ -3753,7 +4251,7 @@ resolve_confluence_target() {
       }
     ' "$rct_file") || {
       if confluence_parent_is_legacy "$rct_file"; then
-        die FOLDER_CREATION_REQUIRED \
+        die_folder_creation_required \
           'The requested parent is a legacy generic folder'
       fi
       die ROUTING_REQUIRED 'No exact reviewed Confluence target exists'
@@ -3776,12 +4274,12 @@ EOF
       die ROUTING_REQUIRED 'The exact Confluence target is drifted'
       ;;
     LEGACY)
-      die FOLDER_CREATION_REQUIRED \
+      die_folder_creation_required \
         'A legacy folder is not a canonical target'
       ;;
   esac
   if confluence_parent_is_legacy "$rct_file"; then
-    die FOLDER_CREATION_REQUIRED \
+    die_folder_creation_required \
       'The requested parent is a legacy generic folder'
   fi
   [ "$rct_scope" = "$CONFLUENCE_TARGET_SCOPE" ] &&
@@ -4431,6 +4929,28 @@ CURSOR_PAIR_EOF
   return 0
 }
 
+# Extract one Jira project key from structured MCP/tool JSON. Accepts bare
+# project keys and issue keys (BB-34 -> BB), including parent/epic fields that
+# Atlassian create payloads commonly send without a separate projectKey.
+cursor_jira_project_values_jq='
+  [
+    .. | objects |
+    (.projectKey?, .project?, .issueKey?, .issue_key?, .issueIdOrKey?,
+     .parent?, .parentKey?, .parent_key?, .epic?, .epicKey?, .epic_key?) |
+    select(type == "string") |
+    if test("^[A-Z][A-Z0-9_]*$") then .
+    elif test("^[A-Z][A-Z0-9_]*-[1-9][0-9]*$") then
+      capture("^(?<project>[A-Z][A-Z0-9_]*)-").project
+    else empty end
+  ] | unique
+'
+
+cursor_extract_single_jira_project() {
+  printf '%s\n' "$1" | jq -r \
+    "$cursor_jira_project_values_jq | if length == 1 then .[0] else empty end" \
+    2>/dev/null
+}
+
 cursor_select_be_fe_workspace() {
   [ "$CURSOR_WORKSPACE_MODE" = be-fe ] || return 1
   csw_text=$(printf '%s\n' "$CURSOR_REQUEST" | tr '[:upper:]' '[:lower:]')
@@ -4442,19 +4962,7 @@ cursor_select_be_fe_workspace() {
   case "$csw_text" in
     *beroka_frontend*|*beroka-frontend*|*berokafront*) csw_fe=1 ;;
   esac
-  csw_project=$(
-    printf '%s\n' "$CURSOR_REQUEST" | jq -r '
-      [
-        .. | objects |
-        (.projectKey?, .project?, .issueKey?, .issue_key?, .issueIdOrKey?) |
-        select(type == "string") |
-        if test("^[A-Z][A-Z0-9_]*$") then .
-        elif test("^[A-Z][A-Z0-9_]*-[1-9][0-9]*$") then
-          capture("^(?<project>[A-Z][A-Z0-9_]*)-").project
-        else empty end
-      ] | unique | if length == 1 then .[0] else empty end
-    ' 2>/dev/null
-  ) || csw_project=
+  csw_project=$(cursor_extract_single_jira_project "$CURSOR_REQUEST") || csw_project=
   case "$csw_project" in
     BB) csw_be=1 ;;
     BF) csw_fe=1 ;;
@@ -4752,21 +5260,8 @@ cursor_has_value() {
 }
 
 cursor_jira_operation() {
-  cjo_project=$(
-    printf '%s\n' "$CURSOR_TOOL_INPUT" | jq -er '
-      [
-        .. | objects |
-        (.projectKey?, .project?, .issueKey?, .issue_key?, .issueIdOrKey?) |
-        select(type == "string") |
-        if test("^[A-Z][A-Z0-9_]*$") then .
-        elif test("^[A-Z][A-Z0-9_]*-[1-9][0-9]*$") then
-          capture("^(?<project>[A-Z][A-Z0-9_]*)-").project
-        else empty end
-      ] |
-      unique |
-      if length == 1 then .[0] else error("one Jira project is required") end
-    '
-  ) 2>/dev/null || return 2
+  cjo_project=$(cursor_extract_single_jira_project "$CURSOR_TOOL_INPUT") || cjo_project=
+  [ -n "$cjo_project" ] || return 2
   if [ "$cjo_project" = "$ROUTE_JIRA_PROJECT_KEY" ]; then
     printf '%s\n' jira-write
     return
@@ -4933,8 +5428,8 @@ cmd_cursor_before_mcp_execution() {
      [ -n "$CURSOR_PROVIDER" ] && [ "$CURSOR_TOOL_WRITE" -eq 1 ]
   then
     if ! cursor_select_be_fe_workspace; then
-      cursor_deny GOVERNANCE_CONTEXT_REQUIRED \
-        'Name the exact Backend or Frontend target (BB/BF project or beroka-vn repository) for this governed write.'
+      cursor_deny TARGET_REQUIRED \
+        'Name the exact Backend or Frontend target (BB/BF project, parent/epic key, or beroka-vn repository) for this governed write.'
       return
     fi
   fi
@@ -5158,6 +5653,26 @@ main() {
       cmd_preflight "$pf_repo" "$@"
       ;;
     context) [ "$#" -eq 2 ] || { usage >&2; exit 2; }; cmd_context "$2" ;;
+    confluence-discover)
+      [ "$#" -ge 2 ] || { usage >&2; exit 2; }
+      shift
+      cmd_confluence_discover "$@"
+      ;;
+    confluence-bootstrap-plan)
+      [ "$#" -ge 2 ] || { usage >&2; exit 2; }
+      shift
+      cmd_confluence_bootstrap_plan "$@"
+      ;;
+    confluence-bootstrap-capture)
+      [ "$#" -ge 2 ] || { usage >&2; exit 2; }
+      shift
+      cmd_confluence_bootstrap_capture "$@"
+      ;;
+    confluence-bootstrap-verify)
+      [ "$#" -ge 2 ] || { usage >&2; exit 2; }
+      shift
+      cmd_confluence_bootstrap_verify "$@"
+      ;;
     cursor-hook) [ "$#" -eq 2 ] || { usage >&2; exit 2; }; cmd_cursor_hook "$2" ;;
     show) [ "$#" -ge 3 ] && [ "$#" -le 4 ] || { usage >&2; exit 2; }; cmd_show "$2" "$3" "${4:-}" ;;
     *) usage >&2; exit 2 ;;

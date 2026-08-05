@@ -35,6 +35,14 @@
   `confluence-handoff-verify`. Unknown or ambiguous targets return
   `ROUTING_REQUIRED`; a target or transport mismatch returns
   `MAPPING_CONFLICT`; ask the user and wait.
+- Confluence documentation has three phases. Use read-only
+  `beroka-governance confluence-discover` first. When the inventory is
+  legacy-only or missing an ACTIVE folder/Registry, run authorized bootstrap
+  (`confluence-bootstrap-plan` → human-confirmed MCP create →
+  `confluence-bootstrap-capture` → `confluence-bootstrap-verify`) and open a
+  reviewed governance inventory PR. Only after ACTIVE folder rows exist, use
+  ordinary target-bound documentation updates. Never guess Capability ID,
+  Registry ID, parent ID, or title similarity.
 - Before any Jira field, description, comment, or status update, read the
   authenticated and current-assignee Atlassian `accountId`. A mismatch or
   unassigned item returns `ASSIGNEE_CONFIRMATION_REQUIRED` and waits for exact
