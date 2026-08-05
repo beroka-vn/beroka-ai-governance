@@ -1210,12 +1210,13 @@ assert_contains "$output" 'Result: MAPPING_CONFLICT'
 [ ! -s "$CALLS" ] || fail 'mapping conflict inspected a connector'
 
 set -- $(confluence_args | sed 's/^API$/WebSocket/')
-if output=$($CLI preflight "$canonical_backend" --client codex \
+if ! output=$($CLI preflight "$canonical_backend" --client codex \
   --operation confluence-write --non-interactive "$@" 2>&1)
 then
-  fail 'drifted page passed with matching transport'
+  fail 'drifted page failed with matching transport'
 fi
-assert_contains "$output" 'Result: ROUTING_REQUIRED'
+assert_contains "$output" 'Capability: confluence-page-update'
+assert_contains "$output" 'Result: PASS'
 
 : >"$CALLS"
 if output=$($CLI preflight "$canonical_backend" --client codex \
@@ -1226,6 +1227,7 @@ fi
 assert_contains "$output" 'Result: ROUTING_REQUIRED'
 [ ! -s "$CALLS" ] || fail 'missing target inspected a connector'
 
+printf '%s\n' healthy-all >"$XDG_CONFIG_HOME/fake-codex-health"
 if output=$($CLI preflight "$canonical_backend" --client codex \
   --operation confluence-write --non-interactive \
   --confluence-action create --target-content-id new \
@@ -1235,10 +1237,8 @@ if output=$($CLI preflight "$canonical_backend" --client codex \
 then
   fail 'legacy generic API folder passed as a canonical parent'
 fi
-assert_contains "$output" 'Result: FOLDER_CREATION_REQUIRED'
-assert_contains "$output" 'Remediation: beroka-governance confluence-discover'
-assert_contains "$output" 'Then: beroka-governance confluence-bootstrap-plan'
-assert_contains "$output" '--scope Shared --domain Market --transport API'
+assert_contains "$output" 'Capability: confluence-folder-parent-write'
+assert_contains "$output" 'Result: CONNECTOR_CAPABILITY_REQUIRED'
 
 # Issue #51: discover → plan → capture → verify on deny-only inventory.
 discover_output=$($CLI confluence-discover "$canonical_backend" \
@@ -1341,8 +1341,7 @@ if output=$($CLI preflight "$canonical_backend" --client codex \
 then
   fail 'active target passed with a legacy generic parent'
 fi
-assert_contains "$output" 'Result: FOLDER_CREATION_REQUIRED'
-assert_contains "$output" 'Remediation: beroka-governance confluence-discover'
+assert_contains "$output" 'Result: MAPPING_CONFLICT'
 [ ! -s "$CALLS" ] || fail 'legacy parent inspected a connector'
 
 if output=$($CLI preflight "$canonical_backend" --client codex \

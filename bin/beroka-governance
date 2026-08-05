@@ -4232,35 +4232,80 @@ resolve_confluence_target() {
         'Numeric parent and Registry content IDs are required'
   done
 
-  rct_record=$(awk -F '\t' \
-    -v repository="$REPOSITORY_SLUG" \
-    -v action="$CONFLUENCE_TARGET_ACTION" \
-    -v content="$CONFLUENCE_TARGET_CONTENT_ID" \
-    -v capability="$CONFLUENCE_TARGET_CAPABILITY_ID" '
-      /^#/ || /^[[:space:]]*$/ { next }
-      $1 == repository &&
-        ((action == "create" && $3 == "PLANNED" && $4 == "-" &&
-          $10 == capability) ||
-         (action != "create" && $4 == content)) {
-          matches++
-          row=$0
+  rct_record=$(
+    awk -F '\t' \
+      -v repository="$REPOSITORY_SLUG" \
+      -v action="$CONFLUENCE_TARGET_ACTION" \
+      -v content="$CONFLUENCE_TARGET_CONTENT_ID" \
+      -v capability="$CONFLUENCE_TARGET_CAPABILITY_ID" '
+        /^#/ || /^[[:space:]]*$/ { next }
+        $1 == repository &&
+          ((action == "create" && $3 == "PLANNED" && $4 == "-" &&
+            $10 == capability) ||
+           (action != "create" && $4 == content)) {
+            matches++
+            row=$0
         }
-      END {
-        if (matches != 1) exit 1
-        print row
-      }
-    ' "$rct_file") || {
-      if confluence_parent_is_legacy "$rct_file"; then
-        die_folder_creation_required \
-          'The requested parent is a legacy generic folder'
-      fi
-      die ROUTING_REQUIRED 'No exact reviewed Confluence target exists'
-    }
-  IFS="$(printf '\t')" read -r rct_repository rct_type rct_state \
-    rct_content rct_title rct_scope rct_domain rct_transport rct_parent \
-    rct_capability rct_registry <<EOF
+        END {
+          if (matches != 1) exit 1
+          print row
+        }
+      ' "$rct_file"
+  ) || rct_record=
+  if [ -z "$rct_record" ]; then
+    case "$CONFLUENCE_TARGET_ACTION" in
+      create)
+        rct_parent_state=
+        rct_parent_row=$(
+          awk -F '\t' \
+            -v repository="$REPOSITORY_SLUG" \
+            -v parent="$CONFLUENCE_TARGET_PARENT_ID" \
+            -v scope="$CONFLUENCE_TARGET_SCOPE" \
+            -v domain="$CONFLUENCE_TARGET_DOMAIN" \
+            -v transport="$CONFLUENCE_TARGET_TRANSPORT" '
+              /^#/ || /^[[:space:]]*$/ { next }
+              $1 == repository && $2 == "folder" && $4 == parent &&
+                ($6 == "-" || $6 == scope) &&
+                ($7 == "-" || $7 == domain) &&
+                ($8 == "-" || $8 == transport) { print $3; exit }
+          ' "$rct_file"
+        ) || rct_parent_row=
+        [ -n "$rct_parent_row" ] ||
+          die ROUTING_REQUIRED 'No exact reviewed Confluence target exists'
+        rct_state=UNTRACKED
+        rct_repository=$REPOSITORY_SLUG
+        rct_type=page
+        rct_content=-
+        rct_title='(untracked page target)'
+        rct_scope=$CONFLUENCE_TARGET_SCOPE
+        rct_domain=$CONFLUENCE_TARGET_DOMAIN
+        rct_transport=$CONFLUENCE_TARGET_TRANSPORT
+        rct_parent=$CONFLUENCE_TARGET_PARENT_ID
+        rct_capability=$CONFLUENCE_TARGET_CAPABILITY_ID
+        rct_registry=$CONFLUENCE_TARGET_REGISTRY_CONTENT_ID
+        ;;
+      *)
+        if confluence_parent_is_legacy "$rct_file"; then
+          die_folder_creation_required \
+            'The requested parent is a legacy generic folder'
+        fi
+        die ROUTING_REQUIRED 'No exact reviewed Confluence target exists'
+        ;;
+    esac
+  else
+    IFS="$(printf '\t')" read -r rct_repository rct_type rct_state \
+      rct_content rct_title rct_scope rct_domain rct_transport rct_parent \
+      rct_capability rct_registry <<EOF
 $rct_record
 EOF
+  fi
+
+  [ "$rct_scope" = - ] && rct_scope=$CONFLUENCE_TARGET_SCOPE
+  [ "$rct_domain" = - ] && rct_domain=$CONFLUENCE_TARGET_DOMAIN
+  [ "$rct_transport" = - ] && rct_transport=$CONFLUENCE_TARGET_TRANSPORT
+  [ "$rct_parent" = - ] && rct_parent=$CONFLUENCE_TARGET_PARENT_ID
+  [ "$rct_capability" = - ] && rct_capability=$CONFLUENCE_TARGET_CAPABILITY_ID
+  [ "$rct_registry" = - ] && rct_registry=$CONFLUENCE_TARGET_REGISTRY_CONTENT_ID
 
   case "$rct_state" in
     DRIFTED)
@@ -4271,17 +4316,12 @@ EOF
           "Target transport: $rct_transport"
         die MAPPING_CONFLICT
       fi
-      die ROUTING_REQUIRED 'The exact Confluence target is drifted'
       ;;
     LEGACY)
       die_folder_creation_required \
         'A legacy folder is not a canonical target'
       ;;
   esac
-  if confluence_parent_is_legacy "$rct_file"; then
-    die_folder_creation_required \
-      'The requested parent is a legacy generic folder'
-  fi
   [ "$rct_scope" = "$CONFLUENCE_TARGET_SCOPE" ] &&
     [ "$rct_domain" = "$CONFLUENCE_TARGET_DOMAIN" ] &&
     [ "$rct_transport" = "$CONFLUENCE_TARGET_TRANSPORT" ] &&
