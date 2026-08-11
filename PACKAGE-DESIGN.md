@@ -35,7 +35,12 @@ cross-repository writes.
 
 Bootstrap derives one user-scoped `FE`, `BE`, or `FULL_STACK` role from exact
 `beroka-vn` GitHub Team membership. Context enforces the stored role locally;
-eligible preflights revalidate membership before external writes.
+eligible preflights revalidate membership before external writes. `FULL_STACK`
+may open the exact Backend+Frontend catalog pair in Cursor. Governed multi-root
+writes select BE or FE from a unique structured BB/BF project (or unambiguous
+repository target); name heuristics ignore `workspace_roots` path strings so
+product-folder clones do not force `TARGET_REQUIRED`. Cursor hooks prepend the
+user bin (`~/.local/bin`) to `PATH` before dependency checks.
 
 ## Client adapters and enforcement
 

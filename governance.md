@@ -416,6 +416,9 @@ branch owned by another writer.
 - Bootstrap derives the stored `FE`, `BE`, or `FULL_STACK` role from exact
   `beroka-vn` GitHub Team membership. A routed profile outside that role
   returns `ROLE_SCOPE_DENIED`; eligible preflights revalidate membership.
+  `FULL_STACK` may use the exact Backend+Frontend Cursor multi-root pair;
+  governed writes name one BB/BF project, parent/epic key, or repository
+  target. Workspace folder path substrings alone do not force `TARGET_REQUIRED`.
 - Unrelated repositories are outside this boundary and require an exact
   catalog record; never infer one from the current workspace.
 - Shared work uses one confirmed primary tracking repository; never duplicate

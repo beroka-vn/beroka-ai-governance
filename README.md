@@ -186,11 +186,14 @@ Team membership. Context denies a routed profile outside that stored role, and
 eligible preflights revalidate membership before external writes. `FULL_STACK`
 may open a Cursor multi-root workspace that contains exactly the catalog
 `Beroka_Backend` and `Beroka_Frontend` pair; governed writes must name the exact
-BB/BF project, parent/epic key, or repository target. When `origin` is a fork,
-governance prefers another remote whose slug has an exact catalog record (for
-example `beroka` or `upstream`). Multiple remotes for the same catalog slug are
-accepted and prefer `origin`. Unknown repositories stay source-only and never
-inherit BE/FE routing.
+BB/BF project, parent/epic key, or repository target. Target selection prefers
+that structured project and does not treat `workspace_roots` folder path
+substrings as BE/FE signals, so real product-folder clones do not force
+`TARGET_REQUIRED`. Untargeted FULL_STACK writes still return `TARGET_REQUIRED`.
+When `origin` is a fork, governance prefers another remote whose slug has an
+exact catalog record (for example `beroka` or `upstream`). Multiple remotes for
+the same catalog slug are accepted and prefer `origin`. Unknown repositories
+stay source-only and never inherit BE/FE routing.
 
 - Manager/coordinator: use the [operating workflow](workflow.md), then the
   [Jira and Confluence template](templates/jira-confluence.md) and [GitHub
