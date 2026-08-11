@@ -94,7 +94,10 @@ product names appear in `workspace_roots`, so targeted `createJiraIssue` writes
 clear `TARGET_REQUIRED`. Hook PATH appends the user bin as a fallback when
 `cursor-agent` or `gh` is missing, so templated `gh` creates do not false-fail
 `DEPENDENCY_MISSING` when those tools live under `~/.local/bin`, without
-shadowing an earlier healthy executable. Official Atlassian MCP field aliases
+shadowing an earlier healthy executable. Upgrades from v1.0.9 no longer fail
+with `Invalid Confluence target inventory` on traditional awk (common on macOS)
+when multiple repository `CONFLUENCE_ROOT_CONTENT_ID` values are joined for
+inventory validation. Official Atlassian MCP field aliases
 from v1.0.9 (`issueTypeName`, `assignee_account_id`, `Missing:` hints) remain
 required.
 

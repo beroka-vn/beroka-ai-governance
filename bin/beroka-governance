@@ -752,7 +752,8 @@ validate_confluence_target_inventory() {
       while IFS= read -r vcti_record; do
         awk -F= '$1 == "CONFLUENCE_ROOT_CONTENT_ID" { print $2 }' \
           "$vcti_record"
-      done
+      done |
+      tr '\n' ' '
   ) || return 1
   awk -F '\t' -v catalog="$vcti_catalog" -v roots="$vcti_root_ids" '
     /^#/ || /^[[:space:]]*$/ { next }
