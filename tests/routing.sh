@@ -1262,22 +1262,17 @@ assert_contains "$output" 'Result: ROUTING_REQUIRED'
 [ ! -s "$CALLS" ] || fail 'missing target inspected a connector'
 
 printf '%s\n' healthy-all >"$XDG_CONFIG_HOME/fake-codex-health"
-output=$($CLI preflight "$canonical_backend" --client codex \
+if output=$($CLI preflight "$canonical_backend" --client codex \
   --operation confluence-write --non-interactive \
   --confluence-action create --target-content-id new \
   --capability-id MARKET-FU-INDEX-API --scope Shared --domain Market \
   --transport API --expected-parent-id 71237633 \
-  --registry-content-id 900003)
-assert_contains "$output" 'Capability: confluence-page-parent-write'
-assert_contains "$output" 'Result: PASS'
-
-# Minimal create args remain allow-by-default under a non-UNACTIVATED parent.
-output=$($CLI preflight "$canonical_backend" --client codex \
-  --operation confluence-write --non-interactive \
-  --confluence-action create --target-content-id new \
-  --expected-parent-id 71237633)
-assert_contains "$output" 'Capability: confluence-page-parent-write'
-assert_contains "$output" 'Result: PASS'
+  --registry-content-id 900003 2>&1)
+then
+  fail 'legacy generic API folder passed as a canonical parent'
+fi
+assert_contains "$output" 'Capability: confluence-folder-parent-write'
+assert_contains "$output" 'Result: CONNECTOR_CAPABILITY_REQUIRED'
 
 # Issue #51: discover → plan → capture → verify on deny-only inventory.
 discover_output=$($CLI confluence-discover "$canonical_backend" \
@@ -1286,8 +1281,7 @@ assert_contains "$discover_output" 'Result: DISCOVERY_COMPLETE'
 assert_contains "$discover_output" 'Legacy folders:'
 assert_contains "$discover_output" 'Requested folder (Shared — Market — API): MISSING'
 assert_contains "$discover_output" 'confluence-bootstrap-plan'
-assert_contains "$discover_output" 'optional guidance'
-assert_contains "$discover_output" 'not a write gate'
+assert_contains "$discover_output" 'Phase: authorized bootstrap'
 
 plan_output=$($CLI confluence-bootstrap-plan "$canonical_backend" \
   --scope Shared --domain Market --transport API)
@@ -1384,54 +1378,31 @@ fi
 assert_contains "$output" 'Result: MAPPING_CONFLICT'
 [ ! -s "$CALLS" ] || fail 'legacy parent inspected a connector'
 
-output=$($CLI preflight "$canonical_backend" --client codex \
+if output=$($CLI preflight "$canonical_backend" --client codex \
   --operation confluence-write --non-interactive \
   --confluence-action create --target-content-id new \
   --capability-id MARKET-PLANNED-API --scope Shared --domain Market \
   --transport API --expected-parent-id 900002 \
-  --registry-content-id 900003)
-assert_contains "$output" 'Capability: confluence-page-parent-write'
-assert_contains "$output" 'Result: PASS'
+  --registry-content-id 900003 2>&1)
+then
+  fail 'page-parent capability authorized a Confluence create'
+fi
+assert_contains "$output" 'Capability: confluence-folder-parent-write'
+assert_contains "$output" 'Capability state: UNKNOWN'
+assert_contains "$output" 'Result: CONNECTOR_CAPABILITY_REQUIRED'
 
-output=$($CLI preflight "$canonical_backend" --client codex \
+if output=$($CLI preflight "$canonical_backend" --client codex \
   --operation confluence-write --non-interactive \
   --confluence-action move --target-content-id 900001 \
   --capability-id MARKET-FU-INDEX-API --scope Shared --domain Market \
   --transport API --expected-parent-id 900002 \
-  --registry-content-id 900003)
-assert_contains "$output" 'Capability: confluence-page-parent-write'
-assert_contains "$output" 'Result: PASS'
-
-# UNACTIVATED inventory rows remain the only hard write lock.
-printf '%b\n' \
-  '# repository\trecord-type\tstate\tcontent-id\ttitle\tscope\tdomain\ttransport\tparent-id\tcapability-id\tregistry-content-id' \
-  'beroka-vn/Beroka_Backend\tfolder\tLEGACY\t71237633\tMarket — API\t-\tMarket\tAPI\t-\t-\t-' \
-  'beroka-vn/Beroka_Backend\tfolder\tACTIVE\t900002\tShared — Market — API\tShared\tMarket\tAPI\t65962274\t-\t-' \
-  'beroka-vn/Beroka_Backend\tpage\tACTIVE\t900001\tFU_INDEX REST contract\tShared\tMarket\tAPI\t900002\tMARKET-FU-INDEX-API\t900003' \
-  'beroka-vn/Beroka_Backend\tpage\tPLANNED\t-\tPlanned REST contract\tShared\tMarket\tAPI\t900002\tMARKET-PLANNED-API\t900003' \
-  'beroka-vn/Beroka_Backend\tfolder\tACTIVE\t900005\tShared — Market — WebSocket\tShared\tMarket\tWebSocket\t65962274\t-\t-' \
-  'beroka-vn/Beroka_Backend\tpage\tACTIVE\t900004\tDerivative quote stream\tShared\tMarket\tWebSocket\t900005\tMARKET-DERIVATIVE-QUOTE-WS\t900003' \
-  'beroka-vn/Beroka_Backend\tfolder\tUNACTIVATED\t990001\tUnactivated parent\t-\tMarket\tAPI\t-\t-\t-' \
-  'beroka-vn/Beroka_Backend\tpage\tUNACTIVATED\t990002\tUnactivated page\t-\tMarket\tAPI\t-\t-\t-' \
-  >"$target_file"
-pin_test_release v1.1.201
-
-if output=$($CLI preflight "$canonical_backend" --client codex \
-  --operation confluence-write --non-interactive \
-  --confluence-action create --target-content-id new \
-  --expected-parent-id 990001 2>&1)
+  --registry-content-id 900003 2>&1)
 then
-  fail 'create under UNACTIVATED parent passed'
+  fail 'page-parent capability authorized a Confluence move'
 fi
-assert_contains "$output" 'Result: DOCS_UNACTIVATED'
-
-if output=$($CLI preflight "$canonical_backend" --client codex \
-  --operation confluence-write --non-interactive \
-  --confluence-action update --target-content-id 990002 2>&1)
-then
-  fail 'update of UNACTIVATED content passed'
-fi
-assert_contains "$output" 'Result: DOCS_UNACTIVATED'
+assert_contains "$output" 'Capability: confluence-folder-parent-write'
+assert_contains "$output" 'Capability state: UNKNOWN'
+assert_contains "$output" 'Result: CONNECTOR_CAPABILITY_REQUIRED'
 
 output=$($CLI preflight "$canonical_backend" --client codex \
   --operation confluence-write --non-interactive \
@@ -2640,8 +2611,8 @@ grep -F 'beroka-governance preflight' "$ROOT/README.md" >/dev/null ||
 grep -F 'CONNECTOR_CAPABILITY_REQUIRED' "$ROOT/handbook.md" >/dev/null ||
   fail 'handbook does not document capability remediation'
 
-[ "$(sed -n '1p' "$ROOT/VERSION")" = v1.0.11 ] ||
-  fix_wave_fail 'root VERSION does not select v1.0.11'
+[ "$(sed -n '1p' "$ROOT/VERSION")" = v1.0.10 ] ||
+  fix_wave_fail 'root VERSION does not select v1.0.10'
 grep -F -- 'gh release download' "$ROOT/README.md" >/dev/null ||
   fix_wave_fail 'README does not select the authenticated release launcher'
 

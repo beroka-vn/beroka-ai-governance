@@ -111,19 +111,20 @@ exact accessible Confluence page.
 CONFLUENCE TARGET
 - Action: create | update | move
 - Confluence content ID: <numeric ID | new>
-- Expected parent ID: <numeric ID | omit when not nesting>
-- Jira: <KEY|URL>
-- GitHub: <URL|N/A>
-- Handoff delta: ## Handoff — <JiraKey> section OR Handoff form: child-page
+- Capability ID: <UPPERCASE-KEBAB-ID>
+- Scope: Shared | Derivatives | Underlying
+- Domain: Market | User
+- Transport: API | WebSocket
+- Expected parent ID: <numeric ID>
+- Registry content ID: <numeric ID>
 - Preflight: confluence-write | confluence-handoff-verify
-- Result: PASS | DOCS_UNACTIVATED | HANDOFF_DELTA_REQUIRED | ROUTING_REQUIRED | MAPPING_CONFLICT
+- Result: PASS | ROUTING_REQUIRED | FOLDER_CREATION_REQUIRED | MAPPING_CONFLICT
 ```
 
-Ordinary Confluence writes are allow-by-default. An `UNACTIVATED` content ID or
-parent in the governance release inventory returns `DOCS_UNACTIVATED` and can
-change only through a reviewed governance release PR. Missing handoff markers
-return `HANDOFF_DELTA_REQUIRED`. A transport mismatch on a reviewed drifted row
-returns `MAPPING_CONFLICT` and must not inspect or write the connector. Provider status is `To Do -> In Progress` when
+Before any Confluence write or handoff, resolve every field in the target
+block. Unknown or ambiguous destinations return `ROUTING_REQUIRED`; ask the
+user and wait. A transport mismatch returns `MAPPING_CONFLICT` and must not
+inspect or write the connector. Provider status is `To Do -> In Progress` when
 work starts, `In Progress -> In Review` when a human marks the provider PR
 ready for review, and `In Review -> Done` only after merge and documentation
 readback.

@@ -83,8 +83,7 @@ require_text workflow.md 'Registry row'
 for file in templates/agent-entrypoints/AGENTS.md \
   templates/agent-entrypoints/CLAUDE.md \
   templates/agent-entrypoints/CURSOR-USER-RULE.txt; do
-  require_text "$file" 'allow-by-default'
-  require_text "$file" 'DOCS_UNACTIVATED'
+  require_text "$file" 'exact Confluence target'
   require_text "$file" 'ASSIGNEE_CONFIRMATION_REQUIRED'
   require_text "$file" 'opposite-team private GitHub links'
 done
@@ -139,13 +138,6 @@ require_text handbook.md 'provider-owned evidence'
 require_text handbook.md 'schema-1 compatibility'
 require_text handbook.md 'cross-client adapters'
 require_text handbook.md 'Workflow rules are instruction-driven'
-require_text handbook.md 'allow-by-default'
-require_text handbook.md 'DOCS_UNACTIVATED'
-require_text handbook.md 'HANDOFF_DELTA_REQUIRED'
-require_text README.md 'allow-by-default'
-require_text README.md 'DOCS_UNACTIVATED'
-require_text README.md 'HANDOFF_DELTA_REQUIRED'
-require_text runtime/integrations/beroka-be-fe.confluence-targets 'UNACTIVATED'
 require_text PACKAGE-DESIGN.md 'provider-owned evidence'
 require_text PACKAGE-DESIGN.md 'schema-1 compatibility'
 require_text PACKAGE-DESIGN.md 'cross-client adapters'

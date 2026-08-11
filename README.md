@@ -82,34 +82,8 @@ governed repository work begins.
 
 Tracked legacy governance files remain until a repository owner explicitly
 authorizes a separate cleanup. The new CLI ignores them for release selection
-and routing. `v1.0.11` is the current supported capability release. Every
+and routing. `v1.0.10` is the current supported capability release. Every
 published tag is immutable.
-
-### v1.0.11 release
-
-This release makes Confluence documentation **allow-by-default**. Ordinary
-create/update/move uses `confluence-page-parent-write` and is allowed unless the
-target or parent is listed as `UNACTIVATED` in the pinned release inventory
-(`DOCS_UNACTIVATED`; only a reviewed governance release PR can change that
-list). Create/update bodies must include handoff delta markers (`Jira:`,
-`GitHub:`, and a `## Handoff —` section or `Handoff form: child-page`) or return
-`HANDOFF_DELTA_REQUIRED`. Hierarchy bootstrap remains optional guidance.
-Cursor hooks also parse stringified MCP `tool_input` JSON so governed writes do
-not false-deny with empty fields.
-
-### v1.0.11 upgrade
-
-Bootstrap installs a missing Cursor Agent after one confirmation. Developers
-upgrading from `v1.0.0` through `v1.0.10` run this once; installation and
-Atlassian connector setup continue in the same process:
-
-```bash
-bash -e -o pipefail -c 'gh release download v1.0.11 --repo beroka-vn/beroka-ai-governance --pattern bootstrap.sh --output - | sh -s -- --client cursor --upgrade'
-```
-To select the current repository immediately after upgrading, run:
-```bash
-beroka-governance context "$PWD"
-```
 
 ### v1.0.10 release
 
