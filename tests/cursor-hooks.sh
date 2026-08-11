@@ -153,6 +153,62 @@ assert_denied "$(hook beforeMCPExecution "$fullstack_jira_parent")" WORK_ITEM_TE
 fullstack_jira_bb=$(printf '%s\n' "$fullstack_roots" | jq -c \
   '. + {tool_name:"jira.create_issue",url:"https://example.atlassian.net",tool_input:{projectKey:"BB",body:"Work-item language: English"}}')
 assert_denied "$(hook beforeMCPExecution "$fullstack_jira_bb")" WORK_ITEM_TEMPLATE_REQUIRED
+
+# Real developer clones use product folder names in workspace_roots. Those path
+# substrings must not force TARGET_REQUIRED when tool_input names one project.
+product_backend=$TMP_ROOT/Beroka_Backend
+product_frontend=$TMP_ROOT/Beroka_Frontend
+new_repo "$product_backend"
+printf '%s\n' '# backend' >"$product_backend/README.md"
+git -C "$product_backend" add README.md
+git -C "$product_backend" commit -qm 'test: initialize product backend'
+git -C "$product_backend" remote add origin https://github.com/beroka-vn/Beroka_Backend.git
+new_repo "$product_frontend"
+printf '%s\n' '# frontend' >"$product_frontend/README.md"
+git -C "$product_frontend" add README.md
+git -C "$product_frontend" commit -qm 'test: initialize product frontend'
+git -C "$product_frontend" remote add origin https://github.com/beroka-vn/Beroka_Frontend.git
+product_roots=$(jq -nc --arg a "$product_backend" --arg b "$product_frontend" \
+  '{conversation_id:"product-folders",generation_id:"product-folders",workspace_roots:[$a,$b]}')
+hook sessionStart "$product_roots" >/dev/null
+product_untargeted=$(printf '%s\n' "$product_roots" | jq -c \
+  '. + {tool_name:"createJiraIssue",url:"https://example.atlassian.net",tool_input:{body:"Work-item language: English"}}')
+assert_denied "$(hook beforeMCPExecution "$product_untargeted")" TARGET_REQUIRED
+product_bb=$(printf '%s\n' "$product_roots" | jq -c '
+  . + {
+    tool_name:"createJiraIssue",
+    url:"https://example.atlassian.net",
+    tool_input:{
+      cloudId:"cloud",
+      projectKey:"BB",
+      issueTypeName:"Bug",
+      parent:"BB-34",
+      assignee_account_id:"712020:aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+      summary:"Pending wait for opaque SID rotation",
+      description:"Work-item language: English\n\nGitHub: N/A\n\nRelated: Beroka_Frontend layout.",
+      additional_fields:{priority:{name:"Highest"}}
+    }
+  }')
+product_bb_output=$(hook beforeMCPExecution "$product_bb")
+assert_not_contains "$product_bb_output" 'TARGET_REQUIRED'
+assert_not_contains "$product_bb_output" 'WORK_ITEM_TEMPLATE_REQUIRED'
+assert_not_contains "$product_bb_output" 'Missing:'
+# Opposite-team private link in tool_input still denied after target selection.
+product_cross=$(printf '%s\n' "$product_bb" | jq -c \
+  '.tool_input.description += "\nhttps://github.com/beroka-vn/Beroka_Frontend/issues/1"')
+assert_denied "$(hook beforeMCPExecution "$product_cross")" CROSS_TEAM_LINK_SCOPE_DENIED
+
+# Hook PATH without ~/.local/bin must still find bootstrap-installed cursor-agent.
+mkdir -p "$HOME/.local/bin"
+printf '%s\n' '#!/bin/sh' 'exit 0' >"$HOME/.local/bin/cursor-agent"
+chmod 755 "$HOME/.local/bin/cursor-agent"
+path_create='gh issue create --title "Fix opaque session" --body "Work-item language: English" --label area:governance --label priority:p1 --label Task --repo beroka-vn/beroka-ai-governance'
+path_shell=$(jq -nc --arg command "$path_create" --arg a "$product_backend" --arg b "$product_frontend" \
+  '{conversation_id:"shell-path",generation_id:"shell-path",workspace_roots:[$a,$b],command:$command}')
+path_output=$(PATH="/usr/bin:/bin" hook beforeShellExecution "$path_shell")
+assert_not_contains "$path_output" 'DEPENDENCY_MISSING'
+assert_not_contains "$path_output" 'WORK_ITEM_TEMPLATE_REQUIRED'
+
 printf '%s\n' BE >"$XDG_CONFIG_HOME/beroka-ai-governance/github-role"
 
 hook sessionStart "$base_input" >/dev/null

@@ -82,30 +82,32 @@ governed repository work begins.
 
 Tracked legacy governance files remain until a repository owner explicitly
 authorizes a separate cleanup. The new CLI ignores them for release selection
-and routing. `v1.0.9` is the current supported capability release. Every
+and routing. `v1.0.10` is the current supported capability release. Every
 published tag is immutable.
 
-### v1.0.9 release
+### v1.0.10 release
 
-This release lets Cursor agents create Jira work items through official
-Atlassian MCP `createJiraIssue` fields. Governance accepts `issueTypeName`,
-`assignee_account_id`, and `additional_fields.priority.name` as aliases of the
-legacy template names, reads `GitHub: N/A` or a GitHub URL from `description`,
-and returns `Missing:` field hints so agents can retry without surfacing raw
-codes to users. Quoted `gh --label` values are accepted for templated creates.
+This release fixes FULL_STACK Cursor multi-root target selection when workspace
+folder paths literally contain `Beroka_Backend` and `Beroka_Frontend`. Unique
+`projectKey` / parent / epic keys (BB or BF) select that side even though both
+product names appear in `workspace_roots`, so targeted `createJiraIssue` writes
+clear `TARGET_REQUIRED`. Hook PATH also includes the user bin so templated `gh`
+creates do not false-fail `DEPENDENCY_MISSING` when `cursor-agent` is installed
+under `~/.local/bin`. Official Atlassian MCP field aliases from v1.0.9
+(`issueTypeName`, `assignee_account_id`, `Missing:` hints) remain required.
 
-### v1.0.9 upgrade
+### v1.0.10 upgrade
 
 Bootstrap installs a missing Cursor Agent after one confirmation. Developers
-upgrading from `v1.0.0` through `v1.0.8` run this once; installation and
+upgrading from `v1.0.0` through `v1.0.9` run this once; installation and
 Atlassian connector setup continue in the same process:
 
 ```bash
-bash -e -o pipefail -c 'gh release download v1.0.9 --repo beroka-vn/beroka-ai-governance --pattern bootstrap.sh --output - | sh -s -- --client cursor --upgrade'
+bash -e -o pipefail -c 'gh release download v1.0.10 --repo beroka-vn/beroka-ai-governance --pattern bootstrap.sh --output - | sh -s -- --client cursor --upgrade'
 ```
 For one command that finishes with immediate readiness check on the current repository, use:
 ```bash
-bash -e -o pipefail -c 'gh release download v1.0.9 --repo beroka-vn/beroka-ai-governance --pattern bootstrap.sh --output - | sh -s -- . --client cursor --upgrade --ready'
+bash -e -o pipefail -c 'gh release download v1.0.10 --repo beroka-vn/beroka-ai-governance --pattern bootstrap.sh --output - | sh -s -- . --client cursor --upgrade --ready'
 ```
 
 ### Upgrade

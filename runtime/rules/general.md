@@ -53,6 +53,9 @@
   properties and governance accepts the official aliases. If the hook denies
   with `WORK_ITEM_TEMPLATE_REQUIRED`, read `agent_message` for `Missing: …`,
   fix those fields once, and retry; never tell the user raw governance codes.
+  On FULL_STACK Backend+Frontend multi-root, always name exactly one of BB/BF
+  via `projectKey` or parent/epic key so target selection can proceed; never ask
+  the user to close a workspace folder for that.
 - Before any Jira field, description, comment, or status update, read the
   authenticated and current-assignee Atlassian `accountId`. A mismatch or
   unassigned item returns `ASSIGNEE_CONFIRMATION_REQUIRED` and waits for exact
