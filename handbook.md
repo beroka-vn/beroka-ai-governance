@@ -114,8 +114,8 @@ bash -e -o pipefail -c '
 
 ### Downgrade
 
-Muốn về release đã publish cũ hơn (cùng major): uninstall trước, rồi cài đúng
-tag. Ví dụ về `v1.0.9`:
+Muốn về release đã publish cũ hơn (cùng major): uninstall trước, rồi cài từ
+launcher của đúng release đó. Ví dụ về `v1.0.9`:
 
 ```bash
 beroka-governance uninstall --force
@@ -127,13 +127,15 @@ bash -e -o pipefail -c '
     --repo beroka-vn/beroka-ai-governance \
     --pattern bootstrap.sh \
     --output - |
-    sh -s -- --client cursor --version v1.0.9
+    sh -s -- --client cursor
 '
 ```
 
-Đổi `v1.0.9` / `cursor` theo tag và client cần dùng. Sau khi cài lại, chạy
-`beroka-governance context "$PWD"`. User Rule dán trong **Cursor Settings >
-Rules** không bị uninstall xóa — tự xóa/sửa nếu không còn cần.
+Đổi `v1.0.9` / `cursor` theo tag và client cần dùng. Không truyền `--version`
+cho launcher — `gh release download v1.0.9` đã chọn asset nhúng sẵn `v1.0.9`.
+Sau khi cài lại, chạy `beroka-governance context "$PWD"`. User Rule dán trong
+**Cursor Settings > Rules** không bị uninstall xóa — tự xóa/sửa nếu không còn
+cần.
 
 ### Uninstall
 

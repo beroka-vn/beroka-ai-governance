@@ -146,8 +146,10 @@ bash -e -o pipefail -c '
 ```
 
 Replace `codex` with `claude` or `cursor` for that client. Pin an exact newer
-same-major tag with `--version vX.Y.Z` on the bootstrap line when you do not
-want “latest”.
+same-major release with `gh release download vX.Y.Z` (instead of untagged
+“latest”) when you do not want the newest asset. The downloaded launcher embeds
+that release; it accepts only `--client`, `--upgrade`, and `--non-interactive`
+(not `--version`).
 
 In-place `--upgrade` rejects an older target (`VERSION_MISMATCH`). The retired
 `rollback` command is not available.
@@ -155,7 +157,8 @@ In-place `--upgrade` rejects an older target (`VERSION_MISMATCH`). The retired
 ### Downgrade
 
 To move to an older published same-major release, uninstall first, then install
-that exact tag. Example: leave the current release and reinstall `v1.0.9`:
+from that exact release’s launcher. Example: leave the current release and
+reinstall `v1.0.9`:
 
 ```bash
 beroka-governance uninstall --force
@@ -167,14 +170,16 @@ bash -e -o pipefail -c '
     --repo beroka-vn/beroka-ai-governance \
     --pattern bootstrap.sh \
     --output - |
-    sh -s -- --client cursor --version v1.0.9
+    sh -s -- --client cursor
 '
 ```
 
-Replace `v1.0.9` / `cursor` with the published tag and client you need. After
-reinstall, run `beroka-governance context "$PWD"` again before governed work.
-Cursor User Rules pasted into **Cursor Settings > Rules** are not removed by
-uninstall; delete or replace that text manually if you no longer want it.
+Replace `v1.0.9` / `cursor` with the published tag and client you need. Do not
+pass `--version` to the launcher; `gh release download v1.0.9` already selects
+the asset that embeds `v1.0.9`. After reinstall, run
+`beroka-governance context "$PWD"` again before governed work. Cursor User Rules
+pasted into **Cursor Settings > Rules** are not removed by uninstall; delete or
+replace that text manually if you no longer want it.
 
 ### Uninstall
 
