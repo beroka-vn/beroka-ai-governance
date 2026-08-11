@@ -193,6 +193,14 @@ product_bb_output=$(hook beforeMCPExecution "$product_bb")
 assert_not_contains "$product_bb_output" 'TARGET_REQUIRED'
 assert_not_contains "$product_bb_output" 'WORK_ITEM_TEMPLATE_REQUIRED'
 assert_not_contains "$product_bb_output" 'Missing:'
+# Cursor IDE may stringify tool_input; parse it so structured BB fields still win.
+product_bb_string=$(printf '%s\n' "$product_bb" | jq -c '
+  .tool_input = (.tool_input | tojson)
+')
+product_bb_string_output=$(hook beforeMCPExecution "$product_bb_string")
+assert_not_contains "$product_bb_string_output" 'TARGET_REQUIRED'
+assert_not_contains "$product_bb_string_output" 'WORK_ITEM_TEMPLATE_REQUIRED'
+assert_not_contains "$product_bb_string_output" 'Missing:'
 # Opposite-team private link in tool_input still denied after target selection.
 product_cross=$(printf '%s\n' "$product_bb" | jq -c \
   '.tool_input.description += "\nhttps://github.com/beroka-vn/Beroka_Frontend/issues/1"')

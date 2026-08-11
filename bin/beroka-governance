@@ -5294,7 +5294,14 @@ cursor_tool_provider() {
   CURSOR_TOOL_NAME=$(printf '%s\n' "$CURSOR_REQUEST" | jq -r '.tool_name // .name // ""') || return 1
   CURSOR_TOOL_URL=$(printf '%s\n' "$CURSOR_REQUEST" | jq -r '.url // ""') || return 1
   CURSOR_TOOL_COMMAND=$(printf '%s\n' "$CURSOR_REQUEST" | jq -r '.command // ""') || return 1
-  CURSOR_TOOL_INPUT=$(printf '%s\n' "$CURSOR_REQUEST" | jq -c '.tool_input // {} | select(type == "object")') || return 1
+  # Cursor may pass tool_input as an object or as a JSON string. Parse strings
+  # so createJiraIssue fields remain visible to template and BE/FE selection.
+  CURSOR_TOOL_INPUT=$(printf '%s\n' "$CURSOR_REQUEST" | jq -c '
+    .tool_input // {} |
+    if type == "object" then .
+    elif type == "string" then (fromjson? // {})
+    else {} end
+  ') || return 1
   CURSOR_TOOL_TEXT=$(printf '%s %s %s' "$CURSOR_TOOL_NAME" "$CURSOR_TOOL_URL" "$CURSOR_TOOL_COMMAND" | tr '[:upper:]' '[:lower:]')
   case "$CURSOR_TOOL_TEXT" in
     *github.com*|*github*) CURSOR_PROVIDER=github ;;
