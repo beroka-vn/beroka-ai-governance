@@ -4218,6 +4218,14 @@ resolve_confluence_target() {
         'Confluence action and target content ID conflict'
       ;;
   esac
+  # Moves need a numeric destination parent on every route, including
+  # standalone none:explicit-only which returns before inventory checks.
+  if [ "$CONFLUENCE_TARGET_ACTION" = move ]; then
+    printf '%s\n' "$CONFLUENCE_TARGET_PARENT_ID" |
+      grep -Eq '^[1-9][0-9]*$' ||
+      die ROUTING_REQUIRED \
+        'A numeric destination parent ID is required for Confluence moves'
+  fi
   case "$ROUTE_INTEGRATION_PROFILE:$ROUTE_CROSS_REPO_POLICY" in
     none:explicit-only) return 0 ;;
     beroka-be-fe:profile-controlled) ;;
@@ -4230,12 +4238,6 @@ resolve_confluence_target() {
 
   # Allow-by-default: only UNACTIVATED rows hard-deny writes. Inventory
   # ACTIVE/PLANNED/LEGACY/DRIFTED rows remain discoverability guidance.
-  if [ "$CONFLUENCE_TARGET_ACTION" = move ]; then
-    printf '%s\n' "$CONFLUENCE_TARGET_PARENT_ID" |
-      grep -Eq '^[1-9][0-9]*$' ||
-      die ROUTING_REQUIRED \
-        'A numeric destination parent ID is required for Confluence moves'
-  fi
   if [ "$CONFLUENCE_TARGET_CONTENT_ID" != new ] &&
      confluence_content_is_unactivated "$rct_file" \
        "$CONFLUENCE_TARGET_CONTENT_ID"

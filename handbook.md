@@ -109,6 +109,42 @@ bash -e -o pipefail -c '
 '
 ```
 
+`--upgrade` in-place **không** cho target cũ hơn (`VERSION_MISMATCH`). Lệnh
+`rollback` đã retire.
+
+### Downgrade
+
+Muốn về release đã publish cũ hơn (cùng major): uninstall trước, rồi cài đúng
+tag. Ví dụ về `v1.0.9`:
+
+```bash
+beroka-governance uninstall --force
+bash -e -o pipefail -c '
+  gh auth status --hostname github.com >/dev/null 2>&1 ||
+    gh auth login --hostname github.com --web
+  gh auth setup-git --hostname github.com
+  gh release download v1.0.9 \
+    --repo beroka-vn/beroka-ai-governance \
+    --pattern bootstrap.sh \
+    --output - |
+    sh -s -- --client cursor --version v1.0.9
+'
+```
+
+Đổi `v1.0.9` / `cursor` theo tag và client cần dùng. Sau khi cài lại, chạy
+`beroka-governance context "$PWD"`. User Rule dán trong **Cursor Settings >
+Rules** không bị uninstall xóa — tự xóa/sửa nếu không còn cần.
+
+### Uninstall
+
+Gỡ CLI user-scoped, release data, enrollment, Cursor acknowledgement, GitHub
+role file, và managed block trong file instruction cá nhân Codex/Claude. Text
+cá nhân ngoài managed block được giữ. Không đụng application repository.
+
+```bash
+beroka-governance uninstall --force
+```
+
 ### Automation / CI
 
 Automation không cài package và không mở browser. Cài sẵn selected client, `gh`, `jq`, authenticate `gh`, rồi chạy:

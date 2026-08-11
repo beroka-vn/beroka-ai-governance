@@ -2409,6 +2409,21 @@ then
 fi
 assert_contains "$output" 'Result: ROUTING_REQUIRED'
 
+if output=$($CLI preflight "$consumer" \
+  --client codex --operation confluence-write --non-interactive \
+  --confluence-action move --target-content-id 555001 2>&1)
+then
+  fail 'standalone move without destination parent passed'
+fi
+assert_contains "$output" 'Result: ROUTING_REQUIRED'
+assert_contains "$output" 'destination parent'
+
+output=$($CLI preflight "$consumer" \
+  --client codex --operation confluence-write --non-interactive \
+  --confluence-action move --target-content-id 555001 \
+  --expected-parent-id 555002)
+assert_contains "$output" 'Result: PASS'
+
 printf '%s\n' healthy-missing-confluence-read \
   >"$XDG_CONFIG_HOME/fake-codex-health"
 if output=$($CLI preflight "$consumer" \

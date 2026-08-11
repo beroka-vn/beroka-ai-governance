@@ -408,6 +408,18 @@ done
   "$upgrade_launcher" ] ||
   fail 'PACKAGE-DESIGN Upgrade does not use the exact upgrade launcher'
 
+for file in README.md handbook.md; do
+  require_text "$file" '### Downgrade'
+  require_text "$file" '### Uninstall'
+  require_text "$file" 'beroka-governance uninstall --force'
+  require_text "$file" '--version v1.0.9'
+  require_text "$file" 'gh release download v1.0.9'
+done
+require_text README.md \
+  'In-place `--upgrade` rejects an older target (`VERSION_MISMATCH`)'
+require_text handbook.md \
+  '`--upgrade` in-place **không** cho target cũ hơn (`VERSION_MISMATCH`)'
+
 [ "$(first_code_block_after_heading README.md '### Automation / CI')" = \
   "$noninteractive_launcher" ] ||
   fail 'README Automation / CI launcher is not fail-closed'

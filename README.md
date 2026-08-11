@@ -145,6 +145,52 @@ bash -e -o pipefail -c '
 '
 ```
 
+Replace `codex` with `claude` or `cursor` for that client. Pin an exact newer
+same-major tag with `--version vX.Y.Z` on the bootstrap line when you do not
+want “latest”.
+
+In-place `--upgrade` rejects an older target (`VERSION_MISMATCH`). The retired
+`rollback` command is not available.
+
+### Downgrade
+
+To move to an older published same-major release, uninstall first, then install
+that exact tag. Example: leave the current release and reinstall `v1.0.9`:
+
+```bash
+beroka-governance uninstall --force
+bash -e -o pipefail -c '
+  gh auth status --hostname github.com >/dev/null 2>&1 ||
+    gh auth login --hostname github.com --web
+  gh auth setup-git --hostname github.com
+  gh release download v1.0.9 \
+    --repo beroka-vn/beroka-ai-governance \
+    --pattern bootstrap.sh \
+    --output - |
+    sh -s -- --client cursor --version v1.0.9
+'
+```
+
+Replace `v1.0.9` / `cursor` with the published tag and client you need. After
+reinstall, run `beroka-governance context "$PWD"` again before governed work.
+Cursor User Rules pasted into **Cursor Settings > Rules** are not removed by
+uninstall; delete or replace that text manually if you no longer want it.
+
+### Uninstall
+
+Remove the user-scoped CLI, active release data, client enrollment, Cursor
+acknowledgement, GitHub role file, and managed blocks from personal Codex /
+Claude instruction files. Personal text outside those managed blocks is kept.
+Application repositories are never modified.
+
+```bash
+beroka-governance uninstall --force
+```
+
+Without `--force`, uninstall still performs the same removal when invoked as
+`beroka-governance uninstall` (see `beroka-governance` usage). Prefer
+`--force` in scripts and agent runbooks so the intent is explicit.
+
 ### Automation / CI
 
 Automation never installs packages or opens a browser. Preinstall the selected
