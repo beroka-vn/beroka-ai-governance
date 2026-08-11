@@ -1137,6 +1137,40 @@ assert_target_catalog_invalid() {
   mv "$atci_backup" "$atci_file"
 }
 
+# Traditional/BSD awk rejects newlines in -v values. Multiple catalog
+# CONFLUENCE_ROOT_CONTENT_ID rows must be flattened before awk -v roots=...
+strict_awk_bin=$TEST_ROOT/strict-awk-bin
+mkdir -p "$strict_awk_bin"
+cat >"$strict_awk_bin/awk" <<'EOF'
+#!/bin/sh
+set -eu
+real_awk=/usr/bin/awk
+prev_v=0
+for arg do
+  if [ "$prev_v" -eq 1 ]; then
+    prev_v=0
+    val=${arg#*=}
+    if [ "$(printf '%s\n' "$val" | wc -l | tr -d ' ')" -ne 1 ]; then
+      printf 'awk: newline in string %s at source line 1\n' \
+        "$(printf '%s' "$val" | tr '\n' ' ')" >&2
+      exit 1
+    fi
+  fi
+  case "$arg" in
+    -v) prev_v=1 ;;
+  esac
+done
+exec "$real_awk" "$@"
+EOF
+chmod +x "$strict_awk_bin/awk"
+printf '%s\n' FULL_STACK >"$role_file"
+if ! output=$(PATH="$strict_awk_bin:$PATH" $CLI context "$consumer" 2>&1); then
+  fail "newline-safe Confluence root IDs rejected by strict awk: $output"
+fi
+assert_contains "$output" 'Routing: ROUTING_ACTIVE'
+assert_not_contains "$output" 'Invalid Confluence target inventory'
+assert_not_contains "$output" 'newline in string'
+
 assert_target_inventory_invalid v1.1.9 \
   'beroka-vn/Beroka_Backend\tpage\tDRIFTED\t70713366\tDuplicate\t-\tMarket\tWebSocket\t71303169\t-\t-'
 assert_target_inventory_invalid v1.1.10 \
@@ -2577,8 +2611,8 @@ grep -F 'beroka-governance preflight' "$ROOT/README.md" >/dev/null ||
 grep -F 'CONNECTOR_CAPABILITY_REQUIRED' "$ROOT/handbook.md" >/dev/null ||
   fail 'handbook does not document capability remediation'
 
-[ "$(sed -n '1p' "$ROOT/VERSION")" = v1.0.9 ] ||
-  fix_wave_fail 'root VERSION does not select v1.0.9'
+[ "$(sed -n '1p' "$ROOT/VERSION")" = v1.0.10 ] ||
+  fix_wave_fail 'root VERSION does not select v1.0.10'
 grep -F -- 'gh release download' "$ROOT/README.md" >/dev/null ||
   fix_wave_fail 'README does not select the authenticated release launcher'
 

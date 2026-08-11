@@ -39,10 +39,10 @@ reject_text() {
   fi
 }
 
-[ "$(cat "$ROOT/VERSION")" = v1.0.9 ] ||
-  fail 'VERSION is not v1.0.9'
+[ "$(cat "$ROOT/VERSION")" = v1.0.10 ] ||
+  fail 'VERSION is not v1.0.10'
 
-require_text README.md '`v1.0.9` is the current supported capability release.'
+require_text README.md '`v1.0.10` is the current supported capability release.'
 reject_text README.md '`v1.0.0` is the current supported capability release.'
 reject_text README.md '`v1.0.1` is the current supported capability release.'
 reject_text README.md '`v1.0.2` is the current supported capability release.'
@@ -52,8 +52,9 @@ reject_text README.md '`v1.0.5` is the current supported capability release.'
 reject_text README.md '`v1.0.6` is the current supported capability release.'
 reject_text README.md '`v1.0.7` is the current supported capability release.'
 reject_text README.md '`v1.0.8` is the current supported capability release.'
+reject_text README.md '`v1.0.9` is the current supported capability release.'
 require_text handbook.md \
-  '`v1.0.9` là capability release được hỗ trợ hiện tại.'
+  '`v1.0.10` là capability release được hỗ trợ hiện tại.'
 reject_text handbook.md \
   '`v1.0.0` là capability release được hỗ trợ hiện tại.'
 reject_text handbook.md '`v1.0.1` là capability release được hỗ trợ hiện tại.'
@@ -64,9 +65,10 @@ reject_text handbook.md '`v1.0.5` là capability release được hỗ trợ hi�
 reject_text handbook.md '`v1.0.6` là capability release được hỗ trợ hiện tại.'
 reject_text handbook.md '`v1.0.7` là capability release được hỗ trợ hiện tại.'
 reject_text handbook.md '`v1.0.8` là capability release được hỗ trợ hiện tại.'
-reject_text handbook.md '`v1.0.10` là capability release được hỗ trợ hiện tại.'
+reject_text handbook.md '`v1.0.9` là capability release được hỗ trợ hiện tại.'
+reject_text handbook.md '`v1.0.11` là capability release được hỗ trợ hiện tại.'
 require_text PACKAGE-DESIGN.md \
-  '`v1.0.9` is the current supported capability release.'
+  '`v1.0.10` is the current supported capability release.'
 reject_text PACKAGE-DESIGN.md \
   '`v1.0.0` is the current supported capability release.'
 reject_text PACKAGE-DESIGN.md \
@@ -86,25 +88,43 @@ reject_text PACKAGE-DESIGN.md \
 reject_text PACKAGE-DESIGN.md \
   '`v1.0.8` is the current supported capability release.'
 reject_text PACKAGE-DESIGN.md \
-  '`v1.0.10` is the current supported capability release.'
+  '`v1.0.9` is the current supported capability release.'
+reject_text PACKAGE-DESIGN.md \
+  '`v1.0.11` is the current supported capability release.'
 require_text README.md \
   'Bootstrap installs a missing Cursor Agent after one confirmation.'
 require_text README.md \
-  'gh release download v1.0.9 --repo beroka-vn/beroka-ai-governance'
+  'gh release download v1.0.10 --repo beroka-vn/beroka-ai-governance'
 require_text README.md \
-  'upgrading from `v1.0.0` through `v1.0.8` run this once'
-require_text README.md '### v1.0.9 release'
+  'upgrading from `v1.0.0` through `v1.0.9` run this once'
+require_text README.md '### v1.0.10 release'
 require_text README.md 'createJiraIssue'
+require_text README.md 'workspace_roots'
+require_text README.md 'TARGET_REQUIRED'
+require_text README.md 'DEPENDENCY_MISSING'
 require_text README.md 'issueTypeName'
 require_text README.md 'assignee_account_id'
 require_text README.md 'Missing:'
+require_text README.md 'does not treat `workspace_roots` folder path'
 require_text handbook.md \
   'Bootstrap tự cài Cursor Agent còn thiếu sau một lần xác nhận.'
+require_text handbook.md 'không dùng substring path trong `workspace_roots`'
+require_text handbook.md '~/.local/bin'
+require_text PACKAGE-DESIGN.md 'name heuristics ignore `workspace_roots`'
+require_text PACKAGE-DESIGN.md 'append the'
+require_text PACKAGE-DESIGN.md '~/.local/bin'
+require_text governance.md 'Workspace folder path substrings alone do not force'
 require_text runtime/rules/general.md 'createJiraIssue'
 require_text runtime/rules/general.md 'issueTypeName'
 require_text runtime/rules/general.md 'never tell the user raw governance codes'
+require_text runtime/rules/general.md 'never ask'
+require_text runtime/rules/general.md 'close a workspace folder'
 require_text templates/agent-entrypoints/AGENTS.md 'createJiraIssue'
+require_text templates/agent-entrypoints/AGENTS.md 'FULL_STACK Backend+Frontend multi-root'
+require_text templates/agent-entrypoints/CLAUDE.md 'FULL_STACK Backend+Frontend multi-root'
 require_text templates/agent-entrypoints/CURSOR-USER-RULE.txt 'Missing:'
+require_text templates/agent-entrypoints/CURSOR-USER-RULE.txt \
+  'close a workspace folder'
 require_text handbook.md 'parent/epic key'
 require_text handbook.md 'cùng một catalog slug'
 require_text handbook.md 'confluence-discover'
@@ -188,7 +208,7 @@ bash -e -o pipefail -c '
     --repo beroka-vn/beroka-ai-governance \
     --pattern bootstrap.sh \
     --output - |
-    sh -s -- . --client codex --ready
+    sh -s -- --client codex
 '
 EOF
 )
@@ -298,7 +318,7 @@ GH_AUTH_STATE=required \
   /bin/sh "$behavior_root/quick-start.sh"
 case "$(cat "$behavior_root/gh-calls")" in
   *'gh auth login --hostname github.com --web'*\
-*'sh -s -- . --client codex --ready'*) ;;
+*'sh -s -- --client codex'*) ;;
   *) fail 'README Quick start did not authenticate and install' ;;
 esac
 

@@ -21,7 +21,7 @@ bash -e -o pipefail -c '
     --repo beroka-vn/beroka-ai-governance \
     --pattern bootstrap.sh \
     --output - |
-    sh -s -- . --client codex --ready
+    sh -s -- --client codex
 '
 ```
 
@@ -82,30 +82,37 @@ governed repository work begins.
 
 Tracked legacy governance files remain until a repository owner explicitly
 authorizes a separate cleanup. The new CLI ignores them for release selection
-and routing. `v1.0.9` is the current supported capability release. Every
+and routing. `v1.0.10` is the current supported capability release. Every
 published tag is immutable.
 
-### v1.0.9 release
+### v1.0.10 release
 
-This release lets Cursor agents create Jira work items through official
-Atlassian MCP `createJiraIssue` fields. Governance accepts `issueTypeName`,
-`assignee_account_id`, and `additional_fields.priority.name` as aliases of the
-legacy template names, reads `GitHub: N/A` or a GitHub URL from `description`,
-and returns `Missing:` field hints so agents can retry without surfacing raw
-codes to users. Quoted `gh --label` values are accepted for templated creates.
+This release fixes FULL_STACK Cursor multi-root target selection when workspace
+folder paths literally contain `Beroka_Backend` and `Beroka_Frontend`. Unique
+`projectKey` / parent / epic keys (BB or BF) select that side even though both
+product names appear in `workspace_roots`, so targeted `createJiraIssue` writes
+clear `TARGET_REQUIRED`. Hook PATH appends the user bin as a fallback when
+`cursor-agent` or `gh` is missing, so templated `gh` creates do not false-fail
+`DEPENDENCY_MISSING` when those tools live under `~/.local/bin`, without
+shadowing an earlier healthy executable. Upgrades from v1.0.9 no longer fail
+with `Invalid Confluence target inventory` on traditional awk (common on macOS)
+when multiple repository `CONFLUENCE_ROOT_CONTENT_ID` values are joined for
+inventory validation. Official Atlassian MCP field aliases
+from v1.0.9 (`issueTypeName`, `assignee_account_id`, `Missing:` hints) remain
+required.
 
-### v1.0.9 upgrade
+### v1.0.10 upgrade
 
 Bootstrap installs a missing Cursor Agent after one confirmation. Developers
-upgrading from `v1.0.0` through `v1.0.8` run this once; installation and
+upgrading from `v1.0.0` through `v1.0.9` run this once; installation and
 Atlassian connector setup continue in the same process:
 
 ```bash
-bash -e -o pipefail -c 'gh release download v1.0.9 --repo beroka-vn/beroka-ai-governance --pattern bootstrap.sh --output - | sh -s -- --client cursor --upgrade'
+bash -e -o pipefail -c 'gh release download v1.0.10 --repo beroka-vn/beroka-ai-governance --pattern bootstrap.sh --output - | sh -s -- --client cursor --upgrade'
 ```
-For one command that finishes with immediate readiness check on the current repository, use:
+To select the current repository immediately after upgrading, run:
 ```bash
-bash -e -o pipefail -c 'gh release download v1.0.9 --repo beroka-vn/beroka-ai-governance --pattern bootstrap.sh --output - | sh -s -- . --client cursor --upgrade --ready'
+beroka-governance context "$PWD"
 ```
 
 ### Upgrade
@@ -184,11 +191,14 @@ Team membership. Context denies a routed profile outside that stored role, and
 eligible preflights revalidate membership before external writes. `FULL_STACK`
 may open a Cursor multi-root workspace that contains exactly the catalog
 `Beroka_Backend` and `Beroka_Frontend` pair; governed writes must name the exact
-BB/BF project, parent/epic key, or repository target. When `origin` is a fork,
-governance prefers another remote whose slug has an exact catalog record (for
-example `beroka` or `upstream`). Multiple remotes for the same catalog slug are
-accepted and prefer `origin`. Unknown repositories stay source-only and never
-inherit BE/FE routing.
+BB/BF project, parent/epic key, or repository target. Target selection prefers
+that structured project and does not treat `workspace_roots` folder path
+substrings as BE/FE signals, so real product-folder clones do not force
+`TARGET_REQUIRED`. Untargeted FULL_STACK writes still return `TARGET_REQUIRED`.
+When `origin` is a fork, governance prefers another remote whose slug has an
+exact catalog record (for example `beroka` or `upstream`). Multiple remotes for
+the same catalog slug are accepted and prefer `origin`. Unknown repositories
+stay source-only and never inherit BE/FE routing.
 
 - Manager/coordinator: use the [operating workflow](workflow.md), then the
   [Jira and Confluence template](templates/jira-confluence.md) and [GitHub

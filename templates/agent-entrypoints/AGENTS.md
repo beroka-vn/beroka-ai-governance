@@ -38,7 +38,9 @@ field is unknown, ask the user and wait.
 Create Jira items with Atlassian MCP `createJiraIssue` using official fields
 (`projectKey`, `issueTypeName`, `parent`, `assignee_account_id`,
 `additional_fields.priority.name`) and put `Work-item language: English` plus
-`GitHub: <url|N/A>` in `description`. On `WORK_ITEM_TEMPLATE_REQUIRED`, read
+`GitHub: <url|N/A>` in `description`. On FULL_STACK Backend+Frontend multi-root,
+name exactly one of BB/BF via `projectKey` or parent/epic key; do not ask the
+user to close a workspace folder. On `WORK_ITEM_TEMPLATE_REQUIRED`, read
 `Missing:` from the hook message, fix once, and retry — do not surface raw
 governance codes to the user.
 Before a Jira update, compare the authenticated and current-assignee Atlassian

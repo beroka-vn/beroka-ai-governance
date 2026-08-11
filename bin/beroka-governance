@@ -752,7 +752,8 @@ validate_confluence_target_inventory() {
       while IFS= read -r vcti_record; do
         awk -F= '$1 == "CONFLUENCE_ROOT_CONTENT_ID" { print $2 }' \
           "$vcti_record"
-      done
+      done |
+      tr '\n' ' '
   ) || return 1
   awk -F '\t' -v catalog="$vcti_catalog" -v roots="$vcti_root_ids" '
     /^#/ || /^[[:space:]]*$/ { next }
@@ -4991,9 +4992,54 @@ cursor_extract_single_jira_project() {
     2>/dev/null
 }
 
+# Cursor hooks often inherit a minimal PATH that omits the user bin where
+# bootstrap installs beroka-governance and cursor-agent. Append those dirs only
+# when a required dependency is missing, so an earlier healthy executable keeps
+# precedence over ~/.local/bin.
+cursor_ensure_user_path() {
+  cup_need=0
+  command -v cursor-agent >/dev/null 2>&1 || cup_need=1
+  command -v gh >/dev/null 2>&1 || cup_need=1
+  [ "$cup_need" -eq 1 ] || return 0
+  for cup_dir in "$BIN_DIR" "${HOME}/.local/bin"; do
+    [ -n "$cup_dir" ] || continue
+    case ":${PATH}:" in
+      *":${cup_dir}:"*) continue ;;
+    esac
+    [ -d "$cup_dir" ] || continue
+    PATH="${PATH}:${cup_dir}"
+  done
+  export PATH
+}
+
+# Drop workspace_roots before path/name heuristics so real clone folders named
+# Beroka_Backend + Beroka_Frontend cannot permanently set both BE and FE flags.
+cursor_request_without_roots() {
+  printf '%s\n' "$CURSOR_REQUEST" | jq -c 'del(.workspace_roots)' 2>/dev/null ||
+    printf '%s\n' "$CURSOR_REQUEST"
+}
+
 cursor_select_be_fe_workspace() {
   [ "$CURSOR_WORKSPACE_MODE" = be-fe ] || return 1
-  csw_text=$(printf '%s\n' "$CURSOR_REQUEST" | tr '[:upper:]' '[:lower:]')
+
+  # Unique structured Jira project from tool_input wins over any name heuristic.
+  csw_source=${CURSOR_TOOL_INPUT:-}
+  if [ -z "$csw_source" ] || [ "$csw_source" = '{}' ]; then
+    csw_source=$(cursor_request_without_roots)
+  fi
+  csw_project=$(cursor_extract_single_jira_project "$csw_source") || csw_project=
+  case "$csw_project" in
+    BB)
+      CURSOR_WORKSPACE=$CURSOR_BACKEND_WORKSPACE
+      return 0
+      ;;
+    BF)
+      CURSOR_WORKSPACE=$CURSOR_FRONTEND_WORKSPACE
+      return 0
+      ;;
+  esac
+
+  csw_text=$(cursor_request_without_roots | tr '[:upper:]' '[:lower:]')
   csw_be=0
   csw_fe=0
   case "$csw_text" in
@@ -5001,11 +5047,6 @@ cursor_select_be_fe_workspace() {
   esac
   case "$csw_text" in
     *beroka_frontend*|*beroka-frontend*|*berokafront*) csw_fe=1 ;;
-  esac
-  csw_project=$(cursor_extract_single_jira_project "$CURSOR_REQUEST") || csw_project=
-  case "$csw_project" in
-    BB) csw_be=1 ;;
-    BF) csw_fe=1 ;;
   esac
   if [ "$csw_be" -eq 1 ] && [ "$csw_fe" -eq 0 ]; then
     CURSOR_WORKSPACE=$CURSOR_BACKEND_WORKSPACE
@@ -5269,7 +5310,9 @@ cursor_tool_provider() {
 
 cursor_private_repo_link() {
   cprl_slug=$1
-  printf '%s\n' "$CURSOR_REQUEST" |
+  # Ignore workspace_roots so multi-root BE+FE paths never look like a
+  # cross-team private link by themselves.
+  cursor_request_without_roots |
     tr '[:upper:]' '[:lower:]' |
     grep -F "$cprl_slug" >/dev/null
 }
@@ -5680,18 +5723,35 @@ cursor_shell_governed_github_write() {
   esac
   cursor_parse_request_fields >/dev/null 2>&1 || return 1
   cursor_resolve_workspaces || return 1
-  case " $csg_command " in
-    *beroka-vn/Beroka_Frontend*|*Beroka_Frontend*)
-      if [ "$CURSOR_WORKSPACE_MODE" = be-fe ]; then
-        CURSOR_WORKSPACE=$CURSOR_FRONTEND_WORKSPACE
-      fi
-      ;;
-    *beroka-vn/Beroka_Backend*|*Beroka_Backend*)
-      if [ "$CURSOR_WORKSPACE_MODE" = be-fe ]; then
-        CURSOR_WORKSPACE=$CURSOR_BACKEND_WORKSPACE
-      fi
-      ;;
-  esac
+  # Prefer explicit --repo over incidental product names in the issue body
+  # (governance bug reports often mention both Backend and Frontend).
+  if [ "$CURSOR_WORKSPACE_MODE" = be-fe ]; then
+    csg_be=0
+    csg_fe=0
+    case " $csg_command " in
+      *--repo*beroka-vn/Beroka_Frontend*|*--repo*Beroka_Frontend*)
+        csg_fe=1
+        ;;
+    esac
+    case " $csg_command " in
+      *--repo*beroka-vn/Beroka_Backend*|*--repo*Beroka_Backend*)
+        csg_be=1
+        ;;
+    esac
+    if [ "$csg_be" -eq 0 ] && [ "$csg_fe" -eq 0 ]; then
+      case " $csg_command " in
+        *beroka-vn/Beroka_Frontend*) csg_fe=1 ;;
+      esac
+      case " $csg_command " in
+        *beroka-vn/Beroka_Backend*) csg_be=1 ;;
+      esac
+    fi
+    if [ "$csg_be" -eq 1 ] && [ "$csg_fe" -eq 0 ]; then
+      CURSOR_WORKSPACE=$CURSOR_BACKEND_WORKSPACE
+    elif [ "$csg_fe" -eq 1 ] && [ "$csg_be" -eq 0 ]; then
+      CURSOR_WORKSPACE=$CURSOR_FRONTEND_WORKSPACE
+    fi
+  fi
   printf '%s\n' "$csg_command" |
     grep -Eq 'Work-item language: (English|Vietnamese|[a-z][a-z0-9-]{1,31})' ||
     return 1
@@ -5764,6 +5824,7 @@ cmd_cursor_before_shell_execution() {
 }
 
 cmd_cursor_hook() {
+  cursor_ensure_user_path
   case "$1" in
     sessionStart) cmd_cursor_session_start ;;
     beforeSubmitPrompt) cmd_cursor_before_submit_prompt ;;

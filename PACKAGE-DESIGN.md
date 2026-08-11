@@ -23,7 +23,7 @@ Legacy tracked governance files are neither parsed nor changed. They remain unti
 
 The active release record and client enrollment are the source of installation
 state. No credential is stored there.
-`v1.0.9` is the current supported capability release.
+`v1.0.10` is the current supported capability release.
 
 The release catalog is keyed by normalized canonical GitHub slug. Its reviewed record supplies profile, Jira project and board, Confluence root, integration profile, and cross-repository policy. An unknown origin is standalone with `ROUTING_REQUIRED`: source-only work may continue, but routing-dependent writes remain blocked. Catalog changes require an explicitly authorized governance-repository task.
 
@@ -35,7 +35,13 @@ cross-repository writes.
 
 Bootstrap derives one user-scoped `FE`, `BE`, or `FULL_STACK` role from exact
 `beroka-vn` GitHub Team membership. Context enforces the stored role locally;
-eligible preflights revalidate membership before external writes.
+eligible preflights revalidate membership before external writes. `FULL_STACK`
+may open the exact Backend+Frontend catalog pair in Cursor. Governed multi-root
+writes select BE or FE from a unique structured BB/BF project (or unambiguous
+repository target); name heuristics ignore `workspace_roots` path strings so
+product-folder clones do not force `TARGET_REQUIRED`. Cursor hooks append the
+user bin (`~/.local/bin`) to `PATH` only when `cursor-agent` or `gh` is missing,
+preserving earlier executable precedence.
 
 ## Client adapters and enforcement
 
@@ -71,7 +77,7 @@ bash -e -o pipefail -c '
     --repo beroka-vn/beroka-ai-governance \
     --pattern bootstrap.sh \
     --output - |
-    sh -s -- . --client codex --ready
+    sh -s -- --client codex
 '
 ```
 
