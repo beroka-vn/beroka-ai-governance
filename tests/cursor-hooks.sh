@@ -320,30 +320,48 @@ assert_denied "$(hook beforeMCPExecution "$jira_transition")" GITHUB_AUTH_REQUIR
 jira_cross_team_transition=$(printf '%s\n' "$jira_transition" | jq -c \
   '.tool_input.issueKey="BF-123"')
 assert_denied "$(hook beforeMCPExecution "$jira_cross_team_transition")" ROUTING_REQUIRED
-confluence_update=$(printf '%s\n' "$base_input" | jq -c '. + {
+confluence_handoff_body=$(printf '%s\n' \
+  'Jira: BB-11' \
+  'GitHub: N/A' \
+  '' \
+  '## Handoff — BB-11' \
+  '' \
+  'Delta for FE.')
+confluence_update=$(printf '%s\n' "$base_input" | jq -c --arg body "$confluence_handoff_body" '. + {
   tool_name:"confluence.update_page",
   url:"https://beroka.atlassian.net/wiki",
   tool_input:{
     pageId:"70713366",
     parentId:"71303169",
-    body:"Capability ID: MARKET-FU-INDEX-API\nRegistry content ID: 900003\nScope: Shared\nDomain: Market\nTransport: API\nConfluence content ID: 70713366\nExpected parent ID: 71303169"
+    body:$body
   }}')
-assert_denied "$(hook beforeMCPExecution "$confluence_update")" MAPPING_CONFLICT
-bulleted_confluence_body=$(printf '%s\n' "$confluence_update" |
-  jq -r '.tool_input.body' | sed 's/^/- /')
-bulleted_confluence_update=$(printf '%s\n' "$confluence_update" | jq -c \
-  --arg body "$bulleted_confluence_body" '.tool_input.body=$body')
-assert_denied "$(hook beforeMCPExecution "$bulleted_confluence_update")" \
-  MAPPING_CONFLICT
+confluence_update_out=$(hook beforeMCPExecution "$confluence_update")
+assert_not_contains "$confluence_update_out" HANDOFF_DELTA_REQUIRED
+assert_not_contains "$confluence_update_out" DOCS_UNACTIVATED
+# Handoff markers clear the docs gate; harness still lacks gh auth for role check.
+assert_denied "$confluence_update_out" GITHUB_AUTH_REQUIRED
 confluence_private_link=$(printf '%s\n' "$confluence_update" | jq -c \
   '.tool_input.body += "\nRelated repository: git@github.com:beroka-vn/Beroka_Frontend.git"')
 assert_denied "$(hook beforeMCPExecution "$confluence_private_link")" \
   CROSS_TEAM_LINK_SCOPE_DENIED
-assert_denied "$(hook beforeMCPExecution "$(printf '%s\n' "$confluence_update" | jq -c 'del(.tool_input.parentId)')")" MAPPING_CONFLICT
-assert_denied "$(hook beforeMCPExecution "$(printf '%s\n' "$confluence_update" | jq -c '.tool_input.parentId="71303170"')")" MAPPING_CONFLICT
-assert_denied "$(hook beforeMCPExecution "$(printf '%s\n' "$confluence_update" | jq -c '.tool_name="confluence.move_page"')")" MAPPING_CONFLICT
-assert_denied "$(hook beforeMCPExecution "$(printf '%s\n' "$confluence_update" | jq -c '.tool_input.body += "\nRegistry content ID: 900004"')")" ROUTING_REQUIRED
-assert_denied "$(hook beforeMCPExecution "$(printf '%s\n' "$confluence_update" | jq -c '.tool_input.body |= sub("Confluence content ID: 70713366"; "Confluence content ID: 70713367")')")" MAPPING_CONFLICT
+assert_denied "$(hook beforeMCPExecution "$(printf '%s\n' "$confluence_update" | jq -c '.tool_input.body="missing handoff markers"')")" \
+  HANDOFF_DELTA_REQUIRED
+confluence_create=$(printf '%s\n' "$base_input" | jq -c --arg body "$confluence_handoff_body" '. + {
+  tool_name:"createConfluencePage",
+  url:"https://beroka.atlassian.net/wiki",
+  tool_input:{
+    parentId:"76808195",
+    title:"New docs page",
+    body:$body
+  }}')
+confluence_create_out=$(hook beforeMCPExecution "$confluence_create")
+assert_not_contains "$confluence_create_out" HANDOFF_DELTA_REQUIRED
+assert_not_contains "$confluence_create_out" DOCS_UNACTIVATED
+assert_denied "$confluence_create_out" GITHUB_AUTH_REQUIRED
+confluence_create_no_handoff=$(printf '%s\n' "$confluence_create" | jq -c \
+  '.tool_input.body="create without handoff"')
+assert_denied "$(hook beforeMCPExecution "$confluence_create_no_handoff")" \
+  HANDOFF_DELTA_REQUIRED
 unknown_write=$(printf '%s\n' "$base_input" | jq -c '. + {tool_name:"create_record",url:"https://github.com",tool_input:{body:"Work-item language: English"}}')
 assert_denied "$(hook beforeMCPExecution "$unknown_write")" WORK_ITEM_TEMPLATE_REQUIRED
 

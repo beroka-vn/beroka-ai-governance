@@ -251,15 +251,15 @@ references exact Registry rows. Durable Frontend pages use
 versions without copying payloads. Create pages only when content and an owner
 exist.
 
-If the Folder is missing, return `FOLDER_CREATION_REQUIRED`; never fall back to
-a page or space root. After write/move, verify `parentId` and
+Prefer creating Epic Folders when hierarchy guidance calls for them; ordinary
+page writes remain allow-by-default unless the target is `UNACTIVATED` in the
+governance release (`DOCS_UNACTIVATED`). After write/move, verify `parentId` and
 `parentType = Folder`, otherwise return `DOC_HIERARCHY_FAILED`. If FE cannot
-open the BE Hub, return `CROSS_SPACE_ACCESS_REQUIRED`. Missing exact Registry,
-scope, domain, transport, parent, Capability ID, or content ID returns
-`ROUTING_REQUIRED`. Before every Confluence create, update, move, or handoff,
-run target-bound `confluence-write` or `confluence-handoff-verify`; a target or
-transport mismatch returns `MAPPING_CONFLICT`, and unknown targets require
-asking the user and waiting.
+open the BE Hub, return `CROSS_SPACE_ACCESS_REQUIRED`. Before every Confluence
+create or update, include handoff delta markers (`Jira:`, `GitHub:`, and a
+`## Handoff —` section or child-page handoff). Run `confluence-write` or
+`confluence-handoff-verify`; a transport mismatch on a reviewed drifted row
+returns `MAPPING_CONFLICT`.
 
 Maintain provider status as `To Do -> In Progress` when accepted work starts,
 `In Progress -> In Review` when a human marks the provider PR ready for review,

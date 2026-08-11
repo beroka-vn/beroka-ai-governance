@@ -1,4 +1,7 @@
 # repository	record-type	state	content-id	title	scope	domain	transport	parent-id	capability-id	registry-content-id
+# state: ACTIVE|PLANNED|DRIFTED|LEGACY|UNACTIVATED
+# UNACTIVATED rows are release-only hard locks. Unlisted targets are writable (allow-by-default).
+# LEGACY/ACTIVE/PLANNED/DRIFTED remain discoverability guidance and are not ordinary write gates.
 beroka-vn/Beroka_Backend	folder	LEGACY	71237633	Market — API	-	Market	API	-	-	-
 beroka-vn/Beroka_Backend	folder	LEGACY	71303169	Market — WS	-	Market	WebSocket	-	-	-
 beroka-vn/Beroka_Backend	page	DRIFTED	70713366	BB-11 — Market Data — Derivative Quote Stream Contract	-	Market	WebSocket	71303169	-	-

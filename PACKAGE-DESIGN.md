@@ -23,7 +23,7 @@ Legacy tracked governance files are neither parsed nor changed. They remain unti
 
 The active release record and client enrollment are the source of installation
 state. No credential is stored there.
-`v1.0.10` is the current supported capability release.
+`v1.0.11` is the current supported capability release.
 
 The release catalog is keyed by normalized canonical GitHub slug. Its reviewed record supplies profile, Jira project and board, Confluence root, integration profile, and cross-repository policy. An unknown origin is standalone with `ROUTING_REQUIRED`: source-only work may continue, but routing-dependent writes remain blocked. Catalog changes require an explicitly authorized governance-repository task.
 
@@ -164,7 +164,7 @@ client's connector inspection requires `jq` for every selected client.
 
 schema-1 compatibility remains for earlier releases. `provider-owned evidence` is the capability baseline; `cross-client adapters` normalize only the inventory returned by Codex, Claude Code, or Cursor. Workflow rules are instruction-driven and are not hard CLI enforcement.
 
-Before a Jira create, resolve exact metadata and search the intended record. Create once, then read back the key; an indeterminate result is `CREATION_STATUS_UNKNOWN` and is never retried automatically. Confluence writes also read back content and parent. Folder routing remains blocked without isolated pilot evidence.
+Before a Jira create, resolve exact metadata and search the intended record. Create once, then read back the key; an indeterminate result is `CREATION_STATUS_UNKNOWN` and is never retried automatically. Confluence writes also read back content and parent. Ordinary Confluence create/move use `confluence-page-parent-write`. Writes are allow-by-default except release-hardcoded `UNACTIVATED` targets (`DOCS_UNACTIVATED`) and missing handoff delta markers (`HANDOFF_DELTA_REQUIRED`).
 
 ## Version, security, and validation
 
