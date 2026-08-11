@@ -30,12 +30,12 @@ returns `Result: PASS`.
 Repository-specific instructions may narrow central governance. They must not
 broaden authority or bypass a central stop condition.
 
-Before a Confluence write, run read-only `beroka-governance confluence-discover`
-when the target inventory may be legacy-only or missing. Use authorized
-bootstrap (`confluence-bootstrap-plan` → human-confirmed MCP create → capture →
-verify → reviewed inventory PR) before ordinary documentation updates. Identify
-the exact Confluence target and run its target-bound preflight; if any target
-field is unknown, ask the user and wait.
+Before a Confluence write, prefer allow-by-default create/update/move with
+handoff delta markers (`Jira:`, `GitHub:`, and either `## Handoff — <JiraKey>`
+or `Handoff form: child-page`). Targets listed as `UNACTIVATED` in the pinned
+governance release return `DOCS_UNACTIVATED` and can change only via a reviewed
+governance release PR. Use optional `confluence-discover` /
+`confluence-bootstrap-*` only as hierarchy guidance, never as a write gate.
 Create Jira items with Atlassian MCP `createJiraIssue` using official fields
 (`projectKey`, `issueTypeName`, `parent`, `assignee_account_id`,
 `additional_fields.priority.name`) and put `Work-item language: English` plus

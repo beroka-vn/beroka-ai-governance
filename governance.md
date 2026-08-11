@@ -354,11 +354,16 @@ updates. Cross-team Jira or handoff text containing opposite-team private
 GitHub links returns `CROSS_TEAM_LINK_SCOPE_DENIED`; use the exact accessible
 Confluence page instead.
 
-Before a Confluence create, update, move, or handoff, resolve every target
-field and run target-bound `confluence-write` or
-`confluence-handoff-verify`. Unknown targets return `ROUTING_REQUIRED`; a
-transport or target mismatch returns `MAPPING_CONFLICT`, and the agent asks the
-user and waits.
+Before a Confluence create, update, move, or handoff, run
+`confluence-write` or `confluence-handoff-verify`. Targets not listed as
+`UNACTIVATED` in the governance release are writable by default. An
+`UNACTIVATED` content ID or parent returns `DOCS_UNACTIVATED` and can change
+only through a reviewed governance release PR. Create/update bodies must
+include `Jira:`, `GitHub:`, and a handoff delta (`## Handoff — <JiraKey>`
+section or child page with `Handoff form: child-page`); missing markers return
+`HANDOFF_DELTA_REQUIRED`. A transport mismatch on a reviewed drifted row
+returns `MAPPING_CONFLICT`, and the agent asks the user and waits. Hierarchy
+bootstrap remains optional guidance, not a write gate.
 
 Provider status is maintained as:
 
@@ -435,8 +440,9 @@ branch owned by another writer.
 - The Hub references Registry rows. Durable FE module Capability Indexes link
   exact Registry rows and Backend content IDs; never copy the BE contract.
 - Create no empty subpages.
-- If the Folder is missing or cannot be created, return
-  `FOLDER_CREATION_REQUIRED`; never fall back to a page or space root.
+- Prefer creating Epic Folders when hierarchy guidance calls for them; do not
+  treat a missing preferred Folder as a hard deny for ordinary page writes.
+  Release-hardcoded `UNACTIVATED` targets return `DOCS_UNACTIVATED` instead.
 - A page passes only when readback shows the correct `parentId` and
   `parentType = Folder`; otherwise return `DOC_HIERARCHY_FAILED`.
 - If FE cannot open the owning BE Folder/Hub, return

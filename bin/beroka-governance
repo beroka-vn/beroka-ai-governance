@@ -760,7 +760,7 @@ validate_confluence_target_inventory() {
     NF != 11 { invalid=1; next }
     $1 !~ /^beroka-vn\/Beroka_(Backend|Frontend)$/ ||
       $2 !~ /^(page|folder)$/ ||
-      $3 !~ /^(ACTIVE|PLANNED|DRIFTED|LEGACY)$/ ||
+      $3 !~ /^(ACTIVE|PLANNED|DRIFTED|LEGACY|UNACTIVATED)$/ ||
       $4 !~ /^([1-9][0-9]*|-)$/ || $5 == "" ||
       $6 !~ /^(Shared|Derivatives|Underlying|-)$/ ||
       $7 !~ /^(Market|User|-)$/ ||
@@ -783,6 +783,8 @@ validate_confluence_target_inventory() {
     $3 == "DRIFTED" && ($2 != "page" || $4 == "-") { invalid=1 }
     $3 == "LEGACY" &&
       ($2 != "folder" || $4 == "-" || $10 != "-" || $11 != "-") { invalid=1 }
+    $3 == "UNACTIVATED" &&
+      ($4 == "-" || $10 != "-" || $11 != "-") { invalid=1 }
     $4 != "-" && ++content[$4] > 1 { invalid=1 }
     $10 != "-" && ++capability[$10] > 1 { invalid=1 }
     { rows++; state[NR]=$3; type[NR]=$2; repo[NR]=$1; id[NR]=$4; parent[NR]=$9;
@@ -3721,21 +3723,38 @@ die_folder_creation_required() {
   [ -n "$dfc_repo" ] || dfc_repo=REPO
   printf '%s\n' "Result: FOLDER_CREATION_REQUIRED" >&2
   printf '%s\n' "$dfc_message" >&2
-  printf '%s\n' "Remediation: beroka-governance confluence-discover $dfc_repo" >&2
-  if [ -n "${CONFLUENCE_TARGET_SCOPE:-}" ] &&
-     [ -n "${CONFLUENCE_TARGET_DOMAIN:-}" ] &&
-     [ -n "${CONFLUENCE_TARGET_TRANSPORT:-}" ]
-  then
-    printf '%s\n' \
-      "Then: beroka-governance confluence-bootstrap-plan $dfc_repo --scope $CONFLUENCE_TARGET_SCOPE --domain $CONFLUENCE_TARGET_DOMAIN --transport $CONFLUENCE_TARGET_TRANSPORT" \
-      >&2
-  else
-    printf '%s\n' \
-      'Then: beroka-governance confluence-bootstrap-plan REPO --scope SCOPE --domain DOMAIN --transport API|WebSocket' \
-      >&2
-  fi
+  printf '%s\n' \
+    "Guidance: beroka-governance confluence-discover $dfc_repo" \
+    'Hierarchy bootstrap is optional guidance, not a write gate.' \
+    'Ordinary confluence-write is allow-by-default unless the target is UNACTIVATED in the governance release.' \
+    >&2
   cleanup_personal_stage || :
   exit 1
+}
+
+die_docs_unactivated() {
+  ddu_message=$1
+  printf '%s\n' "Result: DOCS_UNACTIVATED" >&2
+  printf '%s\n' "$ddu_message" >&2
+  printf '%s\n' \
+    'Remediation: open a reviewed governance release PR that removes or replaces the UNACTIVATED row in runtime/integrations/beroka-be-fe.confluence-targets.' \
+    'Agents and user sessions cannot unactivate or reactivate docs locally.' \
+    >&2
+  cleanup_personal_stage || :
+  exit 1
+}
+
+confluence_content_is_unactivated() {
+  cciu_file=$1
+  cciu_content=$2
+  [ -n "$cciu_content" ] && [ "$cciu_content" != new ] || return 1
+  awk -F '\t' \
+    -v repository="$REPOSITORY_SLUG" \
+    -v content="$cciu_content" '
+      /^#/ || /^[[:space:]]*$/ { next }
+      $1 == repository && $3 == "UNACTIVATED" && $4 == content { found=1 }
+      END { exit !found }
+    ' "$cciu_file"
 }
 
 require_confluence_triple() {
@@ -3897,20 +3916,21 @@ cmd_confluence_discover() {
          "$CONFLUENCE_TARGETS_FILE" "$ccd_scope" "$ccd_domain" "$ccd_transport"; }
   then
     printf '%s\n' \
-      'Next: ordinary target-bound confluence-write' \
-      'Phase: ordinary documentation update' \
+      'Next: ordinary allow-by-default confluence-write with Jira/GitHub handoff delta' \
+      'Phase: ordinary documentation update (UNACTIVATED targets remain release-locked)' \
       'Result: DISCOVERY_COMPLETE'
     return 0
   fi
   if [ -n "$ccd_scope" ]; then
     printf '%s\n' \
-      "Next: beroka-governance confluence-bootstrap-plan $REPO --scope $ccd_scope --domain $ccd_domain --transport $ccd_transport"
+      "Optional hierarchy guidance: beroka-governance confluence-bootstrap-plan $REPO --scope $ccd_scope --domain $ccd_domain --transport $ccd_transport"
   else
     printf '%s\n' \
-      "Next: beroka-governance confluence-bootstrap-plan $REPO --scope SCOPE --domain DOMAIN --transport API|WebSocket"
+      "Optional hierarchy guidance: beroka-governance confluence-bootstrap-plan $REPO --scope SCOPE --domain DOMAIN --transport API|WebSocket"
   fi
   printf '%s\n' \
-    'Phase: authorized bootstrap required before ordinary documentation updates' \
+    'Phase: hierarchy bootstrap is optional guidance, not a write gate' \
+    'Ordinary confluence-write is allow-by-default unless the target is UNACTIVATED in the governance release' \
     'Result: DISCOVERY_COMPLETE'
 }
 
@@ -4208,30 +4228,22 @@ resolve_confluence_target() {
     "$RELEASE_DIR/runtime/repositories" ||
     die ROUTING_REQUIRED 'Reviewed Confluence target inventory is unavailable'
 
-  printf '%s\n' "$CONFLUENCE_TARGET_CAPABILITY_ID" |
-    grep -Eq '^[A-Z][A-Z0-9]*(-[A-Z0-9]+)*$' ||
-    die ROUTING_REQUIRED \
-      'An uppercase-kebab-case Capability ID is required'
-  case "$CONFLUENCE_TARGET_SCOPE" in
-    Shared|Derivatives|Underlying) ;;
-    *) die ROUTING_REQUIRED 'A reviewed Confluence scope is required' ;;
-  esac
-  case "$CONFLUENCE_TARGET_DOMAIN" in
-    Market|User) ;;
-    *) die ROUTING_REQUIRED 'A reviewed Confluence domain is required' ;;
-  esac
-  case "$CONFLUENCE_TARGET_TRANSPORT" in
-    API|WebSocket) ;;
-    *) die ROUTING_REQUIRED 'API or WebSocket transport is required' ;;
-  esac
-  for rct_id in \
-    "$CONFLUENCE_TARGET_PARENT_ID" \
-    "$CONFLUENCE_TARGET_REGISTRY_CONTENT_ID"
-  do
-    printf '%s\n' "$rct_id" | grep -Eq '^[1-9][0-9]*$' ||
-      die ROUTING_REQUIRED \
-        'Numeric parent and Registry content IDs are required'
-  done
+  # Allow-by-default: only UNACTIVATED rows hard-deny writes. Inventory
+  # ACTIVE/PLANNED/LEGACY/DRIFTED rows remain discoverability guidance.
+  if [ "$CONFLUENCE_TARGET_CONTENT_ID" != new ] &&
+     confluence_content_is_unactivated "$rct_file" \
+       "$CONFLUENCE_TARGET_CONTENT_ID"
+  then
+    die_docs_unactivated \
+      "Confluence content $CONFLUENCE_TARGET_CONTENT_ID is UNACTIVATED in the governance release"
+  fi
+  if [ -n "$CONFLUENCE_TARGET_PARENT_ID" ] &&
+     confluence_content_is_unactivated "$rct_file" \
+       "$CONFLUENCE_TARGET_PARENT_ID"
+  then
+    die_docs_unactivated \
+      "Confluence parent $CONFLUENCE_TARGET_PARENT_ID is UNACTIVATED in the governance release"
+  fi
 
   rct_record=$(
     awk -F '\t' \
@@ -4242,7 +4254,7 @@ resolve_confluence_target() {
         /^#/ || /^[[:space:]]*$/ { next }
         $1 == repository &&
           ((action == "create" && $3 == "PLANNED" && $4 == "-" &&
-            $10 == capability) ||
+            capability != "" && $10 == capability) ||
            (action != "create" && $4 == content)) {
             matches++
             row=$0
@@ -4254,63 +4266,35 @@ resolve_confluence_target() {
       ' "$rct_file"
   ) || rct_record=
   if [ -z "$rct_record" ]; then
-    case "$CONFLUENCE_TARGET_ACTION" in
-      create)
-        rct_parent_state=
-        rct_parent_row=$(
-          awk -F '\t' \
-            -v repository="$REPOSITORY_SLUG" \
-            -v parent="$CONFLUENCE_TARGET_PARENT_ID" \
-            -v scope="$CONFLUENCE_TARGET_SCOPE" \
-            -v domain="$CONFLUENCE_TARGET_DOMAIN" \
-            -v transport="$CONFLUENCE_TARGET_TRANSPORT" '
-              /^#/ || /^[[:space:]]*$/ { next }
-              $1 == repository && $2 == "folder" && $4 == parent &&
-                ($6 == "-" || $6 == scope) &&
-                ($7 == "-" || $7 == domain) &&
-                ($8 == "-" || $8 == transport) { print $3; exit }
-          ' "$rct_file"
-        ) || rct_parent_row=
-        [ -n "$rct_parent_row" ] ||
-          die ROUTING_REQUIRED 'No exact reviewed Confluence target exists'
-        rct_state=UNTRACKED
-        rct_repository=$REPOSITORY_SLUG
-        rct_type=page
-        rct_content=-
-        rct_title='(untracked page target)'
-        rct_scope=$CONFLUENCE_TARGET_SCOPE
-        rct_domain=$CONFLUENCE_TARGET_DOMAIN
-        rct_transport=$CONFLUENCE_TARGET_TRANSPORT
-        rct_parent=$CONFLUENCE_TARGET_PARENT_ID
-        rct_capability=$CONFLUENCE_TARGET_CAPABILITY_ID
-        rct_registry=$CONFLUENCE_TARGET_REGISTRY_CONTENT_ID
-        ;;
-      *)
-        if confluence_parent_is_legacy "$rct_file"; then
-          die_folder_creation_required \
-            'The requested parent is a legacy generic folder'
-        fi
-        die ROUTING_REQUIRED 'No exact reviewed Confluence target exists'
-        ;;
-    esac
-  else
-    IFS="$(printf '\t')" read -r rct_repository rct_type rct_state \
-      rct_content rct_title rct_scope rct_domain rct_transport rct_parent \
-      rct_capability rct_registry <<EOF
-$rct_record
-EOF
+    rct_state=UNTRACKED
+    rct_repository=$REPOSITORY_SLUG
+    rct_type=page
+    rct_content=$CONFLUENCE_TARGET_CONTENT_ID
+    rct_title='(allow-by-default writable target)'
+    rct_scope=${CONFLUENCE_TARGET_SCOPE:--}
+    rct_domain=${CONFLUENCE_TARGET_DOMAIN:--}
+    rct_transport=${CONFLUENCE_TARGET_TRANSPORT:--}
+    rct_parent=${CONFLUENCE_TARGET_PARENT_ID:--}
+    rct_capability=${CONFLUENCE_TARGET_CAPABILITY_ID:--}
+    rct_registry=${CONFLUENCE_TARGET_REGISTRY_CONTENT_ID:--}
+    return 0
   fi
 
-  [ "$rct_scope" = - ] && rct_scope=$CONFLUENCE_TARGET_SCOPE
-  [ "$rct_domain" = - ] && rct_domain=$CONFLUENCE_TARGET_DOMAIN
-  [ "$rct_transport" = - ] && rct_transport=$CONFLUENCE_TARGET_TRANSPORT
-  [ "$rct_parent" = - ] && rct_parent=$CONFLUENCE_TARGET_PARENT_ID
-  [ "$rct_capability" = - ] && rct_capability=$CONFLUENCE_TARGET_CAPABILITY_ID
-  [ "$rct_registry" = - ] && rct_registry=$CONFLUENCE_TARGET_REGISTRY_CONTENT_ID
+  IFS="$(printf '\t')" read -r rct_repository rct_type rct_state \
+    rct_content rct_title rct_scope rct_domain rct_transport rct_parent \
+    rct_capability rct_registry <<EOF
+$rct_record
+EOF
 
   case "$rct_state" in
+    UNACTIVATED)
+      die_docs_unactivated \
+        "Confluence content $CONFLUENCE_TARGET_CONTENT_ID is UNACTIVATED in the governance release"
+      ;;
     DRIFTED)
-      if [ "$CONFLUENCE_TARGET_TRANSPORT" != "$rct_transport" ]; then
+      if [ -n "$CONFLUENCE_TARGET_TRANSPORT" ] &&
+         [ "$CONFLUENCE_TARGET_TRANSPORT" != "$rct_transport" ]
+      then
         printf '%s\n' \
           "Target content ID: $CONFLUENCE_TARGET_CONTENT_ID" \
           "Intended transport: $CONFLUENCE_TARGET_TRANSPORT" \
@@ -4318,19 +4302,31 @@ EOF
         die MAPPING_CONFLICT
       fi
       ;;
-    LEGACY)
-      die_folder_creation_required \
-        'A legacy folder is not a canonical target'
-      ;;
   esac
-  [ "$rct_scope" = "$CONFLUENCE_TARGET_SCOPE" ] &&
-    [ "$rct_domain" = "$CONFLUENCE_TARGET_DOMAIN" ] &&
-    [ "$rct_transport" = "$CONFLUENCE_TARGET_TRANSPORT" ] &&
-    [ "$rct_parent" = "$CONFLUENCE_TARGET_PARENT_ID" ] &&
-    [ "$rct_capability" = "$CONFLUENCE_TARGET_CAPABILITY_ID" ] &&
-    [ "$rct_registry" = "$CONFLUENCE_TARGET_REGISTRY_CONTENT_ID" ] ||
-    die MAPPING_CONFLICT \
-      'Requested Confluence metadata conflicts with the reviewed target'
+
+  # When callers still supply full reviewed metadata, keep consistency checks.
+  if [ -n "$CONFLUENCE_TARGET_SCOPE" ] &&
+     [ -n "$CONFLUENCE_TARGET_DOMAIN" ] &&
+     [ -n "$CONFLUENCE_TARGET_TRANSPORT" ] &&
+     [ -n "$CONFLUENCE_TARGET_PARENT_ID" ] &&
+     [ -n "$CONFLUENCE_TARGET_CAPABILITY_ID" ] &&
+     [ -n "$CONFLUENCE_TARGET_REGISTRY_CONTENT_ID" ]
+  then
+    [ "$rct_scope" = - ] && rct_scope=$CONFLUENCE_TARGET_SCOPE
+    [ "$rct_domain" = - ] && rct_domain=$CONFLUENCE_TARGET_DOMAIN
+    [ "$rct_transport" = - ] && rct_transport=$CONFLUENCE_TARGET_TRANSPORT
+    [ "$rct_parent" = - ] && rct_parent=$CONFLUENCE_TARGET_PARENT_ID
+    [ "$rct_capability" = - ] && rct_capability=$CONFLUENCE_TARGET_CAPABILITY_ID
+    [ "$rct_registry" = - ] && rct_registry=$CONFLUENCE_TARGET_REGISTRY_CONTENT_ID
+    [ "$rct_scope" = "$CONFLUENCE_TARGET_SCOPE" ] &&
+      [ "$rct_domain" = "$CONFLUENCE_TARGET_DOMAIN" ] &&
+      [ "$rct_transport" = "$CONFLUENCE_TARGET_TRANSPORT" ] &&
+      [ "$rct_parent" = "$CONFLUENCE_TARGET_PARENT_ID" ] &&
+      [ "$rct_capability" = "$CONFLUENCE_TARGET_CAPABILITY_ID" ] &&
+      [ "$rct_registry" = "$CONFLUENCE_TARGET_REGISTRY_CONTENT_ID" ] ||
+      die MAPPING_CONFLICT \
+        'Requested Confluence metadata conflicts with the reviewed target'
+  fi
 }
 
 require_operation_routing() {
@@ -4359,7 +4355,7 @@ require_operation_routing() {
           die ROUTING_REQUIRED 'Confluence content target details are required'
           ;;
         update) PREFLIGHT_CAPABILITY=confluence-page-update ;;
-        create|move) PREFLIGHT_CAPABILITY=confluence-folder-parent-write ;;
+        create|move) PREFLIGHT_CAPABILITY=confluence-page-parent-write ;;
         *) die ROUTING_REQUIRED 'Confluence action is invalid' ;;
       esac
       if [ -n "$CONFLUENCE_TARGET_ACTION" ]; then
@@ -5294,7 +5290,14 @@ cursor_tool_provider() {
   CURSOR_TOOL_NAME=$(printf '%s\n' "$CURSOR_REQUEST" | jq -r '.tool_name // .name // ""') || return 1
   CURSOR_TOOL_URL=$(printf '%s\n' "$CURSOR_REQUEST" | jq -r '.url // ""') || return 1
   CURSOR_TOOL_COMMAND=$(printf '%s\n' "$CURSOR_REQUEST" | jq -r '.command // ""') || return 1
-  CURSOR_TOOL_INPUT=$(printf '%s\n' "$CURSOR_REQUEST" | jq -c '.tool_input // {} | select(type == "object")') || return 1
+  # Cursor may pass tool_input as an object or as a JSON string. Parse strings
+  # so createJiraIssue fields remain visible to template and BE/FE selection.
+  CURSOR_TOOL_INPUT=$(printf '%s\n' "$CURSOR_REQUEST" | jq -c '
+    .tool_input // {} |
+    if type == "object" then .
+    elif type == "string" then (fromjson? // {})
+    else {} end
+  ') || return 1
   CURSOR_TOOL_TEXT=$(printf '%s %s %s' "$CURSOR_TOOL_NAME" "$CURSOR_TOOL_URL" "$CURSOR_TOOL_COMMAND" | tr '[:upper:]' '[:lower:]')
   case "$CURSOR_TOOL_TEXT" in
     *github.com*|*github*) CURSOR_PROVIDER=github ;;
@@ -5449,6 +5452,29 @@ cursor_confluence_marker() {
   '
 }
 
+cursor_confluence_handoff_ok() {
+  ccho_body=$1
+  ccho_title=$2
+  printf '%s\n' "$ccho_body" | cursor_confluence_marker Jira >/dev/null ||
+    return 1
+  ccho_github=$(printf '%s\n' "$ccho_body" |
+    cursor_confluence_marker GitHub) || return 1
+  case "$ccho_github" in
+    N/A|http://*|https://*|git@*) ;;
+    *) return 1 ;;
+  esac
+  if printf '%s\n' "$ccho_body" | grep -Eq '^#+[[:space:]]+Handoff[[:space:]]+[—-]'
+  then
+    return 0
+  fi
+  ccho_form=$(printf '%s\n' "$ccho_body" |
+    cursor_confluence_marker 'Handoff form') || return 1
+  [ "$ccho_form" = child-page ] || return 1
+  printf '%s\n' "$ccho_title" |
+    grep -Eq '^Handoff[[:space:]]+[—-]' || return 1
+  return 0
+}
+
 cursor_confluence_preflight() {
   ccp_action=update
   case "$CURSOR_TOOL_TEXT" in
@@ -5472,31 +5498,23 @@ cursor_confluence_preflight() {
     [.. | objects | .parentId? | select(type == "string")] | unique |
     if length == 0 then "" elif length == 1 then .[0] else error("parent") end
   ' 2>/dev/null) || return 1
-  ccp_capability=$(printf '%s\n' "$ccp_body" |
-    cursor_confluence_marker 'Capability ID') || return 1
-  ccp_registry=$(printf '%s\n' "$ccp_body" |
-    cursor_confluence_marker 'Registry content ID') || return 1
-  ccp_scope=$(printf '%s\n' "$ccp_body" |
-    cursor_confluence_marker Scope) || return 1
-  ccp_domain=$(printf '%s\n' "$ccp_body" |
-    cursor_confluence_marker Domain) || return 1
-  ccp_transport=$(printf '%s\n' "$ccp_body" |
-    cursor_confluence_marker Transport) || return 1
-  ccp_body_target=$(printf '%s\n' "$ccp_body" |
-    cursor_confluence_marker 'Confluence content ID') || return 1
-  ccp_expected_parent=$(printf '%s\n' "$ccp_body" |
-    cursor_confluence_marker 'Expected parent ID') || return 1
-  [ "$ccp_target" = "$ccp_body_target" ] || return 2
-  [ -z "$ccp_parent" ] || [ "$ccp_parent" = "$ccp_expected_parent" ] || return 2
+  ccp_title=$(printf '%s\n' "$CURSOR_TOOL_INPUT" | jq -er '
+    [.. | objects | .title? | select(type == "string")] | unique |
+    if length == 0 then "" elif length == 1 then .[0] else error("title") end
+  ' 2>/dev/null) || ccp_title=
+  if ! cursor_confluence_handoff_ok "$ccp_body" "$ccp_title"; then
+    printf '%s\n' \
+      'Result: HANDOFF_DELTA_REQUIRED' \
+      'Provide Jira: <KEY|URL>, GitHub: <URL|N/A>, and either a ## Handoff — <JiraKey> section or Handoff form: child-page with title Handoff — <JiraKey> — <slug>.'
+    return 1
+  fi
+  ccp_preflight_args=
+  set -- --confluence-action "$ccp_action" --target-content-id "$ccp_target"
+  if [ -n "$ccp_parent" ]; then
+    set -- "$@" --expected-parent-id "$ccp_parent"
+  fi
   cmd_preflight "$CURSOR_WORKSPACE" --client cursor \
-    --operation confluence-write --non-interactive \
-    --confluence-action "$ccp_action" \
-    --target-content-id "$ccp_target" \
-    --capability-id "$ccp_capability" \
-    --scope "$ccp_scope" --domain "$ccp_domain" \
-    --transport "$ccp_transport" \
-    --expected-parent-id "$ccp_expected_parent" \
-    --registry-content-id "$ccp_registry"
+    --operation confluence-write --non-interactive "$@"
 }
 
 cursor_language_label() {

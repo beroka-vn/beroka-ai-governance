@@ -27,22 +27,25 @@
 - If create status is indeterminate, return `CREATION_STATUS_UNKNOWN`; never retry automatically
   or create a second record.
 - Confluence creation uses exact trusted space/root routing and reads back the
-  created content and parent. Folder routing remains blocked without isolated
-  pilot evidence.
-- Before a Confluence create, update, move, or handoff, resolve the exact
-  content ID, Capability ID, scope, domain, transport, parent ID, and Registry
-  content ID; run target-bound `confluence-write` or
-  `confluence-handoff-verify`. Unknown or ambiguous targets return
-  `ROUTING_REQUIRED`; a target or transport mismatch returns
+  created content and parent. Ordinary create/move use
+  `confluence-page-parent-write`. Targets not listed as `UNACTIVATED` in the
+  governance release are writable by default.
+- Before a Confluence create or update, include handoff trace markers in the
+  body: `Jira: <KEY|URL>`, `GitHub: <URL|N/A>`, and either a
+  `## Handoff — <JiraKey>` section or `Handoff form: child-page` with title
+  `Handoff — <JiraKey> — <slug>`. Missing markers return
+  `HANDOFF_DELTA_REQUIRED`.
+- Before a Confluence create, update, move, or handoff, run
+  `confluence-write` or `confluence-handoff-verify`. A content ID or parent ID
+  listed as `UNACTIVATED` in the pinned release inventory returns
+  `DOCS_UNACTIVATED` (only a reviewed governance release PR can change that
+  list). A transport mismatch on a reviewed drifted row returns
   `MAPPING_CONFLICT`; ask the user and wait.
-- Confluence documentation has three phases. Use read-only
-  `beroka-governance confluence-discover` first. When the inventory is
-  legacy-only or missing an ACTIVE folder/Registry, run authorized bootstrap
-  (`confluence-bootstrap-plan` → human-confirmed MCP create →
-  `confluence-bootstrap-capture` → `confluence-bootstrap-verify`) and open a
-  reviewed governance inventory PR. Only after ACTIVE folder rows exist, use
-  ordinary target-bound documentation updates. Never guess Capability ID,
-  Registry ID, parent ID, or title similarity.
+- Confluence hierarchy guidance is optional. Use read-only
+  `beroka-governance confluence-discover` and optional
+  `confluence-bootstrap-*` to improve Scope—Domain—Transport discoverability.
+  Bootstrap is not a write gate. Never invent an `UNACTIVATED` row in a user
+  session.
 - When creating a Jira work item from Cursor, call Atlassian MCP
   `createJiraIssue` with official fields only: `projectKey`, `issueTypeName`,
   `parent` (or standalone reason in description), `assignee_account_id`,
