@@ -208,7 +208,7 @@ bash -e -o pipefail -c '
     --repo beroka-vn/beroka-ai-governance \
     --pattern bootstrap.sh \
     --output - |
-    sh -s -- . --client codex --ready
+    sh -s -- --client codex
 '
 EOF
 )
@@ -318,7 +318,7 @@ GH_AUTH_STATE=required \
   /bin/sh "$behavior_root/quick-start.sh"
 case "$(cat "$behavior_root/gh-calls")" in
   *'gh auth login --hostname github.com --web'*\
-*'sh -s -- . --client codex --ready'*) ;;
+*'sh -s -- --client codex'*) ;;
   *) fail 'README Quick start did not authenticate and install' ;;
 esac
 
