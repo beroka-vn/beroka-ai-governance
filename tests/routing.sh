@@ -1433,6 +1433,24 @@ then
 fi
 assert_contains "$output" 'Result: DOCS_UNACTIVATED'
 
+if output=$($CLI preflight "$canonical_backend" --client codex \
+  --operation confluence-write --non-interactive \
+  --confluence-action move --target-content-id 900001 2>&1)
+then
+  fail 'move without destination parent passed'
+fi
+assert_contains "$output" 'Result: ROUTING_REQUIRED'
+assert_contains "$output" 'destination parent'
+
+if output=$($CLI preflight "$canonical_backend" --client codex \
+  --operation confluence-write --non-interactive \
+  --confluence-action move --target-content-id 900001 \
+  --expected-parent-id 990001 2>&1)
+then
+  fail 'move under UNACTIVATED parent passed'
+fi
+assert_contains "$output" 'Result: DOCS_UNACTIVATED'
+
 output=$($CLI preflight "$canonical_backend" --client codex \
   --operation confluence-write --non-interactive \
   --confluence-action update --target-content-id 900004 \

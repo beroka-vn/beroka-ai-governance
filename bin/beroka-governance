@@ -4230,6 +4230,12 @@ resolve_confluence_target() {
 
   # Allow-by-default: only UNACTIVATED rows hard-deny writes. Inventory
   # ACTIVE/PLANNED/LEGACY/DRIFTED rows remain discoverability guidance.
+  if [ "$CONFLUENCE_TARGET_ACTION" = move ]; then
+    printf '%s\n' "$CONFLUENCE_TARGET_PARENT_ID" |
+      grep -Eq '^[1-9][0-9]*$' ||
+      die ROUTING_REQUIRED \
+        'A numeric destination parent ID is required for Confluence moves'
+  fi
   if [ "$CONFLUENCE_TARGET_CONTENT_ID" != new ] &&
      confluence_content_is_unactivated "$rct_file" \
        "$CONFLUENCE_TARGET_CONTENT_ID"
@@ -5455,8 +5461,15 @@ cursor_confluence_marker() {
 cursor_confluence_handoff_ok() {
   ccho_body=$1
   ccho_title=$2
-  printf '%s\n' "$ccho_body" | cursor_confluence_marker Jira >/dev/null ||
+  ccho_jira=$(printf '%s\n' "$ccho_body" | cursor_confluence_marker Jira) ||
     return 1
+  case "$ccho_jira" in
+    http://*|https://*) ;;
+    *)
+      printf '%s\n' "$ccho_jira" |
+        grep -Eq '^[A-Z][A-Z0-9]+-[1-9][0-9]*$' || return 1
+      ;;
+  esac
   ccho_github=$(printf '%s\n' "$ccho_body" |
     cursor_confluence_marker GitHub) || return 1
   case "$ccho_github" in
@@ -5472,6 +5485,14 @@ cursor_confluence_handoff_ok() {
   [ "$ccho_form" = child-page ] || return 1
   printf '%s\n' "$ccho_title" |
     grep -Eq '^Handoff[[:space:]]+[—-]' || return 1
+  ccho_canonical=$(printf '%s\n' "$ccho_body" |
+    cursor_confluence_marker Canonical) || return 1
+  case "$ccho_canonical" in
+    http://*|https://*) ;;
+    *)
+      printf '%s\n' "$ccho_canonical" | grep -Eq '^[1-9][0-9]*$' || return 1
+      ;;
+  esac
   return 0
 }
 
@@ -5490,13 +5511,26 @@ cursor_confluence_preflight() {
       if length == 1 then .[0] else error("target") end
     ' 2>/dev/null) || return 1
   fi
-  ccp_body=$(printf '%s\n' "$CURSOR_TOOL_INPUT" | jq -er '
-    [.. | objects | (.body?, .content?) | select(type == "string")] |
-    unique | if length == 1 then .[0] else error("body") end
-  ' 2>/dev/null) || return 1
   ccp_parent=$(printf '%s\n' "$CURSOR_TOOL_INPUT" | jq -er '
     [.. | objects | .parentId? | select(type == "string")] | unique |
     if length == 0 then "" elif length == 1 then .[0] else error("parent") end
+  ' 2>/dev/null) || return 1
+  if [ "$ccp_action" = move ]; then
+    printf '%s\n' "$ccp_parent" | grep -Eq '^[1-9][0-9]*$' || {
+      printf '%s\n' \
+        'Result: ROUTING_REQUIRED' \
+        'Provide parentId as the numeric destination parent for Confluence moves.'
+      return 1
+    }
+    set -- --confluence-action move --target-content-id "$ccp_target" \
+      --expected-parent-id "$ccp_parent"
+    cmd_preflight "$CURSOR_WORKSPACE" --client cursor \
+      --operation confluence-write --non-interactive "$@"
+    return $?
+  fi
+  ccp_body=$(printf '%s\n' "$CURSOR_TOOL_INPUT" | jq -er '
+    [.. | objects | (.body?, .content?) | select(type == "string")] |
+    unique | if length == 1 then .[0] else error("body") end
   ' 2>/dev/null) || return 1
   ccp_title=$(printf '%s\n' "$CURSOR_TOOL_INPUT" | jq -er '
     [.. | objects | .title? | select(type == "string")] | unique |
@@ -5505,10 +5539,9 @@ cursor_confluence_preflight() {
   if ! cursor_confluence_handoff_ok "$ccp_body" "$ccp_title"; then
     printf '%s\n' \
       'Result: HANDOFF_DELTA_REQUIRED' \
-      'Provide Jira: <KEY|URL>, GitHub: <URL|N/A>, and either a ## Handoff — <JiraKey> section or Handoff form: child-page with title Handoff — <JiraKey> — <slug>.'
+      'Provide Jira: <KEY|URL>, GitHub: <URL|N/A>, and either a ## Handoff — <JiraKey> section or Handoff form: child-page with title Handoff — <JiraKey> — <slug> plus Canonical: <URL|content-id>.'
     return 1
   fi
-  ccp_preflight_args=
   set -- --confluence-action "$ccp_action" --target-content-id "$ccp_target"
   if [ -n "$ccp_parent" ]; then
     set -- "$@" --expected-parent-id "$ccp_parent"

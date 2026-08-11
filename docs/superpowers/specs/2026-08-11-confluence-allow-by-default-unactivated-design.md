@@ -24,7 +24,9 @@ Hard-lock only targets that a governance release explicitly marks `UNACTIVATED`.
    - Delta form A: a section heading `## Handoff — <JiraKey>` (or `# Handoff —`)
      with this change’s summary
    - Delta form B: child page titled `Handoff — <JiraKey> — <date-or-slug>` plus
-     body marker `Handoff form: child-page` and a link to the canonical page
+     body markers `Handoff form: child-page` and `Canonical: <URL|content-id>`
+   - Moves do not require handoff deltas, but must name a numeric destination
+     parent ID so UNACTIVATED parents cannot be skipped
 4. **Hierarchy is guidance.** `LEGACY` / preferred Scope—Domain—Transport folders
    and `confluence-bootstrap-*` remain discoverability helpers. They do not
    hard-deny ordinary writes.

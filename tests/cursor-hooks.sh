@@ -362,6 +362,39 @@ confluence_create_no_handoff=$(printf '%s\n' "$confluence_create" | jq -c \
   '.tool_input.body="create without handoff"')
 assert_denied "$(hook beforeMCPExecution "$confluence_create_no_handoff")" \
   HANDOFF_DELTA_REQUIRED
+confluence_bad_jira=$(printf '%s\n' "$confluence_create" | jq -c \
+  --arg body "$(printf '%s\n' 'Jira: TBD' 'GitHub: N/A' '' '## Handoff — BB-11' '' 'x')" \
+  '.tool_input.body=$body')
+assert_denied "$(hook beforeMCPExecution "$confluence_bad_jira")" HANDOFF_DELTA_REQUIRED
+confluence_child_no_canonical=$(printf '%s\n' "$base_input" | jq -c '. + {
+  tool_name:"createConfluencePage",
+  url:"https://beroka.atlassian.net/wiki",
+  tool_input:{
+    parentId:"76808195",
+    title:"Handoff — BB-11 — e2e",
+    body:"Jira: BB-11\nGitHub: N/A\nHandoff form: child-page\n"
+  }}')
+assert_denied "$(hook beforeMCPExecution "$confluence_child_no_canonical")" \
+  HANDOFF_DELTA_REQUIRED
+confluence_child_ok=$(printf '%s\n' "$confluence_child_no_canonical" | jq -c \
+  '.tool_input.body += "Canonical: 76808195\n"')
+confluence_child_ok_out=$(hook beforeMCPExecution "$confluence_child_ok")
+assert_not_contains "$confluence_child_ok_out" HANDOFF_DELTA_REQUIRED
+assert_denied "$confluence_child_ok_out" GITHUB_AUTH_REQUIRED
+confluence_move=$(printf '%s\n' "$base_input" | jq -c '. + {
+  tool_name:"confluence.move_page",
+  url:"https://beroka.atlassian.net/wiki",
+  tool_input:{
+    pageId:"70713366",
+    parentId:"76808195"
+  }}')
+confluence_move_out=$(hook beforeMCPExecution "$confluence_move")
+assert_not_contains "$confluence_move_out" HANDOFF_DELTA_REQUIRED
+assert_denied "$confluence_move_out" GITHUB_AUTH_REQUIRED
+confluence_move_no_parent=$(printf '%s\n' "$confluence_move" | jq -c \
+  'del(.tool_input.parentId)')
+assert_denied "$(hook beforeMCPExecution "$confluence_move_no_parent")" \
+  ROUTING_REQUIRED
 unknown_write=$(printf '%s\n' "$base_input" | jq -c '. + {tool_name:"create_record",url:"https://github.com",tool_input:{body:"Work-item language: English"}}')
 assert_denied "$(hook beforeMCPExecution "$unknown_write")" WORK_ITEM_TEMPLATE_REQUIRED
 
