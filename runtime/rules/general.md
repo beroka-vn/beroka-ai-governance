@@ -33,8 +33,8 @@
 - Before a Confluence create or update, include handoff trace markers in the
   body: `Jira: <KEY|URL>`, `GitHub: <URL|N/A>`, and either a
   `## Handoff — <JiraKey>` section or `Handoff form: child-page` with title
-  `Handoff — <JiraKey> — <slug>`. Missing markers return
-  `HANDOFF_DELTA_REQUIRED`.
+  `Handoff — <JiraKey> — <slug>` and `Canonical: <URL|content-id>`. Missing
+  markers return `HANDOFF_DELTA_REQUIRED`.
 - Before a Confluence create, update, move, or handoff, run
   `confluence-write` or `confluence-handoff-verify`. A content ID or parent ID
   listed as `UNACTIVATED` in the pinned release inventory returns

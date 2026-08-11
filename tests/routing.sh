@@ -1433,6 +1433,24 @@ then
 fi
 assert_contains "$output" 'Result: DOCS_UNACTIVATED'
 
+if output=$($CLI preflight "$canonical_backend" --client codex \
+  --operation confluence-write --non-interactive \
+  --confluence-action move --target-content-id 900001 2>&1)
+then
+  fail 'move without destination parent passed'
+fi
+assert_contains "$output" 'Result: ROUTING_REQUIRED'
+assert_contains "$output" 'destination parent'
+
+if output=$($CLI preflight "$canonical_backend" --client codex \
+  --operation confluence-write --non-interactive \
+  --confluence-action move --target-content-id 900001 \
+  --expected-parent-id 990001 2>&1)
+then
+  fail 'move under UNACTIVATED parent passed'
+fi
+assert_contains "$output" 'Result: DOCS_UNACTIVATED'
+
 output=$($CLI preflight "$canonical_backend" --client codex \
   --operation confluence-write --non-interactive \
   --confluence-action update --target-content-id 900004 \
@@ -2391,6 +2409,21 @@ then
 fi
 assert_contains "$output" 'Result: ROUTING_REQUIRED'
 
+if output=$($CLI preflight "$consumer" \
+  --client codex --operation confluence-write --non-interactive \
+  --confluence-action move --target-content-id 555001 2>&1)
+then
+  fail 'standalone move without destination parent passed'
+fi
+assert_contains "$output" 'Result: ROUTING_REQUIRED'
+assert_contains "$output" 'destination parent'
+
+output=$($CLI preflight "$consumer" \
+  --client codex --operation confluence-write --non-interactive \
+  --confluence-action move --target-content-id 555001 \
+  --expected-parent-id 555002)
+assert_contains "$output" 'Result: PASS'
+
 printf '%s\n' healthy-missing-confluence-read \
   >"$XDG_CONFIG_HOME/fake-codex-health"
 if output=$($CLI preflight "$consumer" \
@@ -2640,8 +2673,8 @@ grep -F 'beroka-governance preflight' "$ROOT/README.md" >/dev/null ||
 grep -F 'CONNECTOR_CAPABILITY_REQUIRED' "$ROOT/handbook.md" >/dev/null ||
   fail 'handbook does not document capability remediation'
 
-[ "$(sed -n '1p' "$ROOT/VERSION")" = v1.0.11 ] ||
-  fix_wave_fail 'root VERSION does not select v1.0.11'
+[ "$(sed -n '1p' "$ROOT/VERSION")" = v1.0.10 ] ||
+  fix_wave_fail 'root VERSION does not select v1.0.10'
 grep -F -- 'gh release download' "$ROOT/README.md" >/dev/null ||
   fix_wave_fail 'README does not select the authenticated release launcher'
 

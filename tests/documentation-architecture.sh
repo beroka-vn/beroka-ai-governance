@@ -87,6 +87,8 @@ for file in templates/agent-entrypoints/AGENTS.md \
   require_text "$file" 'DOCS_UNACTIVATED'
   require_text "$file" 'ASSIGNEE_CONFIRMATION_REQUIRED'
   require_text "$file" 'opposite-team private GitHub links'
+  require_text "$file" 'Handoff form: child-page'
+  require_text "$file" 'Canonical: <URL|content-id>'
 done
 for file in runtime/rules/general.md governance.md workflow.md \
   templates/jira-confluence.md; do
@@ -145,6 +147,12 @@ require_text handbook.md 'HANDOFF_DELTA_REQUIRED'
 require_text README.md 'allow-by-default'
 require_text README.md 'DOCS_UNACTIVATED'
 require_text README.md 'HANDOFF_DELTA_REQUIRED'
+require_text README.md '### Downgrade'
+require_text README.md '### Uninstall'
+require_text README.md 'beroka-governance uninstall --force'
+require_text handbook.md '### Downgrade'
+require_text handbook.md '### Uninstall'
+require_text handbook.md 'beroka-governance uninstall --force'
 require_text runtime/integrations/beroka-be-fe.confluence-targets 'UNACTIVATED'
 require_text PACKAGE-DESIGN.md 'provider-owned evidence'
 require_text PACKAGE-DESIGN.md 'schema-1 compatibility'

@@ -82,38 +82,23 @@ governed repository work begins.
 
 Tracked legacy governance files remain until a repository owner explicitly
 authorizes a separate cleanup. The new CLI ignores them for release selection
-and routing. `v1.0.11` is the current supported capability release. Every
+and routing. `v1.0.10` is the current supported capability release. Every
 published tag is immutable.
 
-### v1.0.11 release
+### v1.0.10 release
 
 This release makes Confluence documentation **allow-by-default**. Ordinary
 create/update/move uses `confluence-page-parent-write` and is allowed unless the
 target or parent is listed as `UNACTIVATED` in the pinned release inventory
 (`DOCS_UNACTIVATED`; only a reviewed governance release PR can change that
 list). Create/update bodies must include handoff delta markers (`Jira:`,
-`GitHub:`, and a `## Handoff —` section or `Handoff form: child-page`) or return
-`HANDOFF_DELTA_REQUIRED`. Hierarchy bootstrap remains optional guidance.
-Cursor hooks also parse stringified MCP `tool_input` JSON so governed writes do
-not false-deny with empty fields.
+`GitHub:`, and a `## Handoff —` section or `Handoff form: child-page` with
+`Canonical:`) or return `HANDOFF_DELTA_REQUIRED`. Moves require a numeric
+destination parent. Hierarchy bootstrap remains optional guidance. Cursor hooks
+also parse stringified MCP `tool_input` JSON so governed writes do not
+false-deny with empty fields.
 
-### v1.0.11 upgrade
-
-Bootstrap installs a missing Cursor Agent after one confirmation. Developers
-upgrading from `v1.0.0` through `v1.0.10` run this once; installation and
-Atlassian connector setup continue in the same process:
-
-```bash
-bash -e -o pipefail -c 'gh release download v1.0.11 --repo beroka-vn/beroka-ai-governance --pattern bootstrap.sh --output - | sh -s -- --client cursor --upgrade'
-```
-To select the current repository immediately after upgrading, run:
-```bash
-beroka-governance context "$PWD"
-```
-
-### v1.0.10 release
-
-This release fixes FULL_STACK Cursor multi-root target selection when workspace
+It also fixes FULL_STACK Cursor multi-root target selection when workspace
 folder paths literally contain `Beroka_Backend` and `Beroka_Frontend`. Unique
 `projectKey` / parent / epic keys (BB or BF) select that side even though both
 product names appear in `workspace_roots`, so targeted `createJiraIssue` writes
@@ -159,6 +144,57 @@ bash -e -o pipefail -c '
     sh -s -- --client codex --upgrade
 '
 ```
+
+Replace `codex` with `claude` or `cursor` for that client. Pin an exact newer
+same-major release with `gh release download vX.Y.Z` (instead of untagged
+“latest”) when you do not want the newest asset. The downloaded launcher embeds
+that release; it accepts only `--client`, `--upgrade`, and `--non-interactive`
+(not `--version`).
+
+In-place `--upgrade` rejects an older target (`VERSION_MISMATCH`). The retired
+`rollback` command is not available.
+
+### Downgrade
+
+To move to an older published same-major release, uninstall first, then install
+from that exact release’s launcher. Example: leave the current release and
+reinstall `v1.0.9`:
+
+```bash
+beroka-governance uninstall --force
+bash -e -o pipefail -c '
+  gh auth status --hostname github.com >/dev/null 2>&1 ||
+    gh auth login --hostname github.com --web
+  gh auth setup-git --hostname github.com
+  gh release download v1.0.9 \
+    --repo beroka-vn/beroka-ai-governance \
+    --pattern bootstrap.sh \
+    --output - |
+    sh -s -- --client cursor
+'
+```
+
+Replace `v1.0.9` / `cursor` with the published tag and client you need. Do not
+pass `--version` to the launcher; `gh release download v1.0.9` already selects
+the asset that embeds `v1.0.9`. After reinstall, run
+`beroka-governance context "$PWD"` again before governed work. Cursor User Rules
+pasted into **Cursor Settings > Rules** are not removed by uninstall; delete or
+replace that text manually if you no longer want it.
+
+### Uninstall
+
+Remove the user-scoped CLI, active release data, client enrollment, Cursor
+acknowledgement, GitHub role file, and managed blocks from personal Codex /
+Claude instruction files. Personal text outside those managed blocks is kept.
+Application repositories are never modified.
+
+```bash
+beroka-governance uninstall --force
+```
+
+Without `--force`, uninstall still performs the same removal when invoked as
+`beroka-governance uninstall` (see `beroka-governance` usage). Prefer
+`--force` in scripts and agent runbooks so the intent is explicit.
 
 ### Automation / CI
 

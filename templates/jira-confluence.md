@@ -115,6 +115,7 @@ CONFLUENCE TARGET
 - Jira: <KEY|URL>
 - GitHub: <URL|N/A>
 - Handoff delta: ## Handoff — <JiraKey> section OR Handoff form: child-page
+  with Canonical: <URL|content-id>
 - Preflight: confluence-write | confluence-handoff-verify
 - Result: PASS | DOCS_UNACTIVATED | HANDOFF_DELTA_REQUIRED | ROUTING_REQUIRED | MAPPING_CONFLICT
 ```
