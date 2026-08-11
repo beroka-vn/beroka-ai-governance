@@ -257,7 +257,8 @@ governance release (`DOCS_UNACTIVATED`). After write/move, verify `parentId` and
 `parentType = Folder`, otherwise return `DOC_HIERARCHY_FAILED`. If FE cannot
 open the BE Hub, return `CROSS_SPACE_ACCESS_REQUIRED`. Before every Confluence
 create or update, include handoff delta markers (`Jira:`, `GitHub:`, and a
-`## Handoff —` section or child-page handoff). Run `confluence-write` or
+`## Handoff —` section or `Handoff form: child-page` with `Canonical:`). Run
+`confluence-write` or
 `confluence-handoff-verify`; a transport mismatch on a reviewed drifted row
 returns `MAPPING_CONFLICT`.
 

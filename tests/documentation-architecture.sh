@@ -87,6 +87,8 @@ for file in templates/agent-entrypoints/AGENTS.md \
   require_text "$file" 'DOCS_UNACTIVATED'
   require_text "$file" 'ASSIGNEE_CONFIRMATION_REQUIRED'
   require_text "$file" 'opposite-team private GitHub links'
+  require_text "$file" 'Handoff form: child-page'
+  require_text "$file" 'Canonical: <URL|content-id>'
 done
 for file in runtime/rules/general.md governance.md workflow.md \
   templates/jira-confluence.md; do

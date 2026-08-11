@@ -360,7 +360,8 @@ Before a Confluence create, update, move, or handoff, run
 `UNACTIVATED` content ID or parent returns `DOCS_UNACTIVATED` and can change
 only through a reviewed governance release PR. Create/update bodies must
 include `Jira:`, `GitHub:`, and a handoff delta (`## Handoff — <JiraKey>`
-section or child page with `Handoff form: child-page`); missing markers return
+section or child page with `Handoff form: child-page` and
+`Canonical: <URL|content-id>`); missing markers return
 `HANDOFF_DELTA_REQUIRED`. A transport mismatch on a reviewed drifted row
 returns `MAPPING_CONFLICT`, and the agent asks the user and waits. Hierarchy
 bootstrap remains optional guidance, not a write gate.

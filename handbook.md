@@ -78,7 +78,8 @@ exact catalog record (ví dụ `beroka`/`upstream`). Nhiều remote cùng một 
 allow-by-default: ordinary create/update/move is allowed unless the target or
 parent is `UNACTIVATED` in the pinned governance release inventory
 (`DOCS_UNACTIVATED`). Create/update bodies must carry handoff delta markers
-(`Jira:`, `GitHub:`, and a `## Handoff —` section or child-page handoff) or
+(`Jira:`, `GitHub:`, and a `## Handoff —` section or `Handoff form: child-page`
+with `Canonical:`) or
 return `HANDOFF_DELTA_REQUIRED`. `confluence-discover` and optional
 `confluence-bootstrap-*` remain hierarchy guidance only, not write gates.
 Repository unknown vẫn source-only và không thừa kế routing BE/FE.
