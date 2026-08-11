@@ -70,11 +70,12 @@ không cho phép profile của repository. `FULL_STACK` được mở Cursor mul
 tiên project có cấu trúc đó và không dùng substring path trong `workspace_roots`
 làm tín hiệu BE/FE, nên clone tên thư mục sản phẩm thật không bị `TARGET_REQUIRED`
 khi đã chỉ đúng một project. Write FULL_STACK không có target vẫn
-`TARGET_REQUIRED`. Cursor hook prepend user bin (`~/.local/bin`) vào PATH để
-tránh `DEPENDENCY_MISSING` khi `cursor-agent` nằm ngoài PATH tối giản của IDE.
-Khi `origin` là fork, governance ưu tiên remote khác có exact catalog record
-(ví dụ `beroka`/`upstream`). Nhiều remote cùng một catalog slug được chấp nhận
-và ưu tiên `origin`. Confluence documentation dùng ba phase: `confluence-discover`
+`TARGET_REQUIRED`. Cursor hook append user bin (`~/.local/bin`) vào PATH khi
+thiếu `cursor-agent`/`gh`, tránh `DEPENDENCY_MISSING` mà không shadow executable
+đã có sẵn trên PATH. Khi `origin` là fork, governance ưu tiên remote khác có
+exact catalog record (ví dụ `beroka`/`upstream`). Nhiều remote cùng một catalog slug
+được chấp nhận và ưu tiên `origin`. Confluence documentation dùng ba phase:
+`confluence-discover`
 (read-only), authorized bootstrap (`confluence-bootstrap-plan` → MCP create →
 capture → verify → inventory PR), rồi ordinary target-bound write.
 `FOLDER_CREATION_REQUIRED` có Remediation trỏ bootstrap. Repository unknown vẫn

@@ -91,10 +91,12 @@ This release fixes FULL_STACK Cursor multi-root target selection when workspace
 folder paths literally contain `Beroka_Backend` and `Beroka_Frontend`. Unique
 `projectKey` / parent / epic keys (BB or BF) select that side even though both
 product names appear in `workspace_roots`, so targeted `createJiraIssue` writes
-clear `TARGET_REQUIRED`. Hook PATH also includes the user bin so templated `gh`
-creates do not false-fail `DEPENDENCY_MISSING` when `cursor-agent` is installed
-under `~/.local/bin`. Official Atlassian MCP field aliases from v1.0.9
-(`issueTypeName`, `assignee_account_id`, `Missing:` hints) remain required.
+clear `TARGET_REQUIRED`. Hook PATH appends the user bin as a fallback when
+`cursor-agent` or `gh` is missing, so templated `gh` creates do not false-fail
+`DEPENDENCY_MISSING` when those tools live under `~/.local/bin`, without
+shadowing an earlier healthy executable. Official Atlassian MCP field aliases
+from v1.0.9 (`issueTypeName`, `assignee_account_id`, `Missing:` hints) remain
+required.
 
 ### v1.0.10 upgrade
 

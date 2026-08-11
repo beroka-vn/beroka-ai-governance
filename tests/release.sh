@@ -111,7 +111,7 @@ require_text handbook.md \
 require_text handbook.md 'không dùng substring path trong `workspace_roots`'
 require_text handbook.md '~/.local/bin'
 require_text PACKAGE-DESIGN.md 'name heuristics ignore `workspace_roots`'
-require_text PACKAGE-DESIGN.md 'prepend the'
+require_text PACKAGE-DESIGN.md 'append the'
 require_text PACKAGE-DESIGN.md '~/.local/bin'
 require_text governance.md 'Workspace folder path substrings alone do not force'
 require_text runtime/rules/general.md 'createJiraIssue'

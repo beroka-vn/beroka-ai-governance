@@ -4992,16 +4992,21 @@ cursor_extract_single_jira_project() {
 }
 
 # Cursor hooks often inherit a minimal PATH that omits the user bin where
-# bootstrap installs beroka-governance and cursor-agent. Prepend those dirs so
-# github-write / jira-write preflight does not false-fail DEPENDENCY_MISSING.
+# bootstrap installs beroka-governance and cursor-agent. Append those dirs only
+# when a required dependency is missing, so an earlier healthy executable keeps
+# precedence over ~/.local/bin.
 cursor_ensure_user_path() {
+  cup_need=0
+  command -v cursor-agent >/dev/null 2>&1 || cup_need=1
+  command -v gh >/dev/null 2>&1 || cup_need=1
+  [ "$cup_need" -eq 1 ] || return 0
   for cup_dir in "$BIN_DIR" "${HOME}/.local/bin"; do
     [ -n "$cup_dir" ] || continue
     case ":${PATH}:" in
       *":${cup_dir}:"*) continue ;;
     esac
     [ -d "$cup_dir" ] || continue
-    PATH="${cup_dir}:${PATH}"
+    PATH="${PATH}:${cup_dir}"
   done
   export PATH
 }

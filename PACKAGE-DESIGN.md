@@ -39,8 +39,9 @@ eligible preflights revalidate membership before external writes. `FULL_STACK`
 may open the exact Backend+Frontend catalog pair in Cursor. Governed multi-root
 writes select BE or FE from a unique structured BB/BF project (or unambiguous
 repository target); name heuristics ignore `workspace_roots` path strings so
-product-folder clones do not force `TARGET_REQUIRED`. Cursor hooks prepend the
-user bin (`~/.local/bin`) to `PATH` before dependency checks.
+product-folder clones do not force `TARGET_REQUIRED`. Cursor hooks append the
+user bin (`~/.local/bin`) to `PATH` only when `cursor-agent` or `gh` is missing,
+preserving earlier executable precedence.
 
 ## Client adapters and enforcement
 
