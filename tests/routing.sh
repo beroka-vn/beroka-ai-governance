@@ -501,8 +501,13 @@ case "$*" in
   'mcp get atlassian')
     [ -f "$XDG_CONFIG_HOME/fake-claude-configured" ] || exit 1
     printf '%s\n' \
-      'Name: atlassian' \
-      'URL: https://mcp.atlassian.com/v1/mcp/authv2'
+      'atlassian:' \
+      '  Scope: User config (available in all your projects)' \
+      '  Status: ✔ Connected' \
+      '  Type: http' \
+      '  URL: https://mcp.atlassian.com/v1/mcp/authv2' \
+      '' \
+      'To remove this server, run: claude mcp remove atlassian -s user'
     ;;
   '')
     printf '%s\n' healthy >"$XDG_CONFIG_HOME/fake-claude-health"
@@ -511,22 +516,22 @@ case "$*" in
     case "$(sed -n '1p' "$XDG_CONFIG_HOME/fake-claude-health" 2>/dev/null || :)" in
       healthy)
         printf '%s\n' \
-          'github: https://example.invalid/mcp (HTTP) - ✓ Connected' \
-          'atlassian: https://mcp.atlassian.com/v1/mcp/authv2 (HTTP) - ✓ Connected'
+          'github: https://example.invalid/mcp (HTTP) - ✔ Connected' \
+          'atlassian: https://mcp.atlassian.com/v1/mcp/authv2 (HTTP) - ✔ Connected'
         ;;
       auth-needs-realistic)
         printf '%s\n' \
-          'atlassian-helper: https://example.invalid/mcp (HTTP) - ✓ Connected' \
+          'atlassian-helper: https://example.invalid/mcp (HTTP) - ✔ Connected' \
           'atlassian: https://mcp.atlassian.com/v1/mcp/authv2 (HTTP) - ! Needs authentication'
         ;;
       auth-required-multiserver)
         printf '%s\n' \
           'atlassian: https://mcp.atlassian.com/v1/mcp/authv2 (HTTP) - Authentication required' \
-          'github: https://example.invalid/mcp (HTTP) - ✓ Connected'
+          'github: https://example.invalid/mcp (HTTP) - ✔ Connected'
         ;;
       auth-required-helper)
         printf '%s\n' \
-          'atlassian-helper: https://example.invalid/mcp (HTTP) - ✓ Connected' \
+          'atlassian-helper: https://example.invalid/mcp (HTTP) - ✔ Connected' \
           'atlassian: https://mcp.atlassian.com/v1/mcp/authv2 (HTTP) - ! Needs authentication'
         ;;
       not-connected)

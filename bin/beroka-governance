@@ -2100,14 +2100,25 @@ atlassian_status_line() {
 }
 
 claude_atlassian_endpoint() {
+  # `claude mcp get atlassian` names the server on the first unindented
+  # line ("atlassian:"), not a "Name:" field. Only fields inside that
+  # first block count; a later unindented line starts a different
+  # server's section and its fields must not leak into this match.
   cae_url=$1
   awk -v expected_url="$cae_url" '
-    /^[[:space:]]*Name:[[:space:]]*/ {
-      name=$0
-      sub(/^[[:space:]]*Name:[[:space:]]*/, "", name)
-      if (name == "") invalid=1
-      name_matches++
+    /^[^[:space:]]/ {
+      if (!header_seen) {
+        header_seen=1
+        header=$0
+        sub(/:[[:space:]]*$/, "", header)
+        if (header == $0) invalid=1
+        else if (header == "atlassian") name_ok=1
+      } else {
+        section_ended=1
+      }
+      next
     }
+    section_ended { next }
     /^[[:space:]]*URL:[[:space:]]*/ {
       endpoint=$0
       sub(/^[[:space:]]*URL:[[:space:]]*/, "", endpoint)
@@ -2115,8 +2126,7 @@ claude_atlassian_endpoint() {
       url_matches++
     }
     END {
-      if (invalid ||
-          name_matches != 1 || name != "atlassian" ||
+      if (invalid || !header_seen || !name_ok ||
           url_matches != 1 || endpoint != expected_url) exit 42
     }
   '
@@ -2408,7 +2418,7 @@ connector_probe() {
           print tolower($0)
         }')
       case "$CONNECTOR_PROBE_STATE" in
-        connected|*' - ✓ connected')
+        connected|*' - ✓ connected'|*' - ✔ connected')
           CONNECTOR_PROBE_STATE=connected
           ;;
         'authentication required'|'! needs authentication'|\
