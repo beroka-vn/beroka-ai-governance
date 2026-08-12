@@ -26,6 +26,17 @@ fail() {
   exit 1
 }
 
+# util-linux script(1) takes -c "command string"; BSD/macOS script(1) has
+# no -c and instead execs trailing positional command args. Route to the
+# syntax the running platform's script(1) actually accepts.
+run_pty() {
+  rp_command=$1
+  case "$(uname -s)" in
+    Darwin) /usr/bin/script -q /dev/null sh -c "$rp_command" ;;
+    *) /usr/bin/script -qec "$rp_command" /dev/null ;;
+  esac
+}
+
 assert_contains() {
   case "$1" in
     *"$2"*) ;;
@@ -458,9 +469,8 @@ do
   role_input=${role_case%%|*}
   expected_role=${role_case#*|}
   rm -f "$role_file"
-  if ! output=$(printf '%s\n' "$role_input" | script -qec \
-    "$CLI bootstrap $repo --client codex --version v1.1.0" \
-    /dev/null 2>&1)
+  if ! output=$(printf '%s\n' "$role_input" | run_pty \
+    "$CLI bootstrap $repo --client codex --version v1.1.0" 2>&1)
   then
     fail "interactive [$role_input] was rejected"
   fi
@@ -471,9 +481,8 @@ done
 
 for role_input in '' '   ' "$role_tab" unknown 'Full stack'; do
   rm -f "$role_file"
-  if output=$(printf '%s\n' "$role_input" | script -qec \
-    "$CLI bootstrap $repo --client codex --version v1.1.0" \
-    /dev/null 2>&1)
+  if output=$(printf '%s\n' "$role_input" | run_pty \
+    "$CLI bootstrap $repo --client codex --version v1.1.0" 2>&1)
   then
     fail "interactive [$role_input] bypassed role validation"
   fi
@@ -1079,9 +1088,8 @@ assert_contains "$output" \
 [ ! -e "$HOME/.cursor" ] ||
   fail 'Cursor bootstrap edited undocumented Cursor state'
 
-if cursor_output=$(printf 'n\n' | script -qec \
-  "$CLI bootstrap $repo --client cursor --version v1.2.0" \
-  /dev/null 2>&1)
+if cursor_output=$(printf 'n\n' | run_pty \
+  "$CLI bootstrap $repo --client cursor --version v1.2.0" 2>&1)
 then
   fail 'Cursor bootstrap accepted a declined User Rule'
 fi

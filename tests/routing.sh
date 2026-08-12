@@ -23,6 +23,17 @@ fail() {
   exit 1
 }
 
+# util-linux script(1) takes -c "command string"; BSD/macOS script(1) has
+# no -c and instead execs trailing positional command args. Route to the
+# syntax the running platform's script(1) actually accepts.
+run_pty() {
+  rp_command=$1
+  case "$(uname -s)" in
+    Darwin) /usr/bin/script -q /dev/null sh -c "$rp_command" ;;
+    *) /usr/bin/script -qec "$rp_command" /dev/null ;;
+  esac
+}
+
 assert_contains() {
   case "$1" in
     *"$2"*) ;;
@@ -1004,9 +1015,8 @@ assert_contains "$output" 'Result: GITHUB_ROLE_UNAVAILABLE'
 
 rm -f "$XDG_CONFIG_HOME/fake-github-health"
 : >"$CALLS"
-output=$(printf 'y\n' | script -qec \
-  "$CLI preflight $consumer --client codex --operation github-write" \
-  /dev/null 2>&1)
+output=$(printf 'y\n' | run_pty \
+  "$CLI preflight $consumer --client codex --operation github-write" 2>&1)
 assert_contains "$output" 'OAuth URL: https://github.com/login/device'
 assert_contains "$output" 'Result: PASS'
 [ "$(grep -Fxc 'gh auth login --hostname github.com --web' "$CALLS")" -eq 1 ] ||
@@ -2239,9 +2249,8 @@ done
 
 printf '%s\n' auth-required >"$XDG_CONFIG_HOME/fake-codex-health"
 : >"$CALLS"
-if ! output=$(script -qec \
-  "$CLI preflight $consumer --client codex --operation jira-write" \
-  /dev/null 2>&1)
+if ! output=$(run_pty \
+  "$CLI preflight $consumer --client codex --operation jira-write" 2>&1)
 then
   fail 'interactive preflight did not start required Codex OAuth'
 fi
@@ -2255,9 +2264,8 @@ assert_not_contains "$(cat "$CALLS")" 'cursor-agent mcp login atlassian'
 
 printf '%s\n' auth-required >"$XDG_CONFIG_HOME/fake-codex-health"
 export FAKE_CODEX_OAUTH_HEALTH=healthy-nested-metadata
-if output=$(script -qec \
-  "$CLI preflight $consumer --client codex --operation jira-write" \
-  /dev/null 2>&1)
+if output=$(run_pty \
+  "$CLI preflight $consumer --client codex --operation jira-write" 2>&1)
 then
   fail 'preflight accepted unclassifiable health after OAuth'
 fi
