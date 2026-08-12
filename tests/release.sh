@@ -39,10 +39,10 @@ reject_text() {
   fi
 }
 
-[ "$(cat "$ROOT/VERSION")" = v1.0.10 ] ||
-  fail 'VERSION is not v1.0.10'
+[ "$(cat "$ROOT/VERSION")" = v1.0.11 ] ||
+  fail 'VERSION is not v1.0.11'
 
-require_text README.md '`v1.0.10` is the current supported capability release.'
+require_text README.md '`v1.0.11` is the current supported capability release.'
 reject_text README.md '`v1.0.0` is the current supported capability release.'
 reject_text README.md '`v1.0.1` is the current supported capability release.'
 reject_text README.md '`v1.0.2` is the current supported capability release.'
@@ -53,9 +53,10 @@ reject_text README.md '`v1.0.6` is the current supported capability release.'
 reject_text README.md '`v1.0.7` is the current supported capability release.'
 reject_text README.md '`v1.0.8` is the current supported capability release.'
 reject_text README.md '`v1.0.9` is the current supported capability release.'
-reject_text README.md '`v1.0.11` is the current supported capability release.'
+reject_text README.md '`v1.0.10` is the current supported capability release.'
+reject_text README.md '`v1.0.12` is the current supported capability release.'
 require_text handbook.md \
-  '`v1.0.10` là capability release được hỗ trợ hiện tại.'
+  '`v1.0.11` là capability release được hỗ trợ hiện tại.'
 reject_text handbook.md \
   '`v1.0.0` là capability release được hỗ trợ hiện tại.'
 reject_text handbook.md '`v1.0.1` là capability release được hỗ trợ hiện tại.'
@@ -67,10 +68,10 @@ reject_text handbook.md '`v1.0.6` là capability release được hỗ trợ hi�
 reject_text handbook.md '`v1.0.7` là capability release được hỗ trợ hiện tại.'
 reject_text handbook.md '`v1.0.8` là capability release được hỗ trợ hiện tại.'
 reject_text handbook.md '`v1.0.9` là capability release được hỗ trợ hiện tại.'
-reject_text handbook.md '`v1.0.11` là capability release được hỗ trợ hiện tại.'
+reject_text handbook.md '`v1.0.10` là capability release được hỗ trợ hiện tại.'
 reject_text handbook.md '`v1.0.12` là capability release được hỗ trợ hiện tại.'
 require_text PACKAGE-DESIGN.md \
-  '`v1.0.10` is the current supported capability release.'
+  '`v1.0.11` is the current supported capability release.'
 reject_text PACKAGE-DESIGN.md \
   '`v1.0.0` is the current supported capability release.'
 reject_text PACKAGE-DESIGN.md \
@@ -92,16 +93,16 @@ reject_text PACKAGE-DESIGN.md \
 reject_text PACKAGE-DESIGN.md \
   '`v1.0.9` is the current supported capability release.'
 reject_text PACKAGE-DESIGN.md \
-  '`v1.0.11` is the current supported capability release.'
+  '`v1.0.10` is the current supported capability release.'
 reject_text PACKAGE-DESIGN.md \
   '`v1.0.12` is the current supported capability release.'
 require_text README.md \
   'Bootstrap installs a missing Cursor Agent after one confirmation.'
 require_text README.md \
-  'gh release download v1.0.10 --repo beroka-vn/beroka-ai-governance'
+  'gh release download v1.0.11 --repo beroka-vn/beroka-ai-governance'
 require_text README.md \
-  'upgrading from `v1.0.0` through `v1.0.9` run this once'
-require_text README.md '### v1.0.10 release'
+  'upgrading from `v1.0.0` through `v1.0.10` run this once'
+require_text README.md '### v1.0.11 release'
 require_text README.md 'createJiraIssue'
 require_text README.md 'workspace_roots'
 require_text README.md 'TARGET_REQUIRED'
@@ -412,7 +413,7 @@ for file in README.md handbook.md; do
   require_text "$file" '### Downgrade'
   require_text "$file" '### Uninstall'
   require_text "$file" 'beroka-governance uninstall --force'
-  require_text "$file" 'gh release download v1.0.9'
+  require_text "$file" 'gh release download v1.0.10'
   require_text "$file" 'sh -s -- --client cursor'
   reject_text "$file" 'sh -s -- --client cursor --version'
 done
