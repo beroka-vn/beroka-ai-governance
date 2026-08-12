@@ -985,39 +985,46 @@ case "$*" in
     case "$(sed -n '1p' "$XDG_CONFIG_HOME/fake-claude-endpoint" 2>/dev/null || :)" in
       metadata-url)
         printf '%s\n' \
-          'Description: https://mcp.atlassian.com/v1/mcp/authv2' \
-          'URL: https://wrong.invalid/mcp'
+          'atlassian:' \
+          '  Scope: https://mcp.atlassian.com/v1/mcp/authv2' \
+          '  URL: https://wrong.invalid/mcp'
         ;;
       duplicate-url)
         printf '%s\n' \
-          'URL: https://wrong.invalid/mcp' \
-          'URL: https://mcp.atlassian.com/v1/mcp/authv2'
+          'atlassian:' \
+          '  URL: https://wrong.invalid/mcp' \
+          '  URL: https://mcp.atlassian.com/v1/mcp/authv2'
         ;;
       missing-url)
         printf '%s\n' \
-          'Name: atlassian' \
-          'Description: https://mcp.atlassian.com/v1/mcp/authv2'
+          'atlassian:' \
+          '  Scope: User config (available in all your projects)'
         ;;
       wrong-name)
         printf '%s\n' \
-          'Name: atlassian-helper' \
-          'URL: https://mcp.atlassian.com/v1/mcp/authv2'
+          'atlassian-helper:' \
+          '  URL: https://mcp.atlassian.com/v1/mcp/authv2'
         ;;
       duplicate-name)
         printf '%s\n' \
-          'Name: atlassian' \
-          'Name: atlassian-helper' \
-          'URL: https://mcp.atlassian.com/v1/mcp/authv2'
+          'atlassian-helper:' \
+          '  URL: https://wrong.invalid/mcp' \
+          'atlassian:' \
+          '  URL: https://mcp.atlassian.com/v1/mcp/authv2'
         ;;
       missing-name)
         printf '%s\n' \
-          'Description: atlassian' \
-          'URL: https://mcp.atlassian.com/v1/mcp/authv2'
+          '  URL: https://mcp.atlassian.com/v1/mcp/authv2'
         ;;
       *)
         printf '%s\n' \
-          'Name: atlassian' \
-          'URL: https://mcp.atlassian.com/v1/mcp/authv2'
+          'atlassian:' \
+          '  Scope: User config (available in all your projects)' \
+          '  Status: ✔ Connected' \
+          '  Type: http' \
+          '  URL: https://mcp.atlassian.com/v1/mcp/authv2' \
+          '' \
+          'To remove this server, run: claude mcp remove atlassian -s user'
         ;;
     esac
     ;;
@@ -1029,17 +1036,17 @@ case "$*" in
     case "$health" in
       healthy)
         printf '%s\n' \
-          'github: https://example.invalid/mcp (HTTP) - ✓ Connected' \
-          'atlassian: https://mcp.atlassian.com/v1/mcp/authv2 (HTTP) - ✓ Connected'
+          'github: https://example.invalid/mcp (HTTP) - ✔ Connected' \
+          'atlassian: https://mcp.atlassian.com/v1/mcp/authv2 (HTTP) - ✔ Connected'
         ;;
       auth-needs-realistic)
         printf '%s\n' \
-          'atlassian-helper: https://example.invalid/mcp (HTTP) - ✓ Connected' \
+          'atlassian-helper: https://example.invalid/mcp (HTTP) - ✔ Connected' \
           'atlassian: https://mcp.atlassian.com/v1/mcp/authv2 (HTTP) - ! Needs authentication'
         ;;
       unrelated-only)
         printf '%s\n' \
-          'atlassian-helper: https://mcp.atlassian.com/v1/mcp/authv2 (HTTP) - ✓ Connected'
+          'atlassian-helper: https://mcp.atlassian.com/v1/mcp/authv2 (HTTP) - ✔ Connected'
         ;;
       auth-required|'')
         printf '%s\n' 'atlassian: https://mcp.atlassian.com/v1/mcp/authv2 (HTTP) - Authentication required'

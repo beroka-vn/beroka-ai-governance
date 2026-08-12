@@ -232,15 +232,20 @@ case "$*" in
   'mcp get atlassian')
     [ -f "$XDG_CONFIG_HOME/fake-claude-configured" ] || exit 1
     printf '%s\n' \
-      'Name: atlassian' \
-      'URL: https://mcp.atlassian.com/v1/mcp/authv2'
+      'atlassian:' \
+      '  Scope: User config (available in all your projects)' \
+      '  Status: ✔ Connected' \
+      '  Type: http' \
+      '  URL: https://mcp.atlassian.com/v1/mcp/authv2' \
+      '' \
+      'To remove this server, run: claude mcp remove atlassian -s user'
     ;;
   'mcp add --transport http --scope user atlassian https://mcp.atlassian.com/v1/mcp/authv2')
     : >"$XDG_CONFIG_HOME/fake-claude-configured"
     ;;
   'mcp list')
     printf '%s\n' \
-      'atlassian: https://mcp.atlassian.com/v1/mcp/authv2 (HTTP) - ✓ Connected'
+      'atlassian: https://mcp.atlassian.com/v1/mcp/authv2 (HTTP) - ✔ Connected'
     ;;
   '') fail 'bootstrap unexpectedly started Claude OAuth' ;;
   *) exit 1 ;;
