@@ -998,7 +998,9 @@ case "$*" in
       missing-url)
         printf '%s\n' \
           'atlassian:' \
-          '  Scope: User config (available in all your projects)'
+          '  Scope: User config (available in all your projects)' \
+          'github:' \
+          '  URL: https://mcp.atlassian.com/v1/mcp/authv2'
         ;;
       wrong-name)
         printf '%s\n' \
