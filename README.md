@@ -82,44 +82,52 @@ governed repository work begins.
 
 Tracked legacy governance files remain until a repository owner explicitly
 authorizes a separate cleanup. The new CLI ignores them for release selection
-and routing. `v1.0.10` is the current supported capability release. Every
+and routing. `v1.0.11` is the current supported capability release. Every
 published tag is immutable.
 
-### v1.0.10 release
+### v1.0.11 release
 
-This release makes Confluence documentation **allow-by-default**. Ordinary
-create/update/move uses `confluence-page-parent-write` and is allowed unless the
-target or parent is listed as `UNACTIVATED` in the pinned release inventory
-(`DOCS_UNACTIVATED`; only a reviewed governance release PR can change that
-list). Create/update bodies must include handoff delta markers (`Jira:`,
-`GitHub:`, and a `## Handoff —` section or `Handoff form: child-page` with
-`Canonical:`) or return `HANDOFF_DELTA_REQUIRED`. Moves require a numeric
-destination parent. Hierarchy bootstrap remains optional guidance. Cursor hooks
-also parse stringified MCP `tool_input` JSON so governed writes do not
-false-deny with empty fields.
+This release fixes the `claude` client's Atlassian connector detection so
+`setup-connectors`, `preflight`, and `doctor` correctly recognize a healthy,
+correctly configured connector instead of false-reporting `CONNECTOR_MISSING`
+or `CONNECTOR_HEALTH_UNAVAILABLE`. `claude_atlassian_endpoint()` now reads the
+connector name from the unindented header line `claude mcp get` actually
+emits instead of a `Name:` field it never has, scopes URL matching to that
+connector's own section so a different server's block can no longer be
+mistaken for it, and the health-check state machine recognizes the heavy
+checkmark (`✔`, U+2714) the CLI actually prints for a connected server, not
+only the light checkmark (`✓`, U+2713).
 
-It also fixes FULL_STACK Cursor multi-root target selection when workspace
-folder paths literally contain `Beroka_Backend` and `Beroka_Frontend`. Unique
-`projectKey` / parent / epic keys (BB or BF) select that side even though both
-product names appear in `workspace_roots`, so targeted `createJiraIssue` writes
-clear `TARGET_REQUIRED`. Hook PATH appends the user bin as a fallback when
-`cursor-agent` or `gh` is missing, so templated `gh` creates do not false-fail
-`DEPENDENCY_MISSING` when those tools live under `~/.local/bin`, without
-shadowing an earlier healthy executable. Upgrades from v1.0.9 no longer fail
-with `Invalid Confluence target inventory` on traditional awk (common on macOS)
-when multiple repository `CONFLUENCE_ROOT_CONTENT_ID` values are joined for
-inventory validation. Official Atlassian MCP field aliases
-from v1.0.9 (`issueTypeName`, `assignee_account_id`, `Missing:` hints) remain
-required.
+v1.0.10's Confluence documentation routing remains **allow-by-default**.
+Ordinary create/update/move uses `confluence-page-parent-write` and is allowed
+unless the target or parent is listed as `UNACTIVATED` in the pinned release
+inventory (`DOCS_UNACTIVATED`; only a reviewed governance release PR can
+change that list). Create/update bodies must include handoff delta markers
+(`Jira:`, `GitHub:`, and a `## Handoff —` section or `Handoff form:
+child-page` with `Canonical:`) or return `HANDOFF_DELTA_REQUIRED`. Moves
+require a numeric destination parent. Hierarchy bootstrap remains optional
+guidance. Cursor hooks also parse stringified MCP `tool_input` JSON so
+governed writes do not false-deny with empty fields.
 
-### v1.0.10 upgrade
+FULL_STACK Cursor multi-root target selection also remains fixed when
+workspace folder paths literally contain `Beroka_Backend` and
+`Beroka_Frontend`. Unique `projectKey` / parent / epic keys (BB or BF) select
+that side even though both product names appear in `workspace_roots`, so
+targeted `createJiraIssue` writes clear `TARGET_REQUIRED`. Hook PATH appends
+the user bin as a fallback when `cursor-agent` or `gh` is missing, so
+templated `gh` creates do not false-fail `DEPENDENCY_MISSING` when those tools
+live under `~/.local/bin`, without shadowing an earlier healthy executable.
+Official Atlassian MCP field aliases (`issueTypeName`, `assignee_account_id`,
+`Missing:` hints) remain required.
+
+### v1.0.11 upgrade
 
 Bootstrap installs a missing Cursor Agent after one confirmation. Developers
-upgrading from `v1.0.0` through `v1.0.9` run this once; installation and
+upgrading from `v1.0.0` through `v1.0.10` run this once; installation and
 Atlassian connector setup continue in the same process:
 
 ```bash
-bash -e -o pipefail -c 'gh release download v1.0.10 --repo beroka-vn/beroka-ai-governance --pattern bootstrap.sh --output - | sh -s -- --client cursor --upgrade'
+bash -e -o pipefail -c 'gh release download v1.0.11 --repo beroka-vn/beroka-ai-governance --pattern bootstrap.sh --output - | sh -s -- --client cursor --upgrade'
 ```
 To select the current repository immediately after upgrading, run:
 ```bash
@@ -158,7 +166,7 @@ In-place `--upgrade` rejects an older target (`VERSION_MISMATCH`). The retired
 
 To move to an older published same-major release, uninstall first, then install
 from that exact release’s launcher. Example: leave the current release and
-reinstall `v1.0.9`:
+reinstall `v1.0.10`:
 
 ```bash
 beroka-governance uninstall --force
@@ -166,7 +174,7 @@ bash -e -o pipefail -c '
   gh auth status --hostname github.com >/dev/null 2>&1 ||
     gh auth login --hostname github.com --web
   gh auth setup-git --hostname github.com
-  gh release download v1.0.9 \
+  gh release download v1.0.10 \
     --repo beroka-vn/beroka-ai-governance \
     --pattern bootstrap.sh \
     --output - |
@@ -174,9 +182,9 @@ bash -e -o pipefail -c '
 '
 ```
 
-Replace `v1.0.9` / `cursor` with the published tag and client you need. Do not
-pass `--version` to the launcher; `gh release download v1.0.9` already selects
-the asset that embeds `v1.0.9`. After reinstall, run
+Replace `v1.0.10` / `cursor` with the published tag and client you need. Do not
+pass `--version` to the launcher; `gh release download v1.0.10` already selects
+the asset that embeds `v1.0.10`. After reinstall, run
 `beroka-governance context "$PWD"` again before governed work. Cursor User Rules
 pasted into **Cursor Settings > Rules** are not removed by uninstall; delete or
 replace that text manually if you no longer want it.

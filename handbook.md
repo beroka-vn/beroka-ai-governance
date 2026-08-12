@@ -36,7 +36,7 @@ Legacy tracked files không bị CLI parse, sửa, hay xóa. Repository owner c�
 
 - Có POSIX shell, `gh`, `jq`, và selected Codex/Claude client. Interactive Cursor bootstrap tự cài Cursor Agent nếu còn thiếu. Native Windows PowerShell không thuộc V1; dùng WSL trên Windows.
 - `gh` phải authenticate để download private release. Không yêu cầu, in, sao chép, ghi log hoặc lưu token.
-- `v1.0.10` là capability release được hỗ trợ hiện tại.
+- `v1.0.11` là capability release được hỗ trợ hiện tại.
 
 ### Bootstrap và install
 
@@ -57,7 +57,7 @@ bash -e -o pipefail -c '
 
 `gh auth setup-git --hostname github.com` dùng lại client-owned GitHub OAuth cho private HTTPS clone. Thay `codex` bằng `claude` hoặc `cursor`; mỗi run chỉ enroll đúng client đã chọn và giữ nguyên healthy setup của các client khác.
 
-Bootstrap có thể hỏi cài `jq` hoặc `curl` bằng `apt-get`, `dnf`, hoặc `brew`. Từ chối trả `DEPENDENCY_MISSING`. Bootstrap tự cài Cursor Agent còn thiếu sau một lần xác nhận. Developer đang ở `v1.0.0` đến `v1.0.9` dùng đúng một lệnh trong [v1.0.10 upgrade](README.md#v1010-upgrade). Atlassian OAuth vẫn do client đã chọn sở hữu. Thiếu OAuth trả remediation của client đó; `AUTH_PENDING` không làm mất user setup.
+Bootstrap có thể hỏi cài `jq` hoặc `curl` bằng `apt-get`, `dnf`, hoặc `brew`. Từ chối trả `DEPENDENCY_MISSING`. Bootstrap tự cài Cursor Agent còn thiếu sau một lần xác nhận. Developer đang ở `v1.0.0` đến `v1.0.10` dùng đúng một lệnh trong [v1.0.11 upgrade](README.md#v1011-upgrade). Atlassian OAuth vẫn do client đã chọn sở hữu. Thiếu OAuth trả remediation của client đó; `AUTH_PENDING` không làm mất user setup.
 
 Bootstrap xác minh membership của GitHub Team `beroka-vn/frontend` và
 `beroka-vn/backend`, rồi lưu role `FE`, `BE`, hoặc `FULL_STACK` ở user scope.
@@ -116,7 +116,7 @@ bash -e -o pipefail -c '
 ### Downgrade
 
 Muốn về release đã publish cũ hơn (cùng major): uninstall trước, rồi cài từ
-launcher của đúng release đó. Ví dụ về `v1.0.9`:
+launcher của đúng release đó. Ví dụ về `v1.0.10`:
 
 ```bash
 beroka-governance uninstall --force
@@ -124,7 +124,7 @@ bash -e -o pipefail -c '
   gh auth status --hostname github.com >/dev/null 2>&1 ||
     gh auth login --hostname github.com --web
   gh auth setup-git --hostname github.com
-  gh release download v1.0.9 \
+  gh release download v1.0.10 \
     --repo beroka-vn/beroka-ai-governance \
     --pattern bootstrap.sh \
     --output - |
@@ -132,8 +132,8 @@ bash -e -o pipefail -c '
 '
 ```
 
-Đổi `v1.0.9` / `cursor` theo tag và client cần dùng. Không truyền `--version`
-cho launcher — `gh release download v1.0.9` đã chọn asset nhúng sẵn `v1.0.9`.
+Đổi `v1.0.10` / `cursor` theo tag và client cần dùng. Không truyền `--version`
+cho launcher — `gh release download v1.0.10` đã chọn asset nhúng sẵn `v1.0.10`.
 Sau khi cài lại, chạy `beroka-governance context "$PWD"`. User Rule dán trong
 **Cursor Settings > Rules** không bị uninstall xóa — tự xóa/sửa nếu không còn
 cần.
