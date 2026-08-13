@@ -36,7 +36,7 @@ Legacy tracked files không bị CLI parse, sửa, hay xóa. Repository owner c�
 
 - Có POSIX shell, `gh`, `jq`, và selected Codex/Claude client. Interactive Cursor bootstrap tự cài Cursor Agent nếu còn thiếu. Native Windows PowerShell không thuộc V1; dùng WSL trên Windows.
 - `gh` phải authenticate để download private release. Không yêu cầu, in, sao chép, ghi log hoặc lưu token.
-- `v1.0.11` là capability release được hỗ trợ hiện tại.
+- `v1.0.12` là capability release được hỗ trợ hiện tại.
 
 ### Bootstrap và install
 
