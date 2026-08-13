@@ -1,0 +1,55 @@
+run_pty() {
+  /usr/bin/python3 -c '
+import os, pty, select, sys
+
+pid, master = pty.fork()
+if pid == 0:
+    os.execv("/bin/sh", ["/bin/sh", "-c", sys.argv[1]])
+
+os.set_blocking(master, False)
+stdin_open = True
+pending_input = b""
+status = None
+
+while status is None:
+    readers = [master]
+    if stdin_open and not pending_input:
+        readers.append(sys.stdin.fileno())
+    writers = [master] if pending_input else []
+    ready_read, ready_write, _ = select.select(readers, writers, [], 0.1)
+
+    if sys.stdin.fileno() in ready_read:
+        data = os.read(sys.stdin.fileno(), 1024)
+        if data:
+            pending_input = data
+        else:
+            pending_input = b"\x04"
+            stdin_open = False
+
+    if master in ready_write:
+        pending_input = pending_input[os.write(master, pending_input):]
+
+    if master in ready_read:
+        try:
+            data = os.read(master, 1024)
+        except OSError:
+            data = b""
+        if data:
+            os.write(sys.stdout.fileno(), data)
+
+    waited, child_status = os.waitpid(pid, os.WNOHANG)
+    if waited:
+        status = child_status
+
+while True:
+    try:
+        data = os.read(master, 1024)
+    except (BlockingIOError, OSError):
+        break
+    if not data:
+        break
+    os.write(sys.stdout.fileno(), data)
+
+sys.exit(os.waitstatus_to_exitcode(status))
+' "$1"
+}

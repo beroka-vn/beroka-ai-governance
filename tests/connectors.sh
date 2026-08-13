@@ -3,6 +3,7 @@ set -eu
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
 CLI=$ROOT/bin/beroka-governance
+. "$ROOT/tests/pty.shlib"
 TEST_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/beroka-connectors-test.XXXXXX")
 trap 'rm -rf "$TEST_ROOT"' EXIT HUP INT TERM
 
@@ -148,7 +149,7 @@ if output=$($CLI setup-connectors --client codex --api-token should-not-appear 2
 fi
 assert_not_contains "$output" 'should-not-appear'
 
-if output=$(printf '\n' | script -qec "$CLI setup-connectors" /dev/null 2>&1); then
+if output=$(printf '\n' | run_pty "$CLI setup-connectors" 2>&1); then
   fail 'interactive setup accepted no detected client'
 fi
 assert_contains "$output" 'Result: DEPENDENCY_MISSING'
@@ -936,7 +937,7 @@ printf '%s\n' auth-required >"$XDG_CONFIG_HOME/fake-codex-health"
 rm -f "$XDG_CONFIG_HOME/fake-codex-configured"
 : >"$CALLS"
 if ! output=$(printf 'y\n' |
-  script -qec "$CLI setup-connectors" /dev/null 2>&1)
+  run_pty "$CLI setup-connectors" 2>&1)
 then
   fail 'interactive detected Codex setup did not start required OAuth'
 fi
@@ -1066,7 +1067,7 @@ rm -f "$XDG_CONFIG_HOME/fake-codex-configured" "$XDG_CONFIG_HOME/fake-claude-con
 : >"$CALLS"
 
 if ! output=$(printf '2\n' |
-  script -qec "$CLI setup-connectors" /dev/null 2>&1)
+  run_pty "$CLI setup-connectors" 2>&1)
 then
   fail 'interactive selected Claude setup did not start required OAuth'
 fi
@@ -1294,7 +1295,7 @@ assert_contains "$output" 'Project MCP: PRESENT_IGNORED'
 printf '%s\n' first-run-unknown >"$XDG_CONFIG_HOME/fake-cursor-health"
 : >"$CALLS"
 output=$(printf 'y\n' |
-  script -qec "$CLI setup-connectors --client cursor" /dev/null 2>&1)
+  run_pty "$CLI setup-connectors --client cursor" 2>&1)
 assert_contains "$output" \
   'Install global Atlassian MCP and start OAuth now? [y/N]'
 assert_contains "$output" \
@@ -1318,7 +1319,7 @@ printf '%s\n' first-run-unknown >"$XDG_CONFIG_HOME/fake-cursor-health"
 : >"$CALLS"
 decline_before=$(cat "$global_cursor_file")
 if decline_output=$(printf 'n\n' |
-  script -qec "$CLI setup-connectors --client cursor" /dev/null 2>&1)
+  run_pty "$CLI setup-connectors --client cursor" 2>&1)
 then
   fail 'Cursor first-run accepted declined global MCP installation'
 fi
@@ -1353,7 +1354,7 @@ printf '%s\n' first-run-unknown >"$XDG_CONFIG_HOME/fake-cursor-health"
 race_input=$TEST_ROOT/cursor-race-input
 race_output=$TEST_ROOT/cursor-race-output
 mkfifo "$race_input"
-script -qec "$CLI setup-connectors --client cursor" /dev/null \
+run_pty "$CLI setup-connectors --client cursor" \
   <"$race_input" >"$race_output" 2>&1 &
 race_pid=$!
 exec 3>"$race_input"
@@ -1386,7 +1387,7 @@ fix_wave_not_contains "$(cat "$CALLS")" 'mcp login atlassian'
 printf '%s\n' '{"other":{"preserved":true}}' >"$global_cursor_file"
 printf '%s\n' login-failed >"$XDG_CONFIG_HOME/fake-cursor-health"
 if login_failed_output=$(printf 'y\n' |
-  script -qec "$CLI setup-connectors --client cursor" /dev/null 2>&1)
+  run_pty "$CLI setup-connectors --client cursor" 2>&1)
 then
   fail 'Cursor first-run accepted failed OAuth login'
 fi
@@ -1395,7 +1396,7 @@ assert_contains "$login_failed_output" 'Result: AUTH_PENDING'
 printf '%s\n' '{"other":{"preserved":true}}' >"$global_cursor_file"
 printf '%s\n' post-login-unknown >"$XDG_CONFIG_HOME/fake-cursor-health"
 if post_login_output=$(printf 'y\n' |
-  script -qec "$CLI setup-connectors --client cursor" /dev/null 2>&1)
+  run_pty "$CLI setup-connectors --client cursor" 2>&1)
 then
   fail 'Cursor first-run accepted unknown post-login health'
 fi
@@ -1470,8 +1471,8 @@ assert_contains "$output" 'Result: PASS'
 
 printf '%s\n' auth-required >"$XDG_CONFIG_HOME/fake-codex-health"
 : >"$CALLS"
-if ! output=$(script -qec \
-  "$CLI setup-connectors --client codex" /dev/null 2>&1)
+if ! output=$(run_pty \
+  "$CLI setup-connectors --client codex" 2>&1)
 then
   fail 'interactive Codex setup did not start required OAuth'
 fi
@@ -1498,8 +1499,8 @@ assert_not_contains "$(cat "$CALLS")" 'cursor-agent '
 
 printf '%s\n' auth-required >"$XDG_CONFIG_HOME/fake-claude-health"
 : >"$CALLS"
-if ! output=$(script -qec \
-  "$CLI setup-connectors --client claude" /dev/null 2>&1)
+if ! output=$(run_pty \
+  "$CLI setup-connectors --client claude" 2>&1)
 then
   fail 'interactive Claude setup did not start required OAuth'
 fi
@@ -1514,8 +1515,8 @@ grep -Fx 'claude mcp login atlassian --no-browser' "$CALLS" >/dev/null ||
 
 printf '%s\n' auth-required >"$XDG_CONFIG_HOME/fake-claude-health"
 : >"$CALLS"
-if output=$(FAKE_CLAUDE_NO_BROWSER=0 script -qec \
-  "$CLI setup-connectors --client claude" /dev/null 2>&1)
+if output=$(FAKE_CLAUDE_NO_BROWSER=0 run_pty \
+  "$CLI setup-connectors --client claude" 2>&1)
 then
   fail 'Claude without --no-browser support started OAuth'
 fi
@@ -1550,8 +1551,8 @@ fix_wave_not_contains "$output" 'Tool inventory failed'
 
 printf '%s\n' auth-required >"$XDG_CONFIG_HOME/fake-cursor-health"
 : >"$CALLS"
-if ! output=$(script -qec \
-  "$CLI setup-connectors --client cursor" /dev/null 2>&1)
+if ! output=$(run_pty \
+  "$CLI setup-connectors --client cursor" 2>&1)
 then
   fail 'interactive Cursor setup did not start required OAuth'
 fi

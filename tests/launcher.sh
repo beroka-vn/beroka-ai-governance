@@ -3,6 +3,7 @@ set -eu
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
 TEMPLATE=$ROOT/release/bootstrap.sh.in
+. "$ROOT/tests/pty.shlib"
 TEST_ROOT=$(mktemp -d \
   "${TMPDIR:-/tmp}/beroka-launcher-test.XXXXXX")
 trap 'rm -rf "$TEST_ROOT"' EXIT HUP INT TERM
@@ -239,9 +240,8 @@ grep -Fx -- \
 
 : >"$calls"
 output=$(cd "$target_repo" &&
-  script -qec \
-    "sh -c 'sh -s -- --client codex <\"$asset\"'" \
-    /dev/null 2>&1)
+  run_pty \
+    "sh -c 'sh -s -- --client codex <\"$asset\"'" 2>&1)
 assert_contains "$output" 'LAUNCHER_INTERACTIVE=PASS'
 grep -Fx -- \
   "--client codex --version v9.9.9 --expected-commit $release_commit" \
@@ -297,8 +297,8 @@ output=$(cd "$target_repo" &&
   JQ_INSTALL_CALLS="$jq_calls" \
   JQ_READY_BIN="$jq_ready" \
   JQ_ACTIVE_BIN="$jq_bin" \
-  /usr/bin/script -qec \
-    "/bin/sh $asset --client codex" /dev/null 2>&1)
+  run_pty \
+    "/bin/sh $asset --client codex" 2>&1)
 assert_contains "$output" \
   'Missing dependency: jq. Install with apt-get (may request sudo)?'
 [ "$(cat "$jq_calls")" = "$(printf '%s\n%s' \
@@ -372,8 +372,8 @@ output=$(
   CURSOR_SUCCESS_INSTALLER="$cursor_success" \
   CURSOR_FAILURE_INSTALLER="$cursor_failure" \
   CURSOR_INVALID_INSTALLER="$cursor_invalid" \
-  /usr/bin/script -qec \
-    "/bin/sh $asset --client cursor" /dev/null 2>&1
+  run_pty \
+    "/bin/sh $asset --client cursor" 2>&1
 )
 assert_contains "$output" \
   'Install Cursor Agent CLI from https://cursor.com/install? [y/N]'
@@ -407,8 +407,8 @@ assert_contains "$output" 'Result: DEPENDENCY_MISSING'
 if output=$(
   printf 'n\n' |
   PATH="$cursor_bin" CURSOR_INSTALL_CALLS="$cursor_calls" \
-  /usr/bin/script -qec \
-    "/bin/sh $asset --client cursor" /dev/null 2>&1
+  run_pty \
+    "/bin/sh $asset --client cursor" 2>&1
 )
 then
   fail 'launcher accepted declined Cursor installation'
@@ -428,8 +428,8 @@ for cursor_mode in failure invalid; do
     CURSOR_SUCCESS_INSTALLER="$cursor_success" \
     CURSOR_FAILURE_INSTALLER="$cursor_failure" \
     CURSOR_INVALID_INSTALLER="$cursor_invalid" \
-    /usr/bin/script -qec \
-      "/bin/sh $asset --client cursor" /dev/null 2>&1
+    run_pty \
+      "/bin/sh $asset --client cursor" 2>&1
   )
   then
     fail "launcher accepted $cursor_mode Cursor installation"

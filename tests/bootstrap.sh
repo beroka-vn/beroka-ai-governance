@@ -3,6 +3,7 @@ set -eu
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
 CLI=$ROOT/bin/beroka-governance
+. "$ROOT/tests/pty.shlib"
 TEST_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/beroka-bootstrap-test.XXXXXX")
 trap 'rm -rf "$TEST_ROOT"' EXIT HUP INT TERM
 
@@ -458,9 +459,8 @@ do
   role_input=${role_case%%|*}
   expected_role=${role_case#*|}
   rm -f "$role_file"
-  if ! output=$(printf '%s\n' "$role_input" | script -qec \
-    "$CLI bootstrap $repo --client codex --version v1.1.0" \
-    /dev/null 2>&1)
+  if ! output=$(printf '%s\n' "$role_input" | run_pty \
+    "$CLI bootstrap $repo --client codex --version v1.1.0" 2>&1)
   then
     fail "interactive [$role_input] was rejected"
   fi
@@ -471,9 +471,8 @@ done
 
 for role_input in '' '   ' "$role_tab" unknown 'Full stack'; do
   rm -f "$role_file"
-  if output=$(printf '%s\n' "$role_input" | script -qec \
-    "$CLI bootstrap $repo --client codex --version v1.1.0" \
-    /dev/null 2>&1)
+  if output=$(printf '%s\n' "$role_input" | run_pty \
+    "$CLI bootstrap $repo --client codex --version v1.1.0" 2>&1)
   then
     fail "interactive [$role_input] bypassed role validation"
   fi
@@ -563,8 +562,8 @@ if [ "$#" -eq 3 ] && [ "$1" = -c ] && [ "$2" = 1 ]; then
       tail_stage_dir=${3%/*}
       tail_stage_mode=600
       check_stage_mode() {
-        checked_mode=$(/usr/bin/stat -c '%a' "$1")
-        [ "$checked_mode" = 600 ] || tail_stage_mode=$checked_mode
+        [ -n "$(/usr/bin/find "$1" -prune -perm 0600 -print)" ] ||
+          tail_stage_mode=invalid
       }
       case "${tail_stage_dir##*/}" in
         beroka-governance-instruction.*)
@@ -1079,9 +1078,8 @@ assert_contains "$output" \
 [ ! -e "$HOME/.cursor" ] ||
   fail 'Cursor bootstrap edited undocumented Cursor state'
 
-if cursor_output=$(printf 'n\n' | script -qec \
-  "$CLI bootstrap $repo --client cursor --version v1.2.0" \
-  /dev/null 2>&1)
+if cursor_output=$(printf 'n\n' | run_pty \
+  "$CLI bootstrap $repo --client cursor --version v1.2.0" 2>&1)
 then
   fail 'Cursor bootstrap accepted a declined User Rule'
 fi

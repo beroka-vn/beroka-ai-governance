@@ -53,7 +53,7 @@ snapshot_repo_complete() {
     find "$src_repo" -path "$src_repo/.git" -prune -o -type f -print |
       sort |
       while IFS= read -r file; do
-        sha256sum "$file"
+        shasum -a 256 "$file"
       done
   }
 }
