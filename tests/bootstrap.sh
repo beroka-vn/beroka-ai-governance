@@ -3,6 +3,7 @@ set -eu
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
 CLI=$ROOT/bin/beroka-governance
+. "$ROOT/tests/pty.shlib"
 TEST_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/beroka-bootstrap-test.XXXXXX")
 trap 'rm -rf "$TEST_ROOT"' EXIT HUP INT TERM
 
@@ -24,27 +25,6 @@ export PATH
 fail() {
   printf 'FAIL: %s\n' "$*" >&2
   exit 1
-}
-
-# script(1) has incompatible flags between util-linux (Linux) and BSD
-# (macOS), and macOS's script mishandles piped (non-tty) stdin. Use
-# Python's pty module instead: it is portable across both runners and
-# correctly relays piped stdin into the child. The child's real exit
-# status is captured via a status file written from inside the pty,
-# since pty.spawn's own return value is not a reliable exit code across
-# Python versions.
-run_pty() {
-  rp_command=$1
-  rp_status_file=$(mktemp)
-  /usr/bin/python3 -c '
-import pty, sys, shlex
-command, status_file = sys.argv[1], sys.argv[2]
-wrapped = command + "; echo $? > " + shlex.quote(status_file)
-pty.spawn(["/bin/sh", "-c", wrapped])
-' "$rp_command" "$rp_status_file"
-  rp_status=$(cat "$rp_status_file" 2>/dev/null || echo 1)
-  rm -f "$rp_status_file"
-  return "$rp_status"
 }
 
 assert_contains() {
@@ -582,8 +562,8 @@ if [ "$#" -eq 3 ] && [ "$1" = -c ] && [ "$2" = 1 ]; then
       tail_stage_dir=${3%/*}
       tail_stage_mode=600
       check_stage_mode() {
-        checked_mode=$(/usr/bin/stat -c '%a' "$1")
-        [ "$checked_mode" = 600 ] || tail_stage_mode=$checked_mode
+        [ -n "$(/usr/bin/find "$1" -prune -perm 0600 -print)" ] ||
+          tail_stage_mode=invalid
       }
       case "${tail_stage_dir##*/}" in
         beroka-governance-instruction.*)

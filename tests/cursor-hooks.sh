@@ -78,14 +78,14 @@ unstarted_submit=$(hook beforeSubmitPrompt "$unstarted_prompt")
 case "$unstarted_submit" in
   *'"continue":false'*) fail 'fresh beforeSubmitPrompt required manual session start' ;;
 esac
-unstarted_receipt=$(printf '%s' 'conversation-unstarted' | sha256sum | awk '{print $1}')
+unstarted_receipt=$(printf '%s' 'conversation-unstarted' | shasum -a 256 | awk '{print $1}')
 unstarted_receipt_file=$XDG_STATE_HOME/beroka-ai-governance/cursor/$unstarted_receipt.json
 [ -f "$unstarted_receipt_file" ] || fail 'fresh Cursor receipt was not created'
 assert_contains "$(jq -r .language "$unstarted_receipt_file")" en
 
 prompt_vi=$(printf '%s\n' "$base_input" | jq -c '. + {prompt:"Work-item language: Vietnamese"}')
 hook beforeSubmitPrompt "$prompt_vi" >/dev/null
-base_receipt=$(printf '%s' 'conversation-1' | sha256sum | awk '{print $1}')
+base_receipt=$(printf '%s' 'conversation-1' | shasum -a 256 | awk '{print $1}')
 receipt=$XDG_STATE_HOME/beroka-ai-governance/cursor/$base_receipt.json
 assert_contains "$(jq -r .language "$receipt")" vi
 generation_two=$(printf '%s\n' "$base_input" | jq -c '.generation_id="generation-2"')
@@ -454,7 +454,7 @@ assert_contains "$(hook beforeMCPExecution "$selfheal_read")" '"permission":"all
 stale_base=$(jq -nc --arg workspace "$known_repo" \
   '{conversation_id:"conversation-stale",generation_id:"generation-stale",workspace_roots:[$workspace]}')
 hook sessionStart "$stale_base" >/dev/null
-stale_receipt=$(printf '%s' 'conversation-stale' | sha256sum | awk '{print $1}')
+stale_receipt=$(printf '%s' 'conversation-stale' | shasum -a 256 | awk '{print $1}')
 stale_receipt_file=$XDG_STATE_HOME/beroka-ai-governance/cursor/$stale_receipt.json
 [ -f "$stale_receipt_file" ] || fail 'stale-upgrade receipt was not created'
 jq '.version = "v1.0.6" | .commit = "0000000000000000000000000000000000000000"' \

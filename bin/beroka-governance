@@ -448,6 +448,22 @@ strip_managed_block() {
   smb_boundary_line=${smb_rest%% *}
   smb_boundary_prefix=${smb_rest#* }
 
+  if BEROKA_BOUNDARY=$INSTRUCTION_BOUNDARY_MARKER \
+     BEROKA_START=$START_MARKER /usr/bin/perl -0777 -e '
+      $data = <>;
+      $index = index($data, $ENV{BEROKA_BOUNDARY});
+      exit 1 if $index < 0;
+      exit 42 if index($data, $ENV{BEROKA_BOUNDARY}, $index + 1) >= 0;
+      $suffix = $ENV{BEROKA_BOUNDARY} . "\n" . $ENV{BEROKA_START} . "\n";
+      exit 42 unless substr($data, $index, length($suffix)) eq $suffix;
+    ' "$input"
+  then
+    smb_boundary_line=1
+  else
+    smb_boundary_status=$?
+    [ "$smb_boundary_status" -eq 1 ] || return 1
+  fi
+
   if [ "$smb_start" -eq 0 ]; then
     cp "$input" "$output" || return 1
     [ -z "$managed" ] || : >"$managed"
@@ -460,19 +476,12 @@ strip_managed_block() {
   fi
   : >"$output" || return 1
   if [ "$smb_boundary_line" -gt 0 ]; then
-    if [ "$smb_boundary_line" -gt 1 ]; then
-      head -n "$((smb_boundary_line - 1))" "$input" >"$output" ||
-        return 1
-    fi
-    LC_ALL=C awk -v line="$smb_boundary_line" \
-      -v prefix_length="$smb_boundary_prefix" '
-      NR == line {
-        printf "%s", substr($0, 1, prefix_length)
-        found=1
-        exit
-      }
-      END { if (!found) exit 42 }
-    ' "$input" >>"$output" || return 1
+    BEROKA_BOUNDARY=$INSTRUCTION_BOUNDARY_MARKER /usr/bin/perl -0777 -e '
+      $data = <>;
+      $index = index($data, $ENV{BEROKA_BOUNDARY});
+      exit 42 if $index < 0;
+      print substr($data, 0, $index);
+    ' "$input" >"$output" || return 1
   elif [ "$smb_start" -gt 1 ]; then
     head -n "$((smb_start - 1))" "$input" >"$output" || return 1
   fi
@@ -2184,14 +2193,20 @@ codex_probe_response() {
 
 codex_probe_response_kind() {
   cprk_response=$(cat)
-  cprk_id1=0
+  if printf '%s\n' "$cprk_response" |
+     jq -e -s 'length == 1 and (.[0] | type == "object" and .id == 1)' \
+       >/dev/null 2>&1
+  then
+    cprk_id1=1
+  else
+    cprk_id1=0
+  fi
   cprk_result=0
   cprk_error=0
   cprk_tokens=$(printf '%s\n' "$cprk_response" |
     json_rpc_tokens) || return 1
   while IFS= read -r cprk_token; do
     case "$cprk_token" in
-      id1) cprk_id1=1 ;;
       result) cprk_result=1 ;;
       error) cprk_error=1 ;;
     esac
@@ -5074,7 +5089,7 @@ cursor_select_be_fe_workspace() {
 }
 
 cursor_receipt_path() {
-  cursor_hash=$(printf '%s' "$CURSOR_CONVERSATION" | sha256sum 2>/dev/null | awk '{print $1}') || return 1
+  cursor_hash=$(printf '%s' "$CURSOR_CONVERSATION" | shasum -a 256 2>/dev/null | awk '{print $1}') || return 1
   printf '%s\n' "$cursor_hash" | grep -Eq '^[0-9a-f]{64}$' || return 1
   printf '%s\n' "$CURSOR_STATE_ROOT/$cursor_hash.json"
 }
