@@ -1,16 +1,19 @@
 # Development Team and AI Agent Collaboration Workflow
 
-Beroka governance is a verified, user-scoped release for the selected AI
-client. It supplies workflow context and routes external operations from the
-Central repository catalog; it does not configure the application repository.
+Beroka governance is a verified, user-scoped release for Codex, Claude, and
+Cursor. It supplies workflow context and routes external operations from the
+Central repository catalog; it never configures an application repository.
+
+`v1.0.11` is the current supported capability release. Published tags are
+immutable.
+
+`Application repository changes: NONE`
+
+`Legacy repository metadata: PRESENT_IGNORED`
 
 ## Quick start
 
-Install `gh` and the selected Codex or Claude client once per workstation.
-Interactive Cursor bootstrap installs a missing Cursor Agent after one
-confirmation. Run this from any directory. Healthy client-owned GitHub OAuth
-is reused; when it is missing, `gh` starts its browser OAuth flow and keeps
-credentials in its own store.
+Install `gh` and the selected AI client, then run this from any directory.
 
 ```bash
 bash -e -o pipefail -c '
@@ -25,120 +28,69 @@ bash -e -o pipefail -c '
 '
 ```
 
-`gh auth setup-git --hostname github.com` configures Git to reuse
-client-owned GitHub OAuth for the launcher's private HTTPS clone. No token is requested, printed, copied, logged, or stored.
+Replace `codex` with `claude` or `cursor` to select another client. The
+launcher uses client-owned GitHub OAuth for its private HTTPS clone.
+No token is requested, printed, copied, logged, or stored.
 
-Replace `codex` with `claude` or `cursor` to enroll exactly that client.
-Existing healthy client setup is preserved. Cursor Individual requires a
-one-time confirmation: add the printed User Rule in **Cursor Settings > Rules**
-and confirm it when bootstrap asks. Cursor bootstrap atomically installs
-documented global local hooks while preserving personal hooks; Governance never
-edits Cursor's internal settings database. For Cursor, Doctor reports
-`Instruction: USER_CONFIRMED`, `Runtime hook: INSTALLED`, and `Runtime
-enforcement: PASS`.
+Cursor Individual may ask you to install Cursor Agent and confirm its managed
+User Rule in **Cursor Settings > Rules**. See the [handbook](handbook.md) for
+client prerequisites, connector behavior, and OAuth troubleshooting.
 
-Run setup for one client on each execution environment, then repeat it only
-when you want to enroll another client there.
+## Add another client
 
-Bootstrap runs `setup-connectors` for the selected client. Once Atlassian
-authentication is known to be missing, expired, or invalid, interactive
-setup, bootstrap, and preflight start the selected producer's
-re-authentication immediately and wait for it to finish:
-
-```text
-Codex:  codex mcp login atlassian
-Claude: claude mcp login atlassian --no-browser
-Cursor: cursor-agent mcp login atlassian
-```
-
-Interactive authentication treats producer output as opaque and passes
-provider OAuth output directly to the terminal so the user receives its
-one-time login URL.
-
-Claude checks `claude mcp login --help` for `--no-browser` only at this OAuth
-boundary. Without it, governance returns `DEPENDENCY_MISSING` with
-`Remediation: claude update`. Non-interactive setup, bootstrap, and preflight
-and all Doctor paths never invoke login; Cursor hooks retain non-interactive
-preflight. Interactive Cursor first-run still asks
-`Install global Atlassian MCP and start OAuth now?` before writing the global
-MCP configuration, then starts OAuth without another confirmation.
-
-An active agent receiving `ATLASSIAN_AUTH_REQUIRED` stops the dependent write,
-runs the selected command in an interactive terminal, streams producer output
-so the user receives the one-time login URL, and waits for completion. It
-never synthesizes, parses, persists, or copies that URL or credentials into an
-issue, commit, or durable log. It then runs a fresh operation-specific
-preflight and continues only on `Result: PASS`.
-
-The launcher verifies its embedded annotated tag and commit before it executes
-package code. It installs the active release and selected-client adapter in
-user-owned locations. Bootstrap does not infer repository context from the
-current directory; run `beroka-governance context "$PWD"` explicitly when
-governed repository work begins.
-
-`Application repository changes: NONE`
-
-`Legacy repository metadata: PRESENT_IGNORED`
-
-Tracked legacy governance files remain until a repository owner explicitly
-authorizes a separate cleanup. The new CLI ignores them for release selection
-and routing. `v1.0.11` is the current supported capability release. Every
-published tag is immutable.
-
-### v1.0.11 release
-
-This release fixes the `claude` client's Atlassian connector detection so
-`setup-connectors`, `preflight`, and `doctor` correctly recognize a healthy,
-correctly configured connector instead of false-reporting `CONNECTOR_MISSING`
-or `CONNECTOR_HEALTH_UNAVAILABLE`. `claude_atlassian_endpoint()` now reads the
-connector name from the unindented header line `claude mcp get` actually
-emits instead of a `Name:` field it never has, scopes URL matching to that
-connector's own section so a different server's block can no longer be
-mistaken for it, and the health-check state machine recognizes the heavy
-checkmark (`✔`, U+2714) the CLI actually prints for a connected server, not
-only the light checkmark (`✓`, U+2713).
-
-v1.0.10's Confluence documentation routing remains **allow-by-default**.
-Ordinary create/update/move uses `confluence-page-parent-write` and is allowed
-unless the target or parent is listed as `UNACTIVATED` in the pinned release
-inventory (`DOCS_UNACTIVATED`; only a reviewed governance release PR can
-change that list). Create/update bodies must include handoff delta markers
-(`Jira:`, `GitHub:`, and a `## Handoff —` section or `Handoff form:
-child-page` with `Canonical:`) or return `HANDOFF_DELTA_REQUIRED`. Moves
-require a numeric destination parent. Hierarchy bootstrap remains optional
-guidance. Cursor hooks also parse stringified MCP `tool_input` JSON so
-governed writes do not false-deny with empty fields.
-
-FULL_STACK Cursor multi-root target selection also remains fixed when
-workspace folder paths literally contain `Beroka_Backend` and
-`Beroka_Frontend`. Unique `projectKey` / parent / epic keys (BB or BF) select
-that side even though both product names appear in `workspace_roots`, so
-targeted `createJiraIssue` writes clear `TARGET_REQUIRED`. Hook PATH appends
-the user bin as a fallback when `cursor-agent` or `gh` is missing, so
-templated `gh` creates do not false-fail `DEPENDENCY_MISSING` when those tools
-live under `~/.local/bin`, without shadowing an earlier healthy executable.
-Official Atlassian MCP field aliases (`issueTypeName`, `assignee_account_id`,
-`Missing:` hints) remain required.
-
-### v1.0.11 upgrade
-
-Bootstrap installs a missing Cursor Agent after one confirmation. Developers
-upgrading from `v1.0.0` through `v1.0.10` run this once; installation and
-Atlassian connector setup continue in the same process:
+Enrollment is additive. For example, if Codex is already enrolled and you want
+to add Claude, run the same launcher for Claude:
 
 ```bash
-bash -e -o pipefail -c 'gh release download v1.0.11 --repo beroka-vn/beroka-ai-governance --pattern bootstrap.sh --output - | sh -s -- --client cursor --upgrade'
+bash -e -o pipefail -c '
+  gh auth status --hostname github.com >/dev/null 2>&1 ||
+    gh auth login --hostname github.com --web
+  gh auth setup-git --hostname github.com
+  gh release download \
+    --repo beroka-vn/beroka-ai-governance \
+    --pattern bootstrap.sh \
+    --output - |
+    sh -s -- --client claude
+'
 ```
-To select the current repository immediately after upgrading, run:
+
+Codex remains enrolled and Claude is added alongside it. The same pattern
+works for any supported second client: `codex`, `claude`, or `cursor`.
+Do not pass `--upgrade` when adding a client to the active release. The flag is
+only for changing the active governance release.
+
+## Operate governance
+
+Bootstrap does not infer repository context. At the start of governed work,
+select the exact repository explicitly:
+
 ```bash
 beroka-governance context "$PWD"
 ```
 
+Run context again after session resume or compaction, when the IDE workspace or current Git repository changes, when another repository enters scope, or when
+a plan becomes shared or full-stack.
+
+Run a fresh operation-specific preflight immediately before each external
+write:
+
+```bash
+beroka-governance preflight "$PWD" \
+  --client codex \
+  --operation jira-write
+```
+
+Bootstrap runs `setup-connectors` for the selected client. If connector or
+authentication checks fail, follow the printed remediation and rerun a fresh
+preflight. Detailed client commands, result codes, and non-interactive rules
+live in the [handbook](handbook.md).
+
+## Release lifecycle
+
 ### Upgrade
 
-Use the single upgrade path when a newer same-major release is published. It
-replaces only verified user-owned governance state and preserves enabled
-clients and their healthy setup:
+Use `--upgrade` only when moving to a newer same-major release. Enabled clients
+and healthy client setup are preserved.
 
 ```bash
 bash -e -o pipefail -c '
@@ -153,20 +105,14 @@ bash -e -o pipefail -c '
 '
 ```
 
-Replace `codex` with `claude` or `cursor` for that client. Pin an exact newer
-same-major release with `gh release download vX.Y.Z` (instead of untagged
-“latest”) when you do not want the newest asset. The downloaded launcher embeds
-that release; it accepts only `--client`, `--upgrade`, and `--non-interactive`
-(not `--version`).
-
-In-place `--upgrade` rejects an older target (`VERSION_MISMATCH`). The retired
-`rollback` command is not available.
+Pin an exact newer release with `gh release download vX.Y.Z` when needed. The
+launcher embeds the downloaded release; it accepts only `--client`, `--upgrade`, and `--non-interactive`.
+In-place `--upgrade` rejects an older target (`VERSION_MISMATCH`).
 
 ### Downgrade
 
-To move to an older published same-major release, uninstall first, then install
-from that exact release’s launcher. Example: leave the current release and
-reinstall `v1.0.10`:
+To install an older published same-major release, uninstall first and then use
+that release's launcher. Example:
 
 ```bash
 beroka-governance uninstall --force
@@ -182,27 +128,20 @@ bash -e -o pipefail -c '
 '
 ```
 
-Replace `v1.0.10` / `cursor` with the published tag and client you need. Do not
-pass `--version` to the launcher; `gh release download v1.0.10` already selects
-the asset that embeds `v1.0.10`. After reinstall, run
-`beroka-governance context "$PWD"` again before governed work. Cursor User Rules
-pasted into **Cursor Settings > Rules** are not removed by uninstall; delete or
-replace that text manually if you no longer want it.
+Replace `v1.0.10` and `cursor` with the published release and client you need.
+Do not pass `--version`; the release selected by `gh release download` is
+already embedded in the launcher.
 
 ### Uninstall
 
-Remove the user-scoped CLI, active release data, client enrollment, Cursor
-acknowledgement, GitHub role file, and managed blocks from personal Codex /
-Claude instruction files. Personal text outside those managed blocks is kept.
-Application repositories are never modified.
+Remove user-scoped governance state and managed instruction blocks while
+preserving personal text and application repositories:
 
 ```bash
 beroka-governance uninstall --force
 ```
 
-Without `--force`, uninstall still performs the same removal when invoked as
-`beroka-governance uninstall` (see `beroka-governance` usage). Prefer
-`--force` in scripts and agent runbooks so the intent is explicit.
+See the [handbook](handbook.md) for downgrade and uninstall edge cases.
 
 ### Automation / CI
 
@@ -226,58 +165,19 @@ bash -e -o pipefail -c '
 '
 ```
 
-In a fresh session, run `beroka-governance context "$PWD"` before governed
-planning, implementation, or external actions. Run the operation-specific
-preflight immediately before each external write. Unknown repositories may do
-source-only work but return `ROUTING_REQUIRED` for routing-dependent writes.
-Rerun context when the IDE workspace or current Git repository changes, another
-repository enters scope, or a plan becomes shared/full-stack. Shared planning
-requires exact targets, context for each target, and one primary tracking
-repository.
-
-```bash
-beroka-governance preflight "$PWD" \
-  --client codex \
-  --operation jira-write
-```
-
-The active release resolves the canonical GitHub origin against the Central
-repository catalog. Catalog additions or routing changes require an explicitly
-authorized governance-repository task; application repositories do not alter
-the catalog.
-
 ## Team workflow
 
-Backend and Frontend repositories are both supported when their canonical
-origins have exact catalog records. The catalog selects the approved profile,
-integration, Jira project, board, and Confluence root; never infer one from a
-similar repository name.
+Backend and Frontend repositories are supported when their canonical origins
+have exact Central catalog records:
 
-- Backend: `beroka-vn/Beroka_Backend`.
-- Frontend: `beroka-vn/Beroka_Frontend`.
+- Backend: `beroka-vn/Beroka_Backend`
+- Frontend: `beroka-vn/Beroka_Frontend`
 
-Bootstrap derives `FE`, `BE`, or `FULL_STACK` from exact `beroka-vn` GitHub
-Team membership. Context denies a routed profile outside that stored role, and
-eligible preflights revalidate membership before external writes. `FULL_STACK`
-may open a Cursor multi-root workspace that contains exactly the catalog
-`Beroka_Backend` and `Beroka_Frontend` pair; governed writes must name the exact
-BB/BF project, parent/epic key, or repository target. Target selection prefers
-that structured project and does not treat `workspace_roots` folder path
-substrings as BE/FE signals, so real product-folder clones do not force
-`TARGET_REQUIRED`. Untargeted FULL_STACK writes still return `TARGET_REQUIRED`.
-When `origin` is a fork, governance prefers another remote whose slug has an
-exact catalog record (for example `beroka` or `upstream`). Multiple remotes for
-the same catalog slug are accepted and prefer `origin`. Unknown repositories
-stay source-only and never inherit BE/FE routing.
-
-- Manager/coordinator: use the [operating workflow](workflow.md), then the
-  [Jira and Confluence template](templates/jira-confluence.md) and [GitHub
-  Issue template](templates/github-issue.md).
-- Developer: use the [governance rules](governance.md), accept work that meets
-  the Definition of Ready, and use the [Pull Request
-  template](templates/pull-request.md).
-- AI agent: use the [AI Agent Assignment
-  Template](templates/ai-agent-assignment.md).
+The catalog selects the approved role, Jira project, and Confluence root.
+Agents never infer routing from similar repository names. Use the [operating
+workflow](workflow.md), [governance rules](governance.md), and supplied
+templates for ownership, readiness, handoff, and Backend Capability Registry
+requirements.
 
 ## Source of truth
 
@@ -289,10 +189,8 @@ stay source-only and never inherit BE/FE routing.
 | Confluence | Delivered behavior, decisions, guides, and limitations |
 | Backend Capability Registry | Canonical cross-Epic capability mapping |
 
-Use one primary issue owner, branch, and pull request. The workflow remains
-instruction-driven: CI, hooks, branch protection, and platform permissions are
-the only hard enforcement when they exist. AI never approves or merges without
-explicit human confirmation for the exact pull request and commit.
+AI never approves or merges without explicit human confirmation for the exact
+pull request and commit.
 
 ## Documents in this package
 
@@ -300,5 +198,5 @@ explicit human confirmation for the exact pull request and commit.
 | --- | --- |
 | [governance.md](governance.md) | Roles, readiness, authority, and stop conditions |
 | [workflow.md](workflow.md) | Jira, GitHub, and Confluence operating sequence |
-| [handbook.md](handbook.md) | Client setup, connector health, and release gate |
-| [PACKAGE-DESIGN.md](PACKAGE-DESIGN.md) | User-scope package and release contract |
+| [handbook.md](handbook.md) | Client setup, connector health, and release operations |
+| [PACKAGE-DESIGN.md](PACKAGE-DESIGN.md) | User-scoped package and release contract |

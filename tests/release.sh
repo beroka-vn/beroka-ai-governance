@@ -96,21 +96,13 @@ reject_text PACKAGE-DESIGN.md \
   '`v1.0.10` is the current supported capability release.'
 reject_text PACKAGE-DESIGN.md \
   '`v1.0.12` is the current supported capability release.'
+require_text README.md '## Add another client'
+require_text README.md 'sh -s -- --client claude'
+require_text README.md 'Codex remains enrolled'
 require_text README.md \
-  'Bootstrap installs a missing Cursor Agent after one confirmation.'
-require_text README.md \
-  'gh release download v1.0.11 --repo beroka-vn/beroka-ai-governance'
-require_text README.md \
-  'upgrading from `v1.0.0` through `v1.0.10` run this once'
-require_text README.md '### v1.0.11 release'
-require_text README.md 'createJiraIssue'
-require_text README.md 'workspace_roots'
-require_text README.md 'TARGET_REQUIRED'
-require_text README.md 'DEPENDENCY_MISSING'
-require_text README.md 'issueTypeName'
-require_text README.md 'assignee_account_id'
-require_text README.md 'Missing:'
-require_text README.md 'does not treat `workspace_roots` folder path'
+  'Do not pass `--upgrade` when adding a client to the active release.'
+reject_text README.md '### v1.0.11 release'
+reject_text README.md '### v1.0.11 upgrade'
 require_text handbook.md \
   'Bootstrap tự cài Cursor Agent còn thiếu sau một lần xác nhận.'
 require_text handbook.md 'không dùng substring path trong `workspace_roots`'
@@ -152,7 +144,6 @@ require_text docs/superpowers/specs/2026-08-05-confluence-target-bootstrap-desig
   'DISCOVERY_COMPLETE'
 require_text handbook.md 'Chuyển quyết định cho developer'
 require_text README.md 'gh release download'
-require_text README.md 'one client on each execution environment'
 require_text handbook.md 'AUTH_PENDING'
 require_text handbook.md 'CONNECTOR_HEALTH_UNAVAILABLE'
 require_text PACKAGE-DESIGN.md '15-second total deadline'

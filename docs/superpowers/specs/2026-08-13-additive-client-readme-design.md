@@ -1,7 +1,7 @@
 # Additive Client Enrollment README Design
 
 **Date:** 2026-08-13
-**Status:** Approved for specification; implementation awaits spec review
+**Status:** Approved and implemented
 
 ## Goal
 

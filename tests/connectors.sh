@@ -1729,10 +1729,15 @@ grep -F 'GITHUB_AUTH_REQUIRED' "$ROOT/PACKAGE-DESIGN.md" >/dev/null ||
 grep -F 'gh auth login --hostname github.com --web' "$ROOT/handbook.md" \
   >/dev/null ||
   fail 'handbook does not document GitHub OAuth remediation'
-grep -F 'provider OAuth output directly' "$ROOT/README.md" >/dev/null ||
-  fail 'README does not document OAuth URL pass-through'
-grep -F 'enroll another client there.' "$ROOT/README.md" >/dev/null ||
+grep -F '## Add another client' "$ROOT/README.md" >/dev/null ||
   fail 'README does not document adding another client'
+grep -F 'sh -s -- --client claude' "$ROOT/README.md" >/dev/null ||
+  fail 'README does not show additive Claude enrollment'
+grep -F 'Codex remains enrolled' "$ROOT/README.md" >/dev/null ||
+  fail 'README does not preserve the existing client'
+grep -F 'Do not pass `--upgrade` when adding a client to the active release.' \
+  "$ROOT/README.md" >/dev/null ||
+  fail 'README confuses enrollment with release upgrade'
 grep -F 'gh release download' "$ROOT/README.md" >/dev/null ||
   fail 'README does not document the release launcher'
 grep -F 'AUTH_PENDING' "$ROOT/handbook.md" >/dev/null ||
