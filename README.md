@@ -39,7 +39,7 @@ client prerequisites, connector behavior, and OAuth troubleshooting.
 ## Add another client
 
 Enrollment is additive. For example, if Codex is already enrolled and you want
-to add Claude, run the same launcher for Claude:
+to add Claude, run the same launcher for Claude. If the installed release is older than the latest published release, upgrade it first.
 
 ```bash
 bash -e -o pipefail -c '

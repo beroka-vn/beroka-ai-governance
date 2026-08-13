@@ -149,8 +149,12 @@ require_text README.md 'sh -s -- --client claude'
 require_text README.md 'Codex remains enrolled'
 require_text README.md \
   'Do not pass `--upgrade` when adding a client to the active release.'
+require_text README.md \
+  'If the installed release is older than the latest published release, upgrade it first.'
 reject_text README.md '### v1.0.11 release'
 reject_text README.md '### v1.0.11 upgrade'
+require_text handbook.md 'README.md#upgrade'
+reject_text handbook.md 'README.md#v1011-upgrade'
 require_text README.md '### Downgrade'
 require_text README.md '### Uninstall'
 require_text README.md 'beroka-governance uninstall --force'

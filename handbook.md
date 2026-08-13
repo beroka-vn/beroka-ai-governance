@@ -57,7 +57,7 @@ bash -e -o pipefail -c '
 
 `gh auth setup-git --hostname github.com` dùng lại client-owned GitHub OAuth cho private HTTPS clone. Thay `codex` bằng `claude` hoặc `cursor`; mỗi run chỉ enroll đúng client đã chọn và giữ nguyên healthy setup của các client khác.
 
-Bootstrap có thể hỏi cài `jq` hoặc `curl` bằng `apt-get`, `dnf`, hoặc `brew`. Từ chối trả `DEPENDENCY_MISSING`. Bootstrap tự cài Cursor Agent còn thiếu sau một lần xác nhận. Developer đang ở `v1.0.0` đến `v1.0.10` dùng đúng một lệnh trong [v1.0.11 upgrade](README.md#v1011-upgrade). Atlassian OAuth vẫn do client đã chọn sở hữu. Thiếu OAuth trả remediation của client đó; `AUTH_PENDING` không làm mất user setup.
+Bootstrap có thể hỏi cài `jq` hoặc `curl` bằng `apt-get`, `dnf`, hoặc `brew`. Từ chối trả `DEPENDENCY_MISSING`. Bootstrap tự cài Cursor Agent còn thiếu sau một lần xác nhận. Developer dùng release cũ hơn release được publish mới nhất phải chạy [Upgrade](README.md#upgrade) trước khi thêm client khác. Atlassian OAuth vẫn do client đã chọn sở hữu. Thiếu OAuth trả remediation của client đó; `AUTH_PENDING` không làm mất user setup.
 
 Bootstrap xác minh membership của GitHub Team `beroka-vn/frontend` và
 `beroka-vn/backend`, rồi lưu role `FE`, `BE`, hoặc `FULL_STACK` ở user scope.
