@@ -2171,7 +2171,14 @@ codex_probe_complete() {
     json_top_level_string authStatus) || return 1
   case "$cpc_auth" in
     notLoggedIn) return 0 ;;
-    oAuth) return 0 ;;
+    oAuth)
+      if cpc_tools=$(printf '%s\n' "$cpc_record" |
+        json_top_level_tools)
+      then
+        [ -n "$cpc_tools" ] ||
+          [ "$(codex_probe_response_count "$cpc_file")" -ge 2 ]
+      fi
+      ;;
     *) return 1 ;;
   esac
 }

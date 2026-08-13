@@ -447,6 +447,22 @@ case "$*" in
               '2026-07-31T03:04:05.000Z ERROR codex_rmcp_client::oauth::refresh_transaction: error=failed to refresh OAuth tokens for server atlassian: OAuth token refresh failed: Server returned error response: unauthorized_client: refresh_token is invalid' \
               '{"id":1,"result":{"data":[{"name":"atlassian","tools":{},"authStatus":"oAuth"}]}}'
             ;;
+          delayed-reauth)
+            requests=$(sed -n '1p' \
+              "$XDG_CONFIG_HOME/fake-codex-delayed-reauth-requests" \
+              2>/dev/null || :)
+            requests=${requests:-0}
+            requests=$((requests + 1))
+            printf '%s\n' "$requests" \
+              >"$XDG_CONFIG_HOME/fake-codex-delayed-reauth-requests"
+            if [ "$requests" -eq 1 ]; then
+              printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{},"authStatus":"oAuth"}]}}'
+            else
+              printf '%s\n' \
+                '{"method":"mcpServer/startupStatus/updated","params":{"name":"atlassian","failureReason":"reauthenticationRequired"}}' \
+                '{"id":1,"result":{"data":[{"name":"atlassian","tools":{},"authStatus":"oAuth"}]}}'
+            fi
+            ;;
           refresh-token-invalid-other-server)
             printf '%s\n' \
               '2026-07-31T03:04:05.000Z ERROR codex_rmcp_client::oauth::refresh_transaction: error=failed to refresh OAuth tokens for server github: OAuth token refresh failed: Server returned error response: unauthorized_client: refresh_token is invalid' \
@@ -2211,6 +2227,33 @@ assert_contains "$output" 'Remediation: codex mcp login atlassian'
 assert_contains "$output" 'Result: ATLASSIAN_AUTH_REQUIRED'
 assert_not_contains "$output" 'CONNECTOR_CAPABILITY_REQUIRED'
 assert_not_contains "$(cat "$CALLS")" 'codex mcp login atlassian'
+
+rm -f "$XDG_CONFIG_HOME/fake-codex-delayed-reauth-requests"
+printf '%s\n' delayed-reauth >"$XDG_CONFIG_HOME/fake-codex-health"
+: >"$CALLS"
+if output=$($CLI preflight "$consumer" \
+  --client codex --operation jira-write --non-interactive 2>&1)
+then
+  fail 'delayed Codex reauthentication passed Jira preflight'
+fi
+assert_contains "$output" 'Remediation: codex mcp login atlassian'
+assert_contains "$output" 'Result: ATLASSIAN_AUTH_REQUIRED'
+assert_not_contains "$output" 'CONNECTOR_CAPABILITY_REQUIRED'
+assert_not_contains "$(cat "$CALLS")" 'codex mcp login atlassian'
+
+rm -f "$XDG_CONFIG_HOME/fake-codex-delayed-reauth-requests"
+printf '%s\n' delayed-reauth >"$XDG_CONFIG_HOME/fake-codex-health"
+: >"$CALLS"
+if ! output=$(run_pty \
+  "$CLI preflight $consumer --client codex --operation jira-write" 2>&1)
+then
+  fail 'interactive preflight did not recover delayed Codex reauthentication'
+fi
+assert_contains "$output" 'Result: PASS'
+assert_contains "$output" \
+  'OAuth URL: https://auth.example.test/authorize?state=one-time'
+[ "$(grep -Fxc 'codex mcp login atlassian' "$CALLS")" -eq 1 ] ||
+  fail 'interactive delayed reauthentication did not invoke login exactly once'
 
 printf '%s\n' refresh-token-invalid-other-server \
   >"$XDG_CONFIG_HOME/fake-codex-health"
