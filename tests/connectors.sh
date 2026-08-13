@@ -48,6 +48,7 @@ if [ "${FAKE_CODEX_WAIT_FOR_DECOY:-0}" = 1 ]; then
   if [ "$decoy_polls" -eq 1 ]; then
     decoy_marker=$XDG_CONFIG_HOME/fake-codex-decoy
   else
+    : >"$XDG_CONFIG_HOME/fake-codex-decoy-next-poll"
     decoy_marker=$XDG_CONFIG_HOME/fake-codex-actual
   fi
   wait_loops=0
@@ -294,7 +295,14 @@ case "$*" in
                 ;;
             esac
             : >"$XDG_CONFIG_HOME/fake-codex-decoy"
-            /bin/sleep 0.08
+            wait_loops=0
+            while [ ! -f "$XDG_CONFIG_HOME/fake-codex-decoy-next-poll" ] &&
+                  [ "$wait_loops" -lt 100 ]
+            do
+              /bin/sleep 0.01
+              wait_loops=$((wait_loops + 1))
+            done
+            [ -f "$XDG_CONFIG_HOME/fake-codex-decoy-next-poll" ] || exit 0
             printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","serverInfo":null,"tools":{"atlassianUserInfo":{}},"resources":[],"resourceTemplates":[],"authStatus":"oAuth"}]}}'
             : >"$XDG_CONFIG_HOME/fake-codex-actual"
             ;;
@@ -593,6 +601,7 @@ do
     "$XDG_CONFIG_HOME/fake-codex-decoy" \
     "$XDG_CONFIG_HOME/fake-codex-actual" \
     "$XDG_CONFIG_HOME/fake-codex-decoy-polls" \
+    "$XDG_CONFIG_HOME/fake-codex-decoy-next-poll" \
     "$XDG_CONFIG_HOME/fake-codex-decoy-requests"
   printf '%s\n' "$delayed_response" \
     >"$XDG_CONFIG_HOME/fake-codex-health"
