@@ -920,7 +920,8 @@ prepare_release() {
   else
     mkdir -p "$DATA_ROOT/releases" || die GOVERNANCE_NOT_READY 'Cannot create releases directory'
     TX_RELEASE_STAGE=$(mktemp -d "$DATA_ROOT/releases/.install.$pr_version.XXXXXX") || die GOVERNANCE_NOT_READY 'Cannot create release stage'
-    if ! git -c advice.detachedHead=false clone -q --depth 1 --single-branch --branch "$pr_version" "$REMOTE_URL" "$TX_RELEASE_STAGE"; then
+    if ! pr_clone_output=$(git -c advice.detachedHead=false clone -q --depth 1 --single-branch --branch "$pr_version" "$REMOTE_URL" "$TX_RELEASE_STAGE" 2>&1); then
+      [ -z "$pr_clone_output" ] || printf '%s\n' "$pr_clone_output" >&2
       die GOVERNANCE_ACCESS_DENIED "Cannot clone $SOURCE_SLUG at $pr_version"
     fi
     RELEASE_DIR=$TX_RELEASE_STAGE
