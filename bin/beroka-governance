@@ -3156,6 +3156,28 @@ json_top_level_tools() {
   json_top_level_object tools | json_top_level_keys
 }
 
+codex_canonical_tool_names() {
+  LC_ALL=C awk '
+    BEGIN {
+      canonical["mcp__codex_apps__atlassian_rovo_createjiraissue"]="createJiraIssue"
+      canonical["mcp__codex_apps__atlassian_rovo_getaccessibleatla_4b5564c6c5e4"]="getAccessibleAtlassianResources"
+      canonical["mcp__codex_apps__atlassian_rovo_getjiraissue"]="getJiraIssue"
+      canonical["mcp__codex_apps__atlassian_rovo_getjiraissuetypemetawithfields"]="getJiraIssueTypeMetaWithFields"
+      canonical["mcp__codex_apps__atlassian_rovo_getjiraprojectiss_ccce75cac970"]="getJiraProjectIssueTypesMetadata"
+      canonical["mcp__codex_apps__atlassian_rovo_searchjiraissuesusingjql"]="searchJiraIssuesUsingJql"
+    }
+    {
+      name=($0 in canonical ? canonical[$0] : $0)
+      if (seen[name]++) invalid=1
+      names[NR]=name
+    }
+    END {
+      if (invalid) exit 42
+      for (i=1; i<=NR; i++) print names[i]
+    }
+  '
+}
+
 codex_reauthentication_required() {
   crr_matches=0
   while IFS= read -r crr_message; do
@@ -3246,8 +3268,10 @@ connector_inventory() {
       connector_probe codex || return 1
       ci_record=$(printf '%s\n' "$CONNECTOR_PROBE_OUTPUT" |
         codex_atlassian_record) || return 1
-      CAPABILITY_INVENTORY=$(printf '%s\n' "$ci_record" |
+      ci_tools=$(printf '%s\n' "$ci_record" |
         json_top_level_tools) || return 1
+      CAPABILITY_INVENTORY=$(printf '%s\n' "$ci_tools" |
+        codex_canonical_tool_names) || return 1
       CAPABILITY_INVENTORY_FORMAT=json
       CAPABILITY_INVENTORY_COMPLETE=1
       ;;
