@@ -141,6 +141,12 @@ case "$*" in
           healthy-codex-apps-jira)
             printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"mcp__codex_apps__atlassian_rovo_createjiraissue":{},"mcp__codex_apps__atlassian_rovo_getaccessibleatla_4b5564c6c5e4":{},"mcp__codex_apps__atlassian_rovo_getjiraissue":{},"mcp__codex_apps__atlassian_rovo_getjiraissuetypemetawithfields":{},"mcp__codex_apps__atlassian_rovo_getjiraprojectiss_ccce75cac970":{},"mcp__codex_apps__atlassian_rovo_searchjiraissuesusingjql":{}},"authStatus":"oAuth"}]}}'
             ;;
+          healthy-codex-apps-split-jira)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{},"authStatus":"oAuth"},{"name":"codex_apps","tools":{"github.get-pr-diff":{},"atlassian_rovo.createJiraIssue":{},"atlassian_rovo.getAccessibleAtlassianResources":{},"atlassian_rovo.getJiraIssue":{},"atlassian_rovo.getJiraIssueTypeMetaWithFields":{},"atlassian_rovo.getJiraProjectIssueTypesMetadata":{},"atlassian_rovo.searchJiraIssuesUsingJql":{}},"authStatus":"bearerToken"}]}}'
+            ;;
+          healthy-codex-apps-split-unreviewed)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{},"authStatus":"oAuth"},{"name":"codex_apps","tools":{"createJiraIssue":{},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{}},"authStatus":"bearerToken"}]}}'
+            ;;
           healthy-codex-apps-read-only)
             printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"mcp__codex_apps__atlassian_rovo_getaccessibleatla_4b5564c6c5e4":{},"mcp__codex_apps__atlassian_rovo_getjiraissue":{},"mcp__codex_apps__atlassian_rovo_getjiraissuetypemetawithfields":{},"mcp__codex_apps__atlassian_rovo_getjiraprojectiss_ccce75cac970":{},"mcp__codex_apps__atlassian_rovo_searchjiraissuesusingjql":{}},"authStatus":"oAuth"}]}}'
             ;;
@@ -2468,10 +2474,20 @@ assert_contains "$output" 'Capability evidence: PROVIDER_CONTRACT'
 assert_contains "$output" 'Runtime inventory: COMPLETE'
 assert_contains "$output" 'Result: PASS'
 
+printf '%s\n' healthy-codex-apps-split-jira \
+  >"$XDG_CONFIG_HOME/fake-codex-health"
+output=$($CLI preflight "$consumer" \
+  --client codex --operation jira-write --non-interactive)
+assert_contains "$output" 'Capability state: SUPPORTED'
+assert_contains "$output" 'Capability evidence: PROVIDER_CONTRACT'
+assert_contains "$output" 'Runtime inventory: COMPLETE'
+assert_contains "$output" 'Result: PASS'
+
 for codex_apps_health in \
   healthy-codex-apps-read-only \
   healthy-codex-apps-similar \
-  healthy-codex-apps-cross-provider
+  healthy-codex-apps-cross-provider \
+  healthy-codex-apps-split-unreviewed
 do
   printf '%s\n' "$codex_apps_health" \
     >"$XDG_CONFIG_HOME/fake-codex-health"
