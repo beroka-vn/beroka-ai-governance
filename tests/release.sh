@@ -39,10 +39,10 @@ reject_text() {
   fi
 }
 
-[ "$(cat "$ROOT/VERSION")" = v1.0.13 ] ||
-  fail 'VERSION is not v1.0.13'
+[ "$(cat "$ROOT/VERSION")" = v1.0.14 ] ||
+  fail 'VERSION is not v1.0.14'
 
-require_text README.md '`v1.0.13` is the current supported capability release.'
+require_text README.md '`v1.0.14` is the current supported capability release.'
 reject_text README.md '`v1.0.0` is the current supported capability release.'
 reject_text README.md '`v1.0.1` is the current supported capability release.'
 reject_text README.md '`v1.0.2` is the current supported capability release.'
@@ -57,7 +57,7 @@ reject_text README.md '`v1.0.10` is the current supported capability release.'
 reject_text README.md '`v1.0.11` is the current supported capability release.'
 reject_text README.md '`v1.0.12` is the current supported capability release.'
 require_text handbook.md \
-  '`v1.0.13` là capability release được hỗ trợ hiện tại.'
+  '`v1.0.14` là capability release được hỗ trợ hiện tại.'
 reject_text handbook.md \
   '`v1.0.0` là capability release được hỗ trợ hiện tại.'
 reject_text handbook.md '`v1.0.1` là capability release được hỗ trợ hiện tại.'
@@ -73,7 +73,7 @@ reject_text handbook.md '`v1.0.10` là capability release được hỗ trợ hi
 reject_text handbook.md '`v1.0.11` là capability release được hỗ trợ hiện tại.'
 reject_text handbook.md '`v1.0.12` là capability release được hỗ trợ hiện tại.'
 require_text PACKAGE-DESIGN.md \
-  '`v1.0.13` is the current supported capability release.'
+  '`v1.0.14` is the current supported capability release.'
 reject_text PACKAGE-DESIGN.md \
   '`v1.0.0` is the current supported capability release.'
 reject_text PACKAGE-DESIGN.md \
