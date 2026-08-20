@@ -148,16 +148,19 @@ case "$*" in
             printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{},"authStatus":"oAuth"},{"name":"codex_apps","tools":{"createJiraIssue":{},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{}},"authStatus":"bearerToken"}]}}'
             ;;
           healthy-codex-apps-read-only)
-            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"mcp__codex_apps__atlassian_rovo_getaccessibleatla_4b5564c6c5e4":{},"mcp__codex_apps__atlassian_rovo_getjiraissue":{},"mcp__codex_apps__atlassian_rovo_getjiraissuetypemetawithfields":{},"mcp__codex_apps__atlassian_rovo_getjiraprojectiss_ccce75cac970":{},"mcp__codex_apps__atlassian_rovo_searchjiraissuesusingjql":{}},"authStatus":"oAuth"}]}}'
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{},"authStatus":"oAuth"},{"name":"codex_apps","tools":{"atlassian_rovo.getAccessibleAtlassianResources":{},"atlassian_rovo.getJiraIssue":{},"atlassian_rovo.getJiraIssueTypeMetaWithFields":{},"atlassian_rovo.getJiraProjectIssueTypesMetadata":{},"atlassian_rovo.searchJiraIssuesUsingJql":{}},"authStatus":"bearerToken"}]}}'
             ;;
           healthy-codex-apps-similar)
-            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"mcp__codex_apps__atlassian_rovo_createjiraissuepreview":{},"mcp__codex_apps__atlassian_rovo_getaccessibleatla_4b5564c6c5e4":{},"mcp__codex_apps__atlassian_rovo_getjiraissue":{},"mcp__codex_apps__atlassian_rovo_getjiraissuetypemetawithfields":{},"mcp__codex_apps__atlassian_rovo_getjiraprojectiss_ccce75cac970":{},"mcp__codex_apps__atlassian_rovo_searchjiraissuesusingjql":{}},"authStatus":"oAuth"}]}}'
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{},"authStatus":"oAuth"},{"name":"codex_apps","tools":{"atlassian_rovo.createJiraIssuePreview":{},"atlassian_rovo.getAccessibleAtlassianResources":{},"atlassian_rovo.getJiraIssue":{},"atlassian_rovo.getJiraIssueTypeMetaWithFields":{},"atlassian_rovo.getJiraProjectIssueTypesMetadata":{},"atlassian_rovo.searchJiraIssuesUsingJql":{}},"authStatus":"bearerToken"}]}}'
             ;;
           healthy-codex-apps-cross-provider)
-            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"mcp__codex_apps__github_create_issue":{},"mcp__codex_apps__atlassian_rovo_getaccessibleatla_4b5564c6c5e4":{},"mcp__codex_apps__atlassian_rovo_getjiraissue":{},"mcp__codex_apps__atlassian_rovo_getjiraissuetypemetawithfields":{},"mcp__codex_apps__atlassian_rovo_getjiraprojectiss_ccce75cac970":{},"mcp__codex_apps__atlassian_rovo_searchjiraissuesusingjql":{}},"authStatus":"oAuth"}]}}'
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{},"authStatus":"oAuth"},{"name":"codex_apps","tools":{"github.createJiraIssue":{},"atlassian_rovo.getAccessibleAtlassianResources":{},"atlassian_rovo.getJiraIssue":{},"atlassian_rovo.getJiraIssueTypeMetaWithFields":{},"atlassian_rovo.getJiraProjectIssueTypesMetadata":{},"atlassian_rovo.searchJiraIssuesUsingJql":{}},"authStatus":"bearerToken"}]}}'
             ;;
           healthy-codex-apps-ambiguous)
-            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{},"mcp__codex_apps__atlassian_rovo_createjiraissue":{},"mcp__codex_apps__atlassian_rovo_getaccessibleatla_4b5564c6c5e4":{},"mcp__codex_apps__atlassian_rovo_getjiraissue":{},"mcp__codex_apps__atlassian_rovo_getjiraissuetypemetawithfields":{},"mcp__codex_apps__atlassian_rovo_getjiraprojectiss_ccce75cac970":{},"mcp__codex_apps__atlassian_rovo_searchjiraissuesusingjql":{}},"authStatus":"oAuth"}]}}'
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{},"authStatus":"oAuth"},{"name":"codex_apps","tools":{"atlassian_rovo.createJiraIssue":{},"mcp__codex_apps__atlassian_rovo_createjiraissue":{},"atlassian_rovo.getAccessibleAtlassianResources":{},"atlassian_rovo.getJiraIssue":{},"atlassian_rovo.getJiraIssueTypeMetaWithFields":{},"atlassian_rovo.getJiraProjectIssueTypesMetadata":{},"atlassian_rovo.searchJiraIssuesUsingJql":{}},"authStatus":"bearerToken"}]}}'
+            ;;
+          healthy-codex-apps-malformed)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{},"authStatus":"oAuth"},{"name":"codex_apps","tools":{"bad/tool":{},"atlassian_rovo.createJiraIssue":{},"atlassian_rovo.getAccessibleAtlassianResources":{},"atlassian_rovo.getJiraIssue":{},"atlassian_rovo.getJiraIssueTypeMetaWithFields":{},"atlassian_rovo.getJiraProjectIssueTypesMetadata":{},"atlassian_rovo.searchJiraIssuesUsingJql":{}},"authStatus":"bearerToken"}]}}'
             ;;
           healthy-no-confluence-update)
             printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{}},"authStatus":"oAuth"}]}}'
@@ -2476,6 +2479,10 @@ assert_contains "$output" 'Result: PASS'
 
 printf '%s\n' healthy-codex-apps-split-jira \
   >"$XDG_CONFIG_HOME/fake-codex-health"
+output=$($CLI doctor "$consumer" --client codex)
+assert_contains "$output" 'Connector: PASS'
+assert_contains "$output" 'Authentication: PASS'
+assert_contains "$output" 'Result: PASS'
 output=$($CLI preflight "$consumer" \
   --client codex --operation jira-write --non-interactive)
 assert_contains "$output" 'Capability state: SUPPORTED'
@@ -2512,6 +2519,17 @@ fi
 assert_contains "$output" 'Result: CONNECTOR_CAPABILITY_REQUIRED'
 assert_not_contains "$output" 'Capability state: SUPPORTED'
 assert_not_contains "$output" 'OAuth URL:'
+
+printf '%s\n' healthy-codex-apps-malformed \
+  >"$XDG_CONFIG_HOME/fake-codex-health"
+if output=$($CLI preflight "$consumer" \
+  --client codex --operation jira-write --non-interactive 2>&1)
+then
+  fail 'malformed Codex Apps identity passed Jira preflight'
+fi
+assert_contains "$output" 'Runtime inventory: UNAVAILABLE'
+assert_contains "$output" 'Result: CONNECTOR_CAPABILITY_REQUIRED'
+assert_not_contains "$output" 'Capability state: SUPPORTED'
 
 if output=$($CLI preflight "$consumer" \
   --client codex --operation confluence-write --non-interactive 2>&1)
