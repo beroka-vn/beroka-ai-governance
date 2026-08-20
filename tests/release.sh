@@ -56,6 +56,7 @@ reject_text README.md '`v1.0.9` is the current supported capability release.'
 reject_text README.md '`v1.0.10` is the current supported capability release.'
 reject_text README.md '`v1.0.11` is the current supported capability release.'
 reject_text README.md '`v1.0.12` is the current supported capability release.'
+reject_text README.md '`v1.0.13` is the current supported capability release.'
 require_text handbook.md \
   '`v1.0.14` là capability release được hỗ trợ hiện tại.'
 reject_text handbook.md \
@@ -72,6 +73,7 @@ reject_text handbook.md '`v1.0.9` là capability release được hỗ trợ hi�
 reject_text handbook.md '`v1.0.10` là capability release được hỗ trợ hiện tại.'
 reject_text handbook.md '`v1.0.11` là capability release được hỗ trợ hiện tại.'
 reject_text handbook.md '`v1.0.12` là capability release được hỗ trợ hiện tại.'
+reject_text handbook.md '`v1.0.13` là capability release được hỗ trợ hiện tại.'
 require_text PACKAGE-DESIGN.md \
   '`v1.0.14` is the current supported capability release.'
 reject_text PACKAGE-DESIGN.md \
@@ -100,6 +102,8 @@ reject_text PACKAGE-DESIGN.md \
   '`v1.0.11` is the current supported capability release.'
 reject_text PACKAGE-DESIGN.md \
   '`v1.0.12` is the current supported capability release.'
+reject_text PACKAGE-DESIGN.md \
+  '`v1.0.13` is the current supported capability release.'
 require_text README.md '## Add another client'
 require_text README.md 'sh -s -- --client claude'
 require_text README.md 'Codex remains enrolled'
