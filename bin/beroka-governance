@@ -5942,7 +5942,7 @@ cursor_stage_exact_body() {
       cseb_query='[.. | objects | (.body?, .content?) | select(type == "string" and length > 0)] | unique'
       ;;
     jira)
-      cseb_query='[.. | objects | (.description?, .comment?, .body?, .content?, .github?) | select(type == "string" and length > 0)]'
+      cseb_query='[.. | objects | (.description?, .comment?, .body?, .content?, .github?, .summary?) | select(type == "string" and length > 0)]'
       ;;
     *) return 1 ;;
   esac
@@ -5951,6 +5951,8 @@ cursor_stage_exact_body() {
   case "$cseb_kind:$cseb_count" in confluence:1|jira:[1-9]*) ;; *) return 1 ;; esac
   PERSONAL_STAGE_ROOT=$(umask 077; mktemp -d \
     "${TMPDIR:-/tmp}/beroka-governance-cursor-body.XXXXXX") || return 1
+  trap 'cleanup_personal_stage || :' EXIT
+  trap 'cleanup_personal_stage || :; exit 1' HUP INT TERM
   CURSOR_EXACT_BODY_FILE=$PERSONAL_STAGE_ROOT/body
   printf '%s\n' "$CURSOR_TOOL_INPUT" | {
     if [ "$cseb_kind" = jira ]; then
@@ -5959,25 +5961,23 @@ cursor_stage_exact_body() {
       jq -jr "$cseb_query | .[0]"
     fi
   } >"$CURSOR_EXACT_BODY_FILE" || {
-      cleanup_personal_stage || :
+      cursor_cleanup_staged_body || :
       return 1
     }
   [ -s "$CURSOR_EXACT_BODY_FILE" ] || {
-    cleanup_personal_stage || :
+    cursor_cleanup_staged_body || :
     return 1
   }
-  trap 'cleanup_personal_stage || :' EXIT
-  trap 'cleanup_personal_stage || :; exit 1' HUP INT TERM
 }
 
 cursor_handoff_intent() {
   LC_ALL=C grep -Eiq \
-    '^[[:space:]]*(([-+*]|[0-9]+[.)])[[:space:]]*)?((handoff[[:space:]]+(schema|state))|(provider[[:space:]]+jira)|(consumer[[:space:]]+jira)|(confluence[[:space:]]+(content[[:space:]]+id|page[[:space:]]+version))|(owner[[:space:]]+account[[:space:]]+id)|(effective[[:space:]]+date)|(supersedes)|(superseded[[:space:]]+by)|(api[[:space:]]+impact)|(websocket[[:space:]]+impact)|(missing[[:space:]]+sections))[[:space:]]*:'
+    '(handoff[[:space:]]+schema|handoff[[:space:]]+state|provider[[:space:]]+jira|consumer[[:space:]]+jira|confluence[[:space:]]+content[[:space:]]+id|fe[[:space:]]+acknowledgment)'
 }
 
 cursor_jira_handoff_shaped() {
   printf '%s\n' "$CURSOR_TOOL_INPUT" | jq -r '
-    [.. | objects | (.description?, .comment?, .body?, .content?, .github?) |
+    [.. | objects | (.description?, .comment?, .body?, .content?, .github?, .summary?) |
      select(type == "string")] | .[]
   ' 2>/dev/null | cursor_handoff_intent
 }

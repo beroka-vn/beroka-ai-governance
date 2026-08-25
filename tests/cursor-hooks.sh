@@ -368,13 +368,23 @@ cursor_malformed_handoff=$(printf '%s\n' "$jira_update_by_key" | jq -c '
 ')
 assert_denied "$(hook beforeMCPExecution "$cursor_malformed_handoff")" \
   CROSS_TEAM_LINK_SCOPE_DENIED
-for jira_text_field in description comment content github; do
+for jira_text_field in description comment content github summary; do
   cursor_field_bypass=$(printf '%s\n' "$cursor_handoff_update" | jq -c \
     --arg field "$jira_text_field" \
     '.tool_input[$field]="Repository: use the provider repository as contract evidence"')
   assert_denied "$(hook beforeMCPExecution "$cursor_field_bypass")" \
     CROSS_TEAM_LINK_SCOPE_DENIED
 done
+cursor_summary_github_bypass=$(printf '%s\n' "$cursor_handoff_update" | jq -c \
+  '.tool_input.summary="https://github.com/example/private"')
+assert_denied "$(hook beforeMCPExecution "$cursor_summary_github_bypass")" \
+  CROSS_TEAM_LINK_SCOPE_DENIED
+cursor_summary_intent=$(printf '%s\n' "$jira_update_by_key" | jq -c '
+  .tool_input.summary="## Provider Jira"
+  | .tool_input.github="https://github.com/example/private"
+')
+assert_denied "$(hook beforeMCPExecution "$cursor_summary_intent")" \
+  CROSS_TEAM_LINK_SCOPE_DENIED
 cursor_github_bypass=$(printf '%s\n' "$cursor_intake" | jq -c \
   '.tool_input.github="https://github.com/example/private"')
 assert_denied "$(hook beforeMCPExecution "$cursor_github_bypass")" \
@@ -457,6 +467,37 @@ cursor_parser_failure=$(cursor_handoff_input \
 assert_denied "$(hook beforeMCPExecution "$cursor_parser_failure")" MAPPING_CONFLICT
 assert_no_cursor_body_stage
 
+# Signal the hook after stage creation but before jq writes the body.
+slow_bin=$TMP_ROOT/slow-bin
+mkdir -p "$slow_bin"
+printf '%s\n' \
+  '#!/bin/sh' \
+  'if [ "${SLOW_STAGE_JQ:-0}" = 1 ] && [ "${1:-}" = -jr ]; then' \
+  '  : >"$STAGE_WRITE_MARKER"' \
+  '  sleep 5' \
+  'fi' \
+  'exec /usr/bin/jq "$@"' \
+  >"$slow_bin/jq"
+chmod 755 "$slow_bin/jq"
+STAGE_WRITE_MARKER=$TMP_ROOT/stage-write-started
+export STAGE_WRITE_MARKER
+SLOW_STAGE_JQ=1
+export SLOW_STAGE_JQ
+printf '%s\n' "$cursor_intake" |
+  PATH="$slow_bin:$PATH" "$CLI" cursor-hook beforeMCPExecution \
+  >"$TMP_ROOT/stage-signal-output" 2>&1 &
+stage_hook_pid=$!
+stage_waits=0
+while [ ! -f "$STAGE_WRITE_MARKER" ] && [ "$stage_waits" -lt 100 ]; do
+  sleep 0.01
+  stage_waits=$((stage_waits + 1))
+done
+[ -f "$STAGE_WRITE_MARKER" ] || fail 'Cursor did not begin staged body write'
+kill -TERM "$stage_hook_pid"
+wait "$stage_hook_pid" 2>/dev/null || :
+unset SLOW_STAGE_JQ STAGE_WRITE_MARKER
+assert_no_cursor_body_stage
+
 confluence_handoff_body=$(printf '%s\n' \
   'Jira: BB-11' \
   'GitHub: N/A' \
@@ -495,8 +536,11 @@ for malformed_handoff_marker in \
   'Handoff schema : 1' \
   '- handoff STATE: DRAFT' \
   '* handoff state : DRAFT' \
+  '## Handoff schema: 1' \
+  '> Provider Jira: BB-42' \
   '  Provider jira : BB-42' \
   '1. Consumer Jira : BF-69' \
+  '### FE acknowledgment' \
   '- CONSUMER JIRA:'
 do
   confluence_marker_bypass=$(printf '%s\n' "$confluence_create" | jq -c \
