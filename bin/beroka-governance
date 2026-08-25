@@ -4877,10 +4877,10 @@ require_operation_routing() {
         update) PREFLIGHT_CAPABILITY=confluence-page-update ;;
         *) die ROUTING_REQUIRED 'Confluence handoff write requires create or update' ;;
       esac
-      require_active_handoff_folder "$(confluence_targets_path)"
-      resolve_confluence_target
       validate_handoff_body "$CONFLUENCE_HANDOFF_BODY_FILE" \
         "$CONFLUENCE_TARGET_ACTION" "$CONFLUENCE_TARGET_CONTENT_ID"
+      require_active_handoff_folder "$(confluence_targets_path)"
+      resolve_confluence_target
       ;;
     confluence-handoff-verify)
       require_confluence_route

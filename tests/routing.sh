@@ -2060,6 +2060,17 @@ then
 fi
 assert_contains "$output" 'Result: CROSS_TEAM_LINK_SCOPE_DENIED'
 [ ! -s "$CALLS" ] || fail 'incident handoff inspected a connector'
+: >"$CALLS"
+if output=$($CLI preflight "$canonical_backend" --client codex \
+  --operation confluence-handoff-write --non-interactive \
+  --confluence-action update --target-content-id 85360641 \
+  --expected-parent-id 65962274 \
+  --handoff-body-file "$handoff_dir/incident-85360641.md" 2>&1)
+then
+  fail 'incident handoff passed under the routed root'
+fi
+assert_contains "$output" 'Result: CROSS_TEAM_LINK_SCOPE_DENIED'
+[ ! -s "$CALLS" ] || fail 'root-parent incident handoff inspected a connector'
 
 assert_handoff_section_required "$handoff_dir/ready-no-impact.md" \
   '## API impact rationale' update 900001
