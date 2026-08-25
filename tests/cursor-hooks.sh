@@ -5,6 +5,7 @@ ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
 CLI=$ROOT/bin/beroka-governance
 TMP_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/beroka-governance-cursor-hooks.XXXXXX")
 trap 'rm -rf "$TMP_ROOT"' EXIT HUP INT TERM
+export TMPDIR=$TMP_ROOT
 
 export HOME=$TMP_ROOT/home
 export XDG_DATA_HOME=$TMP_ROOT/data
@@ -17,6 +18,11 @@ fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 assert_contains() { case "$1" in *"$2"*) ;; *) fail "expected [$2] in [$1]" ;; esac; }
 assert_not_contains() { case "$1" in *"$2"*) fail "unexpected [$2] in [$1]" ;; esac; }
 assert_denied() { assert_contains "$1" '"permission":"deny"'; assert_contains "$1" "$2"; }
+assert_no_cursor_body_stage() {
+  stage=$(find "$TMPDIR" -maxdepth 1 -type d \
+    -name 'beroka-governance-cursor-body.*' -print -quit)
+  [ -z "$stage" ] || fail 'Cursor left a staged cross-team body behind'
+}
 
 new_repo() {
   mkdir -p "$1"
@@ -208,7 +214,14 @@ assert_denied "$(hook beforeMCPExecution "$product_cross")" CROSS_TEAM_LINK_SCOP
 
 # Hook PATH without ~/.local/bin must still find bootstrap-installed cursor-agent.
 mkdir -p "$HOME/.local/bin"
-printf '%s\n' '#!/bin/sh' 'exit 0' >"$HOME/.local/bin/cursor-agent"
+printf '%s\n' \
+  '#!/bin/sh' \
+  'case "$*" in' \
+  '  --version) printf "cursor-agent 1.0.0\n" ;;' \
+  '  "mcp list") printf "atlassian: Ready\n" ;;' \
+  '  "mcp list-tools atlassian") printf "%s\n" "- createConfluencePage ()" "- getAccessibleAtlassianResources ()" "- getConfluencePage ()" "- updateConfluencePage ()" ;;' \
+  'esac' \
+  >"$HOME/.local/bin/cursor-agent"
 chmod 755 "$HOME/.local/bin/cursor-agent"
 path_create='gh issue create --title "Fix opaque session" --body "Work-item language: English" --label area:governance --label priority:p1 --label Task --repo beroka-vn/beroka-ai-governance'
 path_shell=$(jq -nc --arg command "$path_create" --arg a "$product_backend" --arg b "$product_frontend" \
@@ -345,9 +358,32 @@ for cursor_jira_request in "$cursor_intake" "$cursor_handoff_update"; do
       CROSS_TEAM_LINK_SCOPE_DENIED
   done
 done
+assert_no_cursor_body_stage
+
+# A malformed/empty cross-team marker still classifies the update as a
+# handoff, and every accepted text-bearing field participates in isolation.
+cursor_malformed_handoff=$(printf '%s\n' "$jira_update_by_key" | jq -c '
+  .tool_input.body="Work-item language: English\n* pRoViDeR JiRa :"
+  | .tool_input.github="https://github.com/example/private"
+')
+assert_denied "$(hook beforeMCPExecution "$cursor_malformed_handoff")" \
+  CROSS_TEAM_LINK_SCOPE_DENIED
+for jira_text_field in description comment content github; do
+  cursor_field_bypass=$(printf '%s\n' "$cursor_handoff_update" | jq -c \
+    --arg field "$jira_text_field" \
+    '.tool_input[$field]="Repository: use the provider repository as contract evidence"')
+  assert_denied "$(hook beforeMCPExecution "$cursor_field_bypass")" \
+    CROSS_TEAM_LINK_SCOPE_DENIED
+done
+cursor_github_bypass=$(printf '%s\n' "$cursor_intake" | jq -c \
+  '.tool_input.github="https://github.com/example/private"')
+assert_denied "$(hook beforeMCPExecution "$cursor_github_bypass")" \
+  CROSS_TEAM_LINK_SCOPE_DENIED
+assert_no_cursor_body_stage
 
 team_local_github=$(printf '%s\n' "$atlassian_create" | jq -c \
-  '.tool_input.description="Work-item language: English\n\nGitHub: https://github.com/beroka-vn/Beroka_Backend/issues/138"')
+  '.tool_input.description="Work-item language: English\n\nGitHub: N/A"
+   | .tool_input.github="https://github.com/beroka-vn/Beroka_Backend/issues/138"')
 team_local_output=$(hook beforeMCPExecution "$team_local_github")
 assert_not_contains "$team_local_output" CROSS_TEAM_LINK_SCOPE_DENIED
 assert_denied "$team_local_output" GITHUB_AUTH_REQUIRED
@@ -413,6 +449,13 @@ cursor_ready_output=$(hook beforeMCPExecution "$(cursor_handoff_input \
 assert_not_contains "$cursor_ready_output" HANDOFF_DELTA_REQUIRED
 assert_not_contains "$cursor_ready_output" HANDOFF_BODY_INVALID
 assert_denied "$cursor_ready_output" GITHUB_AUTH_REQUIRED
+assert_no_cursor_body_stage
+
+# A parser exit must not strand the already-staged body.
+cursor_parser_failure=$(cursor_handoff_input \
+  "$cursor_handoff_dir/ready.md" update --bad 76808195)
+assert_denied "$(hook beforeMCPExecution "$cursor_parser_failure")" MAPPING_CONFLICT
+assert_no_cursor_body_stage
 
 confluence_handoff_body=$(printf '%s\n' \
   'Jira: BB-11' \
@@ -448,6 +491,21 @@ confluence_create=$(printf '%s\n' "$base_input" | jq -c --arg body "$confluence_
     title:"New docs page",
     body:$body
   }}')
+for malformed_handoff_marker in \
+  'Handoff schema : 1' \
+  '- handoff STATE: DRAFT' \
+  '* handoff state : DRAFT' \
+  '  Provider jira : BB-42' \
+  '1. Consumer Jira : BF-69' \
+  '- CONSUMER JIRA:'
+do
+  confluence_marker_bypass=$(printf '%s\n' "$confluence_create" | jq -c \
+    --arg marker "$malformed_handoff_marker" \
+    '.tool_input.body += ("\n" + $marker)')
+  assert_denied "$(hook beforeMCPExecution "$confluence_marker_bypass")" \
+    HANDOFF_BODY_INVALID
+done
+assert_no_cursor_body_stage
 confluence_create_out=$(hook beforeMCPExecution "$confluence_create")
 assert_not_contains "$confluence_create_out" HANDOFF_DELTA_REQUIRED
 assert_not_contains "$confluence_create_out" DOCS_UNACTIVATED
@@ -564,5 +622,26 @@ assert_contains "$(jq -r .commit "$stale_receipt_file")" "$release_commit"
 stale_read=$(printf '%s\n' "$stale_base" | jq -c \
   '. + {tool_name:"github.get_issue",url:"https://github.com",tool_input:{}}')
 assert_contains "$(hook beforeMCPExecution "$stale_read")" '"permission":"allow"'
+
+# A successful staged preflight also removes its private body directory.
+printf '%s\n' \
+  '#!/bin/sh' \
+  'case "$*" in' \
+  '  --version|"auth status --help"|"api --help") ;;' \
+  '  "auth status --hostname github.com") exit 0 ;;' \
+  '  "api --paginate /user/teams") printf "[{\"slug\":\"backend\",\"organization\":{\"login\":\"beroka-vn\"}}]\n" ;;' \
+  'esac' \
+  >"$HOME/.local/bin/gh"
+chmod 755 "$HOME/.local/bin/gh"
+mkdir -p "$HOME/.cursor"
+printf '%s\n' \
+  '{"mcpServers":{"atlassian":{"url":"https://mcp.atlassian.com/v1/mcp/authv2"}}}' \
+  >"$HOME/.cursor/mcp.json"
+hook beforeSubmitPrompt "$base_input" >/dev/null
+cursor_allow_output=$(PATH="$HOME/.local/bin:/usr/bin:/bin" \
+  hook beforeMCPExecution "$(cursor_handoff_input \
+    "$cursor_handoff_dir/draft.md" create new 76808195)")
+assert_contains "$cursor_allow_output" '"permission":"allow"'
+assert_no_cursor_body_stage
 
 printf '%s\n' 'PASS: Cursor hook runtime'

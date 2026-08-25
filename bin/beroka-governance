@@ -5942,17 +5942,23 @@ cursor_stage_exact_body() {
       cseb_query='[.. | objects | (.body?, .content?) | select(type == "string" and length > 0)] | unique'
       ;;
     jira)
-      cseb_query='[.. | objects | (.description?, .comment?, .body?) | select(type == "string" and length > 0)] | unique'
+      cseb_query='[.. | objects | (.description?, .comment?, .body?, .content?, .github?) | select(type == "string" and length > 0)]'
       ;;
     *) return 1 ;;
   esac
-  [ "$(printf '%s\n' "$CURSOR_TOOL_INPUT" | jq -r "$cseb_query | length")" -eq 1 ] ||
+  cseb_count=$(printf '%s\n' "$CURSOR_TOOL_INPUT" | jq -r "$cseb_query | length") ||
     return 1
+  case "$cseb_kind:$cseb_count" in confluence:1|jira:[1-9]*) ;; *) return 1 ;; esac
   PERSONAL_STAGE_ROOT=$(umask 077; mktemp -d \
     "${TMPDIR:-/tmp}/beroka-governance-cursor-body.XXXXXX") || return 1
   CURSOR_EXACT_BODY_FILE=$PERSONAL_STAGE_ROOT/body
-  printf '%s\n' "$CURSOR_TOOL_INPUT" |
-    jq -jr "$cseb_query | .[0]" >"$CURSOR_EXACT_BODY_FILE" || {
+  printf '%s\n' "$CURSOR_TOOL_INPUT" | {
+    if [ "$cseb_kind" = jira ]; then
+      jq -jr "$cseb_query | .[] | ., \"\\n\""
+    else
+      jq -jr "$cseb_query | .[0]"
+    fi
+  } >"$CURSOR_EXACT_BODY_FILE" || {
       cleanup_personal_stage || :
       return 1
     }
@@ -5960,14 +5966,35 @@ cursor_stage_exact_body() {
     cleanup_personal_stage || :
     return 1
   }
+  trap 'cleanup_personal_stage || :' EXIT
+  trap 'cleanup_personal_stage || :; exit 1' HUP INT TERM
+}
+
+cursor_handoff_intent() {
+  LC_ALL=C grep -Eiq \
+    '^[[:space:]]*(([-+*]|[0-9]+[.)])[[:space:]]*)?((handoff[[:space:]]+(schema|state))|(provider[[:space:]]+jira)|(consumer[[:space:]]+jira)|(confluence[[:space:]]+(content[[:space:]]+id|page[[:space:]]+version))|(owner[[:space:]]+account[[:space:]]+id)|(effective[[:space:]]+date)|(supersedes)|(superseded[[:space:]]+by)|(api[[:space:]]+impact)|(websocket[[:space:]]+impact)|(missing[[:space:]]+sections))[[:space:]]*:'
 }
 
 cursor_jira_handoff_shaped() {
   printf '%s\n' "$CURSOR_TOOL_INPUT" | jq -r '
-    [.. | objects | (.description?, .comment?, .body?) |
-     select(type == "string")] | unique | .[]
-  ' 2>/dev/null | grep -Eq \
-    '(^|[[:space:]])(Provider Jira|Consumer Jira|Confluence content ID):[[:space:]]*[^[:space:]]'
+    [.. | objects | (.description?, .comment?, .body?, .content?, .github?) |
+     select(type == "string")] | .[]
+  ' 2>/dev/null | cursor_handoff_intent
+}
+
+cursor_cleanup_staged_body() {
+  [ -n "$PERSONAL_STAGE_ROOT" ] || return 0
+  cleanup_personal_stage || return 1
+  trap - EXIT HUP INT TERM
+}
+
+cursor_staged_preflight() {
+  trap 'cleanup_personal_stage || :' EXIT
+  trap 'cleanup_personal_stage || :; exit 1' HUP INT TERM
+  cmd_preflight "$@"
+  csp_status=$?
+  cursor_cleanup_staged_body || return 1
+  return "$csp_status"
 }
 
 # Atlassian MCP createJiraIssue uses issueTypeName / assignee_account_id /
@@ -6163,8 +6190,7 @@ cursor_confluence_preflight() {
     [.. | objects | .title? | select(type == "string")] | unique |
     if length == 0 then "" elif length == 1 then .[0] else error("title") end
   ' 2>/dev/null) || ccp_title=
-  if printf '%s\n' "$ccp_body" | grep -Eq \
-    '^[[:space:]]*(Handoff schema|Handoff state|Provider Jira|Consumer Jira|Confluence content ID|Confluence page version|Owner account ID|Effective date|Supersedes|Superseded by|API impact|WebSocket impact|Missing sections):'
+  if printf '%s\n' "$ccp_body" | cursor_handoff_intent
   then
     cursor_stage_exact_body confluence || {
       printf '%s\n' \
@@ -6176,11 +6202,10 @@ cursor_confluence_preflight() {
     if [ -n "$ccp_parent" ]; then
       set -- "$@" --expected-parent-id "$ccp_parent"
     fi
-    cmd_preflight "$CURSOR_WORKSPACE" --client cursor \
+    cursor_staged_preflight "$CURSOR_WORKSPACE" --client cursor \
       --operation confluence-handoff-write --non-interactive "$@" \
       --handoff-body-file "$CURSOR_EXACT_BODY_FILE"
     ccp_status=$?
-    cleanup_personal_stage || return 1
     return "$ccp_status"
   fi
   if ! cursor_confluence_handoff_ok "$ccp_body" "$ccp_title"; then
@@ -6380,7 +6405,7 @@ cmd_cursor_before_mcp_execution() {
       if ! (reject_cross_team_repository_references \
         "$CURSOR_EXACT_BODY_FILE") >/dev/null 2>&1
       then
-        cleanup_personal_stage || :
+        cursor_cleanup_staged_body || :
         cursor_deny CROSS_TEAM_LINK_SCOPE_DENIED \
           'Use an accessible exact Confluence page for cross-team documentation.'
         return
@@ -6392,19 +6417,19 @@ cmd_cursor_before_mcp_execution() {
   case "$cursor_template_state" in
     0) ;;
     2)
-      cleanup_personal_stage || :
+      cursor_cleanup_staged_body || :
       cursor_deny LABEL_CONFIGURATION_REQUIRED \
         "Use one configured type label, one area label, and one priority label.${CURSOR_TEMPLATE_MISSING:+ Missing: $CURSOR_TEMPLATE_MISSING}"
       return
       ;;
     3)
-      cleanup_personal_stage || :
+      cursor_cleanup_staged_body || :
       cursor_deny WORK_ITEM_LANGUAGE_REQUIRED \
         'Put "Work-item language: English" (or Vietnamese) in the Jira description/body, then retry createJiraIssue.'
       return
       ;;
     *)
-      cleanup_personal_stage || :
+      cursor_cleanup_staged_body || :
       cursor_deny WORK_ITEM_TEMPLATE_REQUIRED \
         "Retry createJiraIssue with Atlassian MCP fields only: projectKey, issueTypeName, parent, assignee_account_id, additional_fields.priority={name}, and description containing Work-item language plus GitHub URL or GitHub: N/A.${CURSOR_TEMPLATE_MISSING:+ Missing: $CURSOR_TEMPLATE_MISSING}"
       return
@@ -6417,10 +6442,10 @@ cmd_cursor_before_mcp_execution() {
       ;;
   esac
   cursor_preflight_state=0
-  cursor_preflight=$(cmd_preflight "$CURSOR_WORKSPACE" --client cursor \
+  cursor_preflight=$(cursor_staged_preflight "$CURSOR_WORKSPACE" --client cursor \
     --operation "$cursor_operation" --non-interactive "$@" 2>&1) ||
     cursor_preflight_state=$?
-  cleanup_personal_stage || {
+  cursor_cleanup_staged_body || {
     cursor_deny GOVERNANCE_NOT_READY 'Cannot clean up staged cross-team body.'
     return
   }

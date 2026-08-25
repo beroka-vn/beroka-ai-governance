@@ -1032,6 +1032,16 @@ for missing_jira_operation in jira-intake-write jira-handoff-write; do
   [ ! -s "$CALLS" ] || fail 'missing cross-team Jira body inspected a client'
 done
 
+: >"$CALLS"
+if output=$($CLI preflight "$canonical_backend" --client codex \
+  --operation jira-write --non-interactive \
+  --handoff-body-file "$jira_cross_team_body" 2>&1)
+then
+  fail 'ordinary jira-write accepted cross-team body evidence'
+fi
+assert_contains "$output" 'Usage:'
+[ ! -s "$CALLS" ] || fail 'invalid jira-write option inspected a client'
+
 # Intake creation and routed-team acknowledgment updates share exact-body
 # repository isolation while ordinary jira-write remains unchanged.
 mkdir -p "$HOME/.cursor"
