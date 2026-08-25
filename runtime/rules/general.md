@@ -66,3 +66,18 @@
 - Cross-team intake and handoff text must not contain opposite-team private
   GitHub links. Return `CROSS_TEAM_LINK_SCOPE_DENIED` and use an accessible
   exact Confluence page instead.
+- `Closes #<issue>` normally closes the GitHub Issue. If it remains open, an
+  agent may close it only after exact merge/link readback proves the delivered commit
+  and the close write is authorized; otherwise report the issue as
+  blocked. After `Closes #<issue>` automatically closes the current primary GitHub Issue,
+  or after an agent completes an authorized manual close under
+  this gate, resolve the exact linked Jira item, verify the authenticated
+  account against the current assignee, run a fresh `jira-write` preflight,
+  and transition the item to `In Review`; an item already in `In Review` is
+  idempotently complete. Then resolve related documentation only by exact
+  Confluence content ID. If the page, parent, or required change is missing or
+  ambiguous, ask the user and wait. Otherwise run a fresh target-bound
+  Confluence preflight, update the documentation, and read it back. After
+  documentation readback Jira remains in `In Review`; do not move it to `Done`
+  automatically. After successful documentation readback, report the GitHub, Jira, and Confluence outcomes separately.
+  Report a blocked Jira or Confluence step separately and do not reopen the GitHub Issue.

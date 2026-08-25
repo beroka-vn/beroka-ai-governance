@@ -2902,7 +2902,7 @@ json_top_level_object() {
 json_top_level_keys() {
   jtlk_mode=${1:-objects}
   case "$jtlk_mode" in
-    objects|rpc|tools) ;;
+    cursor|objects|rpc|tools) ;;
     *) return 1 ;;
   esac
   LC_ALL=C awk -v parse_mode="$jtlk_mode" '
@@ -3093,7 +3093,7 @@ json_top_level_keys() {
         position++
       } else {
         while (position <= object_length) {
-          if (parse_mode == "rpc") {
+          if (parse_mode == "rpc" || parse_mode == "cursor") {
             if (!parse_string(1)) exit 42
           } else if (!parse_string(0)) {
             exit 42
@@ -3105,6 +3105,11 @@ json_top_level_keys() {
                 semantic_key == "error") {
               if (rpc_seen[semantic_key]) exit 42
               rpc_seen[semantic_key]=1
+            }
+          } else if (parse_mode == "cursor") {
+            if (semantic_key == "nextCursor") {
+              if (cursor_seen) exit 42
+              cursor_seen=1
             }
           } else {
             if (parse_mode == "tools") {
@@ -3119,7 +3124,7 @@ json_top_level_keys() {
           position++
           skip_space()
           value_start=position
-          if (parse_mode == "rpc") {
+          if (parse_mode == "rpc" || parse_mode == "cursor") {
             if (!parse_json_value()) exit 42
           } else if (!parse_json_object()) {
             exit 42
@@ -3127,6 +3132,9 @@ json_top_level_keys() {
           if (parse_mode == "rpc" && semantic_key == "id" &&
               substr(object, value_start, position - value_start) == "1")
             rpc_id1=1
+          if (parse_mode == "cursor" && semantic_key == "nextCursor")
+            cursor_null=(substr(object, value_start,
+              position - value_start) == "null")
           skip_space()
           separator=substr(object, position, 1)
           if (separator == "}") {
@@ -3145,6 +3153,10 @@ json_top_level_keys() {
         if (rpc_id1) print "id1"
         if (rpc_seen["result"]) print "result"
         if (rpc_seen["error"]) print "error"
+      } else if (parse_mode == "cursor") {
+        if (!cursor_seen) print "absent"
+        else if (cursor_null) print "null"
+        else print "other"
       } else {
         for (i=1; i<=key_count; i++) print keys[i]
       }
@@ -3283,12 +3295,13 @@ cursor_tool_names() {
 }
 
 codex_inventory_page_complete() {
-  jq -e -s '
-    length == 1 and
-    (.[0] | type == "object" and .id == 1 and
-      (.result | type == "object") and
-      ((.result.nextCursor? // null) == null))
-  ' >/dev/null 2>&1
+  cipc_result=$(json_top_level_object result) || return 1
+  cipc_cursor=$(printf '%s\n' "$cipc_result" |
+    json_top_level_keys cursor) || return 1
+  case "$cipc_cursor" in
+    absent|null) ;;
+    *) return 1 ;;
+  esac
 }
 
 connector_inventory() {
@@ -3313,10 +3326,14 @@ connector_inventory() {
         codex_atlassian_record codex_apps optional) || return 1
       ci_apps_tools=
       if [ -n "$ci_apps_record" ]; then
-        ci_apps_tools=$(printf '%s\n' "$ci_apps_record" |
-          json_top_level_tools tools) || return 1
-        ci_apps_tools=$(printf '%s\n' "$ci_apps_tools" |
-          codex_canonical_tool_names apps-only) || return 1
+        ci_apps_auth=$(printf '%s\n' "$ci_apps_record" |
+          json_top_level_string authStatus) || ci_apps_auth=
+        if [ "$ci_apps_auth" = bearerToken ]; then
+          ci_apps_tools=$(printf '%s\n' "$ci_apps_record" |
+            json_top_level_tools tools) || return 1
+          ci_apps_tools=$(printf '%s\n' "$ci_apps_tools" |
+            codex_canonical_tool_names apps-only) || return 1
+        fi
       fi
       CAPABILITY_INVENTORY=$({
         [ -z "$ci_tools" ] || printf '%s\n' "$ci_tools"

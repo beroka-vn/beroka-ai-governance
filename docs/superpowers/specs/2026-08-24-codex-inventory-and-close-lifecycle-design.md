@@ -31,8 +31,8 @@ dot-namespace aliases: `atlassian_rovo.createConfluencePage`,
 Keep the existing two exact trusted inputs:
 
 - direct tool names from the single authenticated `atlassian` record;
-- only reviewed exact Atlassian aliases from the optional single
-  `codex_apps` record.
+- only reviewed exact Atlassian aliases from the optional single `codex_apps`
+  record when its exact `authStatus` is `bearerToken`.
 
 Validate and canonicalize each record independently. Reject duplicates within
 either record because they are ambiguous. Merge the two validated sets as a
@@ -46,16 +46,21 @@ suffixed, or any other new aliases.
 All existing fail-closed behavior remains: malformed records, duplicate server
 records, unreviewed aliases, near matches, cross-provider names,
 authentication failure, unavailable inventory, and missing required tools
-cannot authorize a write. A non-null pagination cursor prevents tool absence
-from becoming authoritative `UNSUPPORTED`; exact required-tool presence may
-still prove support. Diagnostics remain allowlist-only and must not print raw
-inventory or tool names.
+cannot authorize a write. A Codex Apps record with missing, null, malformed,
+unknown, unsupported, or `notLoggedIn` authentication cannot contribute tools.
+A page is terminal only when `result.nextCursor` is absent or occurs exactly
+once with the exact value `null`; any other value or duplicate cursor key
+prevents tool absence from becoming authoritative `UNSUPPORTED`. Exact
+required-tool presence may still prove support. Diagnostics remain
+allowlist-only and must not print raw inventory or tool names.
 
 ## GitHub close follow-up
 
-This is an agent-driven workflow, not a webhook or background service. When an
-agent closes the current primary GitHub Issue, or observes during completion
-work that it has just been closed, it must continue in this order:
+This is an agent-driven workflow, not a webhook or background service.
+`Closes #<issue>` normally closes the GitHub Issue. If it remains open, an
+agent may close it only after exact merge/link readback proves the delivered
+commit and the close write is authorized. The follow-up begins only after the
+automatic close or that authorized manual close, in this order:
 
 1. Resolve the exact linked Jira item from records already in scope.
 2. Read the authenticated Atlassian account and current Jira assignee. Stop and
@@ -77,10 +82,14 @@ cross-team-link, and unactivated-document gates continue to apply.
 
 ## Documentation changes
 
-Add the close follow-up to the shared work-item rules used by governed agents.
-Replace the current automatic `In Review -> Done` rule with an explicit rule
-that documentation readback leaves Jira in `In Review`; a later human-directed
-transition may move it to `Done`.
+Add the normative close follow-up to `runtime/rules/general.md`, which every
+profile renders, and remove duplicate normative copies from the work-item and
+BE/FE integration runtime sources. Keep explanatory copies in `governance.md`,
+`workflow.md`, and `templates/jira-confluence.md`. Replace the current automatic
+`In Review -> Done` rule with an explicit rule that documentation readback
+leaves Jira in `In Review`; a later human-directed transition may move it to
+`Done`. After success, report GitHub, Jira, and Confluence outcomes separately;
+retain separate blocked-step reporting and never reopen the GitHub Issue.
 
 No event listener, status daemon, new configuration, or new dependency is
 introduced.
@@ -92,9 +101,14 @@ introduced.
 - Keep negative coverage for duplicates within one record, malformed names,
   unreviewed aliases, near matches, cross-provider names, missing tools,
   incomplete evidence, and authentication failures.
+- Add Codex Apps authentication regressions for missing, unknown, and
+  `notLoggedIn` states, plus pagination regressions for boolean false and
+  duplicate cursor keys.
 - Add documentation-contract assertions for close-triggered `In Review`, exact
   Confluence ID resolution, clarification on missing documentation context,
-  readback, and remaining in `In Review`.
+  readback, remaining in `In Review`, manual-close authority, and separate
+  successful outcomes. Add context regressions for routed standalone and a
+  single lifecycle copy in BE/FE context.
 - Run the focused routing and documentation tests, then the full repository
   test suite.
 

@@ -38,6 +38,12 @@ assert_not_contains() {
   esac
 }
 
+assert_occurrences() {
+  ao_actual=$(printf '%s\n' "$1" | grep -Fc "$2" || :)
+  [ "$ao_actual" -eq "$3" ] ||
+    fail "expected [$2] $3 times, found $ao_actual"
+}
+
 confluence_args() {
   printf '%s\n' \
     --confluence-action update \
@@ -150,6 +156,15 @@ case "$*" in
           healthy-codex-apps-confluence)
             printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{},"authStatus":"oAuth"},{"name":"codex_apps","tools":{"atlassian_rovo.getAccessibleAtlassianResources":{},"atlassian_rovo.createConfluencePage":{},"atlassian_rovo.getConfluencePage":{},"atlassian_rovo.updateConfluencePage":{}},"authStatus":"bearerToken"}],"nextCursor":null}}'
             ;;
+          codex-apps-confluence-auth-missing)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{},"authStatus":"oAuth"},{"name":"codex_apps","tools":{"atlassian_rovo.getAccessibleAtlassianResources":{},"atlassian_rovo.createConfluencePage":{},"atlassian_rovo.getConfluencePage":{},"atlassian_rovo.updateConfluencePage":{}}}],"nextCursor":null}}'
+            ;;
+          codex-apps-confluence-auth-unknown)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{},"authStatus":"oAuth"},{"name":"codex_apps","tools":{"atlassian_rovo.getAccessibleAtlassianResources":{},"atlassian_rovo.createConfluencePage":{},"atlassian_rovo.getConfluencePage":{},"atlassian_rovo.updateConfluencePage":{}},"authStatus":"unknown"}],"nextCursor":null}}'
+            ;;
+          codex-apps-confluence-auth-not-logged-in)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{},"authStatus":"oAuth"},{"name":"codex_apps","tools":{"atlassian_rovo.getAccessibleAtlassianResources":{},"atlassian_rovo.createConfluencePage":{},"atlassian_rovo.getConfluencePage":{},"atlassian_rovo.updateConfluencePage":{}},"authStatus":"notLoggedIn"}],"nextCursor":null}}'
+            ;;
           healthy-codex-apps-confluence-preview)
             printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{},"authStatus":"oAuth"},{"name":"codex_apps","tools":{"atlassian_rovo.getAccessibleAtlassianResources":{},"atlassian_rovo.createConfluencePagePreview":{},"atlassian_rovo.getConfluencePage":{},"atlassian_rovo.updateConfluencePage":{}},"authStatus":"bearerToken"}],"nextCursor":null}}'
             ;;
@@ -161,6 +176,12 @@ case "$*" in
             ;;
           partial-codex-apps-read-only)
             printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{},"authStatus":"oAuth"},{"name":"codex_apps","tools":{"atlassian_rovo.getAccessibleAtlassianResources":{},"atlassian_rovo.getJiraIssue":{},"atlassian_rovo.getJiraIssueTypeMetaWithFields":{},"atlassian_rovo.getJiraProjectIssueTypesMetadata":{},"atlassian_rovo.searchJiraIssuesUsingJql":{}},"authStatus":"bearerToken"}],"nextCursor":"page-2"}}'
+            ;;
+          false-cursor-codex-apps-read-only)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{},"authStatus":"oAuth"},{"name":"codex_apps","tools":{"atlassian_rovo.getAccessibleAtlassianResources":{},"atlassian_rovo.getJiraIssue":{},"atlassian_rovo.getJiraIssueTypeMetaWithFields":{},"atlassian_rovo.getJiraProjectIssueTypesMetadata":{},"atlassian_rovo.searchJiraIssuesUsingJql":{}},"authStatus":"bearerToken"}],"nextCursor":false}}'
+            ;;
+          duplicate-cursor-codex-apps-read-only)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{},"authStatus":"oAuth"},{"name":"codex_apps","tools":{"atlassian_rovo.getAccessibleAtlassianResources":{},"atlassian_rovo.getJiraIssue":{},"atlassian_rovo.getJiraIssueTypeMetaWithFields":{},"atlassian_rovo.getJiraProjectIssueTypesMetadata":{},"atlassian_rovo.searchJiraIssuesUsingJql":{}},"authStatus":"bearerToken"}],"nextCursor":"page-2","nextCursor":null}}'
             ;;
           healthy-codex-apps-similar)
             printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{},"authStatus":"oAuth"},{"name":"codex_apps","tools":{"atlassian_rovo.createJiraIssuePreview":{},"atlassian_rovo.getAccessibleAtlassianResources":{},"atlassian_rovo.getJiraIssue":{},"atlassian_rovo.getJiraIssueTypeMetaWithFields":{},"atlassian_rovo.getJiraProjectIssueTypesMetadata":{},"atlassian_rovo.searchJiraIssuesUsingJql":{}},"authStatus":"bearerToken"}]}}'
@@ -1441,6 +1462,27 @@ assert_contains "$output" 'Capability state: SUPPORTED'
 assert_contains "$output" 'Runtime inventory: COMPLETE'
 assert_contains "$output" 'Result: PASS'
 
+for unauthenticated_codex_apps in \
+  codex-apps-confluence-auth-missing \
+  codex-apps-confluence-auth-unknown \
+  codex-apps-confluence-auth-not-logged-in
+do
+  printf '%s\n' "$unauthenticated_codex_apps" \
+    >"$XDG_CONFIG_HOME/fake-codex-health"
+  if output=$($CLI preflight "$canonical_backend" --client codex \
+    --operation confluence-write --non-interactive \
+    --confluence-action create --target-content-id new \
+    --capability-id MARKET-PLANNED-API --scope Shared --domain Market \
+    --transport API --expected-parent-id 900002 \
+    --registry-content-id 900003 2>&1)
+  then
+    fail "$unauthenticated_codex_apps authorized Confluence create"
+  fi
+  assert_contains "$output" 'Capability state: UNSUPPORTED'
+  assert_not_contains "$output" 'Capability state: SUPPORTED'
+  assert_contains "$output" 'Result: CONNECTOR_CAPABILITY_REQUIRED'
+done
+
 printf '%s\n' healthy-codex-apps-confluence-preview \
   >"$XDG_CONFIG_HOME/fake-codex-health"
 if output=$($CLI preflight "$canonical_backend" --client codex \
@@ -1632,6 +1674,8 @@ assert_contains "$output" 'Routing: ROUTING_ACTIVE'
 assert_contains "$output" 'Profile: standalone'
 assert_contains "$output" 'Dependency state: NO_DEPENDENCY_DECLARED'
 assert_contains "$output" '# Standalone Repository'
+assert_occurrences "$output" \
+  'report the GitHub, Jira, and Confluence outcomes separately' 1
 case "$output" in
   *'# Backend–Frontend Integration'*) fail 'standalone loaded BE-FE integration' ;;
 esac
@@ -2411,6 +2455,8 @@ output=$($CLI context "$consumer")
 assert_contains "$output" 'Profile: backend'
 assert_contains "$output" 'Cross-repository policy: explicit-only'
 assert_contains "$output" '# Backend–Frontend Integration'
+assert_occurrences "$output" \
+  'report the GitHub, Jira, and Confluence outcomes separately' 1
 
 profile_controlled_config='SCHEMA_VERSION=1
 PROFILE=backend
@@ -2566,16 +2612,23 @@ do
   assert_contains "$output" 'Result: CONNECTOR_CAPABILITY_REQUIRED'
 done
 
-printf '%s\n' partial-codex-apps-read-only \
-  >"$XDG_CONFIG_HOME/fake-codex-health"
-if output=$($CLI preflight "$consumer" \
-  --client codex --operation jira-write --non-interactive 2>&1)
-then
-  fail 'partial Codex inventory authorized Jira write'
-fi
-assert_contains "$output" 'Capability state: UNKNOWN'
-assert_not_contains "$output" 'Capability state: UNSUPPORTED'
-assert_contains "$output" 'Result: CONNECTOR_CAPABILITY_REQUIRED'
+for nonterminal_codex_inventory in \
+  partial-codex-apps-read-only \
+  false-cursor-codex-apps-read-only \
+  duplicate-cursor-codex-apps-read-only
+do
+  printf '%s\n' "$nonterminal_codex_inventory" \
+    >"$XDG_CONFIG_HOME/fake-codex-health"
+  if output=$($CLI preflight "$consumer" \
+    --client codex --operation jira-write --non-interactive 2>&1)
+  then
+    fail "$nonterminal_codex_inventory authorized Jira write"
+  fi
+  assert_contains "$output" 'Capability state: UNKNOWN'
+  assert_not_contains "$output" 'Capability state: UNSUPPORTED'
+  assert_not_contains "$output" 'Capability state: SUPPORTED'
+  assert_contains "$output" 'Result: CONNECTOR_CAPABILITY_REQUIRED'
+done
 
 printf '%s\n' healthy-codex-apps-ambiguous \
   >"$XDG_CONFIG_HOME/fake-codex-health"

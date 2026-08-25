@@ -4,7 +4,7 @@
 
 **Goal:** Make live Codex Jira and Confluence preflights accept validated overlapping inventories, then require agents to reconcile a closed GitHub Issue to Jira `In Review` and exact Confluence documentation without advancing Jira to `Done`.
 
-**Architecture:** Validate the direct Atlassian and reviewed Codex Apps tool sets independently, then set-union their canonical names so cross-record corroboration is not treated as ambiguity. Preserve partial-page state so exact presence can authorize while absence cannot. Express the close follow-up in the existing shared governance rules and their published copies; no listener or new runtime component is added.
+**Architecture:** Validate the direct Atlassian and authenticated reviewed Codex Apps tool sets independently, then set-union their canonical names so cross-record corroboration is not treated as ambiguity. Preserve partial-page state with duplicate-aware cursor parsing so exact presence can authorize while absence cannot. Express the normative close follow-up once in the general runtime rules rendered by every profile, with explanatory published copies; no listener or new runtime component is added.
 
 **Tech Stack:** POSIX shell, `awk`, `jq`, existing shell test harness, Markdown governance rules.
 
@@ -18,9 +18,11 @@
   `atlassian_rovo.createConfluencePage`, `atlassian_rovo.getConfluencePage`,
   and `atlassian_rovo.updateConfluencePage` aliases; no legacy, hashed,
   preview, suffixed, or other aliases are allowed.
-- Only exact reviewed aliases from the optional single `codex_apps` record are accepted.
+- Only exact reviewed aliases from the optional single `codex_apps` record with
+  exact `authStatus: bearerToken` are accepted.
 - Malformed or duplicate names within one record remain blocked.
-- A non-null pagination cursor cannot make missing tools authoritative.
+- Missing `result.nextCursor` or exactly one null cursor is terminal. Any other
+  value or duplicate cursor key cannot make missing tools authoritative.
 - Every Jira or Confluence write still requires its own fresh operation-specific preflight.
 - Missing or ambiguous Confluence context must be asked of the user, never guessed.
 - Documentation readback leaves Jira in `In Review`; no automatic transition to `Done`.
@@ -35,7 +37,7 @@
 
 **Interfaces:**
 - Consumes: one `mcpServerStatus/list` response containing the required single `atlassian` record, an optional single `codex_apps` record, and optional `result.nextCursor`.
-- Produces: `CAPABILITY_INVENTORY` as unique canonical names, `CAPABILITY_INVENTORY_FORMAT=json`, and `CAPABILITY_INVENTORY_COMPLETE=1` only when `nextCursor` is absent or null.
+- Produces: `CAPABILITY_INVENTORY` as unique canonical names, `CAPABILITY_INVENTORY_FORMAT=json`, and `CAPABILITY_INVENTORY_COMPLETE=1` only when `result.nextCursor` is absent or occurs exactly once with value `null`.
 - Produces helper: `codex_inventory_page_complete()`, stdin JSON-RPC response to shell success for a terminal page and failure otherwise.
 
 - [ ] **Step 1: Add the populated/populated overlap fixture**
@@ -95,7 +97,10 @@ CAPABILITY_INVENTORY=$({
 CAPABILITY_INVENTORY_FORMAT=json
 ```
 
-Keep `codex_canonical_tool_names` duplicate rejection intact. The later
+Before extracting `ci_apps_tools`, require the optional exact `codex_apps`
+record's `authStatus` to equal `bearerToken`; otherwise it contributes no
+aliases. Keep direct-record OAuth handling and `codex_canonical_tool_names`
+duplicate rejection intact. The later
 integrated fix adds only the three explicitly authorized exact Confluence
 aliases named in Global Constraints; it does not add any legacy, hashed,
 preview, suffixed, or other aliases.
@@ -133,18 +138,10 @@ Expected: FAIL because the current adapter marks every parsed response complete 
 
 - [ ] **Step 6: Preserve partial-page evidence without authorizing absence**
 
-Add immediately before `connector_inventory()`:
-
-```sh
-codex_inventory_page_complete() {
-  jq -e -s '
-    length == 1 and
-    (.[0] | type == "object" and .id == 1 and
-      (.result | type == "object") and
-      ((.result.nextCursor? // null) == null))
-  ' >/dev/null 2>&1
-}
-```
+Add a streaming/key-count cursor classifier immediately before
+`connector_inventory()`. It must distinguish absent, exactly one literal null,
+all other JSON value types, and duplicate semantic `nextCursor` keys without
+collapsing duplicates.
 
 In the Codex arm of `connector_inventory()`, set completeness after building the validated inventory:
 
@@ -181,7 +178,15 @@ CAPABILITY_EVIDENCE_SOURCE=PROVIDER_CONTRACT
 
 This preserves provider-contract behavior for Claude, which has no inventory format, while preventing a partial Codex page with missing tools from authorizing or proving absence.
 
-- [ ] **Step 7: Verify the complete routing matrix**
+- [ ] **Step 7: Add final-review authentication and cursor regressions**
+
+Add direct-empty OAuth fixtures whose exact Codex Apps Confluence aliases have
+missing, unknown, and `notLoggedIn` auth states. Each must remain blocked and
+must not report `SUPPORTED`; retain authenticated `bearerToken` create/update
+PASS cases. Add boolean-false and duplicate `nextCursor` fixtures. Each must
+resolve missing required tools to `UNKNOWN`, never `UNSUPPORTED` or PASS.
+
+- [ ] **Step 8: Verify the complete routing matrix**
 
 Run:
 
@@ -194,7 +199,7 @@ git diff --check
 
 Expected: all commands exit 0.
 
-- [ ] **Step 8: Commit the inventory fix**
+- [ ] **Step 9: Commit the inventory fix**
 
 ```bash
 git add bin/beroka-governance tests/routing.sh
@@ -207,23 +212,30 @@ git commit -m "fix: accept corroborating Codex inventories"
 
 **Files:**
 - Modify: `tests/documentation-architecture.sh`
-- Modify: `runtime/rules/work-items.md`
-- Modify: `runtime/integrations/beroka-be-fe.md`
+- Modify: `tests/routing.sh`
+- Modify: `runtime/rules/general.md`
+- Modify: `runtime/rules/work-items.md` (remove duplicate lifecycle rule)
+- Modify: `runtime/integrations/beroka-be-fe.md` (remove duplicate lifecycle rule)
 - Modify: `governance.md`
 - Modify: `workflow.md`
 - Modify: `templates/jira-confluence.md`
 
 **Interfaces:**
-- Consumes: an agent closing, or observing during completion work that it just closed, the current primary GitHub Issue.
-- Produces: an ordered instruction contract: exact linked Jira resolution, assignee verification, fresh `jira-write` preflight, idempotent `In Review`, exact Confluence ID or user clarification, target-bound preflight, update, readback, and Jira remaining `In Review`.
+- Consumes: an automatic `Closes #<issue>` close or an authorized manual close after exact merge/link readback.
+- Produces: an ordered instruction contract: exact linked Jira resolution, assignee verification, fresh `jira-write` preflight, idempotent `In Review`, exact Confluence ID or user clarification, target-bound preflight, update, readback, Jira remaining `In Review`, and separate GitHub, Jira, and Confluence outcomes.
 
 - [ ] **Step 1: Add lifecycle documentation-contract assertions**
 
-In `tests/documentation-architecture.sh`, add exact assertions for the shared rule and reject the old automatic Done rule across every published copy:
+In `tests/documentation-architecture.sh`, add exact assertions for the general
+runtime rule and three explanatory copies, reject duplicate lifecycle rules in
+the work-item and BE/FE integration sources, and reject the old automatic Done
+rule across every published copy. In `tests/routing.sh`, require a routed
+standalone context to render the lifecycle and a BE/FE context to render it
+exactly once:
 
 ```sh
-for file in governance.md workflow.md runtime/rules/work-items.md \
-  runtime/integrations/beroka-be-fe.md templates/jira-confluence.md; do
+for file in runtime/rules/general.md governance.md workflow.md \
+  templates/jira-confluence.md; do
   require_text "$file" 'closes the current primary GitHub Issue'
   require_text "$file" 'exact linked Jira item'
   require_text "$file" 'already in `In Review`'
@@ -243,15 +255,23 @@ Run:
 sh tests/documentation-architecture.sh
 ```
 
-Expected: FAIL because the close-triggered workflow is absent and all five files still contain the old automatic Done transition.
+Expected: FAIL because the general runtime source lacks the lifecycle, the
+profile-specific sources duplicate it, and the published contracts lack the
+manual-close and separate-outcome requirements.
 
-- [ ] **Step 3: Replace the lifecycle paragraph in every published copy**
+- [ ] **Step 3: Move the normative lifecycle to the general runtime rule**
 
-Use the existing prose style in each file, preserving surrounding role and cross-team rules. The normative content must state:
+Use the existing prose style in each file, preserving surrounding role and
+cross-team rules. Put the normative content in `runtime/rules/general.md`, keep
+the three explanatory copies, and remove the normative lifecycle from
+`runtime/rules/work-items.md` and `runtime/integrations/beroka-be-fe.md`. Restore
+the prior exact merge/link readback and authorized close-write gate before the
+follow-up trigger. The normative content must state:
 
 ```markdown
-When an agent closes the current primary GitHub Issue, or observes during
-completion work that it has just been closed, it resolves the exact linked Jira
+After `Closes #<issue>` automatically closes the current primary GitHub Issue,
+or after an agent completes an authorized manual close under the preceding
+gate, resolve the exact linked Jira
 item, verifies the authenticated account against the current assignee, runs a
 fresh `jira-write` preflight, and transitions the item to `In Review`; an item
 already in `In Review` is idempotently complete. It then resolves related
@@ -259,8 +279,9 @@ documentation only by exact Confluence content ID. If the page, parent, or
 required change is missing or ambiguous, ask the user and wait. Otherwise run
 a fresh target-bound Confluence preflight, update the documentation, and read
 it back. After documentation readback Jira remains in `In Review`; do not move
-it to `Done` automatically. Report a blocked Jira or Confluence step separately
-and do not reopen the GitHub Issue.
+it to `Done` automatically. After success, report the GitHub, Jira, and
+Confluence outcomes separately. Report a blocked Jira or Confluence step
+separately and do not reopen the GitHub Issue.
 ```
 
 Keep `To Do -> In Progress` when accepted work starts and `In Progress -> In Review` when a human marks the provider PR ready. The close follow-up is idempotent when that earlier transition already occurred.
@@ -271,16 +292,19 @@ Run:
 
 ```bash
 sh tests/documentation-architecture.sh
-bin/beroka-governance context "$PWD"
+sh tests/routing.sh
 git diff --check
 ```
 
-Expected: the test exits 0; rendered context contains the close follow-up and contains no `In Review -> Done` rule.
+Expected: both tests exit 0; routed standalone context contains the close
+follow-up, BE/FE context contains it exactly once, and neither contains an
+`In Review -> Done` rule.
 
 - [ ] **Step 5: Commit the lifecycle rule**
 
 ```bash
-git add tests/documentation-architecture.sh runtime/rules/work-items.md \
+git add tests/documentation-architecture.sh tests/routing.sh \
+  runtime/rules/general.md runtime/rules/work-items.md \
   runtime/integrations/beroka-be-fe.md governance.md workflow.md \
   templates/jira-confluence.md
 git commit -m "feat: require post-close Jira and docs follow-up"
@@ -330,9 +354,14 @@ bin/beroka-governance preflight /home/cuongngo/Beroka_Backend \
   --client codex --operation confluence-write --non-interactive \
   --confluence-action create --target-content-id new \
   --expected-parent-id 65962274
+bin/beroka-governance preflight /home/cuongngo/Beroka_Backend \
+  --client codex --operation confluence-write --non-interactive \
+  --confluence-action update --target-content-id 65962274
 ```
 
-Expected for both: `Capability state: SUPPORTED`, `Runtime inventory: COMPLETE`, and `Result: PASS`. These commands perform no Jira or Confluence write.
+Expected for all three: `Capability state: SUPPORTED`, `Runtime inventory:
+COMPLETE`, and `Result: PASS`. These commands perform no Jira or Confluence
+write.
 
 - [ ] **Step 4: Review the final diff against the spec**
 
