@@ -549,6 +549,34 @@ do
   assert_denied "$(hook beforeMCPExecution "$confluence_marker_bypass")" \
     HANDOFF_BODY_INVALID
 done
+for ordinary_handoff_prose in \
+  'This paragraph explains how the provider Jira remains linked.' \
+  'This paragraph discusses API impact without declaring a header.'
+do
+  confluence_prose=$(printf '%s\n' "$confluence_create" | jq -c \
+    --arg prose "$ordinary_handoff_prose" \
+    '.tool_input.body += ("\n" + $prose)')
+  confluence_prose_out=$(hook beforeMCPExecution "$confluence_prose")
+  assert_not_contains "$confluence_prose_out" HANDOFF_BODY_INVALID
+  assert_denied "$confluence_prose_out" GITHUB_AUTH_REQUIRED
+done
+for restored_handoff_marker in \
+  '> ## Confluence content ID : new' \
+  '- 1. Confluence page version : pending' \
+  '+ Owner account ID : account-123' \
+  '* Effective date : 2026-08-25' \
+  '2) Supersedes : N/A' \
+  '## > Superseded by : N/A' \
+  '> - API impact : none' \
+  '3. WebSocket impact : none' \
+  '### Missing sections : FE acknowledgment'
+do
+  confluence_restored_marker=$(printf '%s\n' "$confluence_create" | jq -c \
+    --arg marker "$restored_handoff_marker" \
+    '.tool_input.body += ("\n" + $marker)')
+  assert_denied "$(hook beforeMCPExecution "$confluence_restored_marker")" \
+    HANDOFF_BODY_INVALID
+done
 assert_no_cursor_body_stage
 confluence_create_out=$(hook beforeMCPExecution "$confluence_create")
 assert_not_contains "$confluence_create_out" HANDOFF_DELTA_REQUIRED

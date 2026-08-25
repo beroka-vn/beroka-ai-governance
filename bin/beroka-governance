@@ -5971,8 +5971,24 @@ cursor_stage_exact_body() {
 }
 
 cursor_handoff_intent() {
-  LC_ALL=C grep -Eiq \
-    '(handoff[[:space:]]+schema|handoff[[:space:]]+state|provider[[:space:]]+jira|consumer[[:space:]]+jira|confluence[[:space:]]+content[[:space:]]+id|fe[[:space:]]+acknowledgment)'
+  LC_ALL=C awk '
+    function strip_markdown_prefixes(line) {
+      sub(/^[[:space:]]+/, "", line)
+      while (line ~ /^(#+|>|[-+*]|[0-9]+[.)])[[:space:]]+/) {
+        sub(/^(#+|>|[-+*]|[0-9]+[.)])[[:space:]]+/, "", line)
+        sub(/^[[:space:]]+/, "", line)
+      }
+      return line
+    }
+    {
+      line = strip_markdown_prefixes(tolower($0))
+      if (line ~ /^(handoff schema|handoff state|provider jira|consumer jira|confluence content id|confluence page version|owner account id|effective date|supersedes|superseded by|api impact|websocket impact|missing sections|fe acknowledgment)[[:space:]]*(:|$)/) {
+        found = 1
+        exit
+      }
+    }
+    END { exit(found ? 0 : 1) }
+  '
 }
 
 cursor_jira_handoff_shaped() {
