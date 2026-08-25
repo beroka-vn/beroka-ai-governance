@@ -1604,12 +1604,15 @@ output=$($CLI preflight "$canonical_backend" --client codex \
 assert_contains "$output" 'Target transport: WebSocket'
 assert_contains "$output" 'Result: PASS'
 
+handoff_verify_body=$HOME/handoff-verify.md
+cp "$ROOT/tests/fixtures/handoffs/ready-api.md" "$handoff_verify_body"
+
 if output=$($CLI preflight "$canonical_backend" --client codex \
   --operation confluence-handoff-verify --non-interactive \
   --confluence-action update --target-content-id 900001 \
   --capability-id MARKET-WRONG-API --scope Shared --domain Market \
   --transport API --expected-parent-id 900002 \
-  --registry-content-id 900003 2>&1)
+  --registry-content-id 900003 --handoff-body-file "$handoff_verify_body" 2>&1)
 then
   fail 'handoff accepted a conflicting Capability ID'
 fi
@@ -1620,7 +1623,7 @@ output=$($CLI preflight "$canonical_backend" --client codex \
   --confluence-action update --target-content-id 900001 \
   --capability-id MARKET-FU-INDEX-API --scope Shared --domain Market \
   --transport API --expected-parent-id 900002 \
-  --registry-content-id 900003)
+  --registry-content-id 900003 --handoff-body-file "$handoff_verify_body")
 assert_contains "$output" 'Capability: confluence-page-read'
 assert_contains "$output" 'Result: PASS'
 
@@ -1629,7 +1632,7 @@ if output=$($CLI preflight "$canonical_backend" --client codex \
   --confluence-action create --target-content-id new \
   --capability-id MARKET-PLANNED-API --scope Shared --domain Market \
   --transport API --expected-parent-id 900002 \
-  --registry-content-id 900003 2>&1)
+  --registry-content-id 900003 --handoff-body-file "$handoff_verify_body" 2>&1)
 then
   fail 'handoff accepted a planned target without a content ID'
 fi
@@ -1642,7 +1645,7 @@ if output=$($CLI preflight "$canonical_backend" --client codex \
   --confluence-action update --target-content-id 900001 \
   --capability-id MARKET-FU-INDEX-API --scope Shared --domain Market \
   --transport API --expected-parent-id 900002 \
-  --registry-content-id 900003 2>&1)
+  --registry-content-id 900003 --handoff-body-file "$handoff_verify_body" 2>&1)
 then
   fail 'handoff passed without Confluence read capability'
 fi
@@ -1650,6 +1653,195 @@ assert_contains "$output" 'Capability state: UNSUPPORTED'
 assert_contains "$output" 'Result: CONNECTOR_CAPABILITY_REQUIRED'
 
 printf '%s\n' healthy-all >"$XDG_CONFIG_HOME/fake-codex-health"
+
+handoff_dir=$HOME/handoffs
+mkdir -p "$handoff_dir"
+for handoff_fixture in draft ready-api ready-websocket ready-api-websocket \
+  ready-no-impact incident-85360641
+do
+  cp "$ROOT/tests/fixtures/handoffs/$handoff_fixture.md" \
+    "$handoff_dir/$handoff_fixture.md"
+done
+
+handoff_preflight() {
+  handoff_file=$1 handoff_action=$2 handoff_target=$3
+  $CLI preflight "$canonical_backend" --client codex \
+    --operation confluence-handoff-write --non-interactive \
+    --confluence-action "$handoff_action" --target-content-id "$handoff_target" \
+    --expected-parent-id 900002 --handoff-body-file "$handoff_file"
+}
+
+assert_handoff_invalid() {
+  ahi_file=$1 ahi_action=$2 ahi_target=$3
+  : >"$CALLS"
+  if output=$(handoff_preflight "$ahi_file" "$ahi_action" "$ahi_target" 2>&1)
+  then
+    fail "handoff accepted invalid body: $ahi_file"
+  fi
+  assert_contains "$output" 'Result: HANDOFF_BODY_INVALID'
+  [ ! -s "$CALLS" ] || fail 'invalid handoff body inspected a connector'
+}
+
+assert_handoff_section_required() {
+  ahsr_source=$1 ahsr_heading=$2 ahsr_action=$3 ahsr_target=$4
+  ahsr_file=$handoff_dir/removed.md
+  awk -v heading="$ahsr_heading" '
+    BEGIN { match(heading, /^#+/); level=RLENGTH }
+    $0 == heading { skip=1; next }
+    skip && /^#/ { match($0, /^#+/); if (RLENGTH <= level) skip=0 }
+    !skip { print }
+  ' "$ahsr_source" >"$ahsr_file"
+  assert_handoff_invalid "$ahsr_file" "$ahsr_action" "$ahsr_target"
+}
+
+# The body is required before role or connector inspection.
+: >"$CALLS"
+if output=$($CLI preflight "$canonical_backend" --client codex \
+  --operation confluence-handoff-write --non-interactive \
+  --confluence-action create --target-content-id new \
+  --expected-parent-id 900002 2>&1)
+then
+  fail 'handoff write passed without the actual body'
+fi
+assert_contains "$output" 'Result: HANDOFF_BODY_REQUIRED'
+[ ! -s "$CALLS" ] || fail 'missing handoff body inspected a connector'
+
+ln -s "$handoff_dir/draft.md" "$handoff_dir/symlink.md"
+if output=$(handoff_preflight "$handoff_dir/symlink.md" create new 2>&1)
+then
+  fail 'handoff accepted a symlinked body'
+fi
+assert_contains "$output" 'Result: HANDOFF_BODY_REQUIRED'
+
+if output=$(handoff_preflight "$handoff_dir" create new 2>&1)
+then
+  fail 'handoff accepted a directory body'
+fi
+assert_contains "$output" 'Result: HANDOFF_BODY_REQUIRED'
+: >"$handoff_dir/empty.md"
+if output=$(handoff_preflight "$handoff_dir/empty.md" create new 2>&1)
+then
+  fail 'handoff accepted an empty body'
+fi
+assert_contains "$output" 'Result: HANDOFF_BODY_REQUIRED'
+outside_handoff=$(mktemp /var/tmp/beroka-handoff.XXXXXX)
+cp "$handoff_dir/draft.md" "$outside_handoff"
+if output=$(handoff_preflight "$outside_handoff" create new 2>&1)
+then
+  fail 'handoff accepted a body outside HOME and TMPDIR'
+fi
+assert_contains "$output" 'Result: HANDOFF_BODY_REQUIRED'
+rm -f "$outside_handoff"
+
+for handoff_link in \
+  'https://github.com/beroka-vn/Beroka_Backend' \
+  'git@github.com:beroka-vn/Beroka_Backend.git' \
+  'Repository: use the provider repository as contract evidence' \
+  'Branch: main contains the contract' \
+  'Pull request: 81 contains the contract' \
+  'Commit: 19f8766 contains the contract'
+do
+  cp "$handoff_dir/ready-no-impact.md" "$handoff_dir/forbidden.md"
+  printf '\n%s\n' "$handoff_link" >>"$handoff_dir/forbidden.md"
+  : >"$CALLS"
+  if output=$(handoff_preflight "$handoff_dir/forbidden.md" update 900001 2>&1)
+  then
+    fail "handoff accepted a repository reference: $handoff_link"
+  fi
+  assert_contains "$output" 'Result: CROSS_TEAM_LINK_SCOPE_DENIED'
+  [ ! -s "$CALLS" ] || fail 'repository reference inspected a connector'
+done
+
+cp "$handoff_dir/ready-no-impact.md" "$handoff_dir/malformed.md"
+sed 's/^Handoff schema: 1$/Handoff schema: 2/' "$handoff_dir/malformed.md" \
+  >"$handoff_dir/malformed-next.md"
+mv "$handoff_dir/malformed-next.md" "$handoff_dir/malformed.md"
+assert_handoff_invalid "$handoff_dir/malformed.md" update 900001
+printf 'Handoff schema: 1\n' >>"$handoff_dir/malformed.md"
+assert_handoff_invalid "$handoff_dir/malformed.md" update 900001
+
+cp "$handoff_dir/ready-no-impact.md" "$handoff_dir/same-project.md"
+sed 's/^Consumer Jira: BF-69$/Consumer Jira: BB-69/' \
+  "$handoff_dir/same-project.md" >"$handoff_dir/same-project-next.md"
+mv "$handoff_dir/same-project-next.md" "$handoff_dir/same-project.md"
+assert_handoff_invalid "$handoff_dir/same-project.md" update 900001
+
+cp "$handoff_dir/draft.md" "$handoff_dir/draft-no-omissions.md"
+sed 's/^Missing sections: Errors and edge cases$/Missing sections: None/' \
+  "$handoff_dir/draft-no-omissions.md" >"$handoff_dir/draft-no-omissions-next.md"
+mv "$handoff_dir/draft-no-omissions-next.md" "$handoff_dir/draft-no-omissions.md"
+assert_handoff_invalid "$handoff_dir/draft-no-omissions.md" create new
+assert_handoff_invalid "$handoff_dir/ready-no-impact.md" create new
+assert_handoff_invalid "$handoff_dir/draft.md" update 900001
+
+cp "$handoff_dir/ready-no-impact.md" "$handoff_dir/placeholder.md"
+printf '\n## Extra contract detail\n\nTBD\n' >>"$handoff_dir/placeholder.md"
+assert_handoff_invalid "$handoff_dir/placeholder.md" update 900001
+: >"$CALLS"
+if output=$(handoff_preflight "$handoff_dir/incident-85360641.md" update 85360641 2>&1)
+then
+  fail 'incident handoff fixture passed'
+fi
+assert_contains "$output" 'Result: CROSS_TEAM_LINK_SCOPE_DENIED'
+[ ! -s "$CALLS" ] || fail 'incident handoff inspected a connector'
+
+for handoff_heading in \
+  '## Purpose and delivered behavior' \
+  '## Affected user flows, assumptions, and non-goals' \
+  '## Authentication and authorization' \
+  '## Public data types and compatibility' \
+  '## State and delivery semantics' \
+  '## Errors and edge cases' \
+  '## Frontend implementation guidance' \
+  '## Sanitized examples and validation evidence' \
+  '## Known limitations and unverified items' \
+  '## FE acknowledgment'
+do
+  assert_handoff_section_required "$handoff_dir/ready-no-impact.md" \
+    "$handoff_heading" update 900001
+done
+
+for handoff_heading in \
+  '## Affected API inventory' \
+  '## API operation: GET /v1/quotes/{symbol}' \
+  '### Permissions' '### Headers' '### Path parameters' \
+  '### Query parameters' '### Request payload' \
+  '### Success status and payload' '### Stable public errors' \
+  '### Pagination' '### Idempotency' '### Retry' '### Cache' \
+  '### Timestamp semantics' '### Sanitized request/response examples' \
+  '## Unaffected API inventory'
+do
+  assert_handoff_section_required "$handoff_dir/ready-api.md" \
+    "$handoff_heading" update 900001
+done
+
+for handoff_heading in \
+  '## Affected WebSocket inventory' \
+  '## Public connection URL and authentication' \
+  '## Subscribe and unsubscribe requests' \
+  '## Event envelope and affected message payloads' \
+  '## Ordering' '## Deduplication' '## Replay/resume' '## Reconnect' \
+  '## Heartbeat' '## Timeout' '## Backpressure' '## Error events' \
+  '## Close codes' '## Sanitized message examples' \
+  '## Unaffected WebSocket inventory'
+do
+  assert_handoff_section_required "$handoff_dir/ready-websocket.md" \
+    "$handoff_heading" update 900001
+done
+
+for handoff_fixture in draft ready-api ready-websocket ready-api-websocket \
+  ready-no-impact
+do
+  case "$handoff_fixture" in
+    draft) handoff_action=create handoff_target=new ;;
+    *) handoff_action=update handoff_target=900001 ;;
+  esac
+  : >"$CALLS"
+  output=$(handoff_preflight "$handoff_dir/$handoff_fixture.md" \
+    "$handoff_action" "$handoff_target")
+  assert_contains "$output" 'Result: PASS'
+  [ -s "$CALLS" ] || fail "positive handoff did not reach connector: $handoff_fixture"
+done
 
 mv "$target_file.deny-only" "$target_file"
 pin_test_release v1.1.21
