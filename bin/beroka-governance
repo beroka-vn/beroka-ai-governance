@@ -168,13 +168,21 @@ handoff_body_is_safe() {
 handoff_header_value() {
   hhv_file=$1 hhv_label=$2
   awk -v label="$hhv_label" '
-    index($0, label ": ") == 1 {
-      if (++matches != 1) exit 2
-      value=substr($0, length(label) + 3)
+    BEGIN {
+      count=split("Handoff schema|Handoff state|Provider Jira|Consumer Jira|Confluence content ID|Confluence page version|Owner account ID|Effective date|Supersedes|Superseded by|API impact|WebSocket impact|Missing sections", headers, "|")
+    }
+    NR <= count {
+      if (index($0, headers[NR] ": ") != 1) invalid=1
+      else values[headers[NR]]=substr($0, length(headers[NR]) + 3)
+      next
+    }
+    {
+      for (i = 1; i <= count; i++)
+        if (index($0, headers[i] ": ") == 1) invalid=1
     }
     END {
-      if (matches != 1 || value == "") exit 1
-      print value
+      if (NR < count || invalid || values[label] == "") exit 1
+      print values[label]
     }
   ' "$hhv_file"
 }
@@ -196,7 +204,26 @@ handoff_section_exists() {
 
 handoff_missing_section_listed() {
   hmsl_missing=$1 hmsl_section=$2
-  case ",$hmsl_missing," in *",$hmsl_section,"*) return 0 ;; *) return 1 ;; esac
+  printf '%s\n' "$hmsl_missing" | awk -v section="$hmsl_section" '
+    {
+      count=split($0, values, ",")
+      for (i = 1; i <= count; i++) {
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", values[i])
+        if (values[i] == section) found=1
+      }
+    }
+    END { exit !found }
+  '
+}
+
+handoff_section_contains() {
+  hsc_file=$1 hsc_heading=$2 hsc_text=$3
+  awk -v heading="$hsc_heading" -v text="$hsc_text" '
+    $0 == heading { matches++; active=1; next }
+    active && /^#/ { active=0 }
+    active && index($0, text) { found=1 }
+    END { exit !(matches == 1 && found) }
+  ' "$hsc_file"
 }
 
 handoff_require_section() {
@@ -214,7 +241,7 @@ handoff_require_section() {
 reject_cross_team_repository_references() {
   rctrr_file=$1
   if LC_ALL=C grep -Eiq \
-    'github[.]com|git@github|[[:alnum:]_./-]+[.]git([^[:alnum:]_./-]|$)|(^|[^[:alnum:]_])(repository|branch|pull request|commit)([^[:alnum:]_]|$)' \
+    'github[.]com|git@github|[[:alnum:]_./-]+[.]git([^[:alnum:]_./-]|$)|canonical:[[:space:]]*[^[:space:]]|(^|[^[:alnum:]_])(repository|branch|pull request|pr|commit)([^[:alnum:]_]|$)' \
     "$rctrr_file"
   then
     die CROSS_TEAM_LINK_SCOPE_DENIED \
@@ -372,7 +399,8 @@ validate_handoff_body() {
     affected) handoff_require_api "$vhb_file" "$vhb_state" "$vhb_missing" ;;
     none)
       handoff_require_section "$vhb_file" 'API impact rationale' "$vhb_state" "$vhb_missing"
-      grep -Fqi 'No public API operation changes' "$vhb_file" ||
+      handoff_section_contains "$vhb_file" '## API impact rationale' \
+        'No public API operation changes' ||
         die HANDOFF_BODY_INVALID 'API no-impact rationale is incomplete'
       ;;
   esac
@@ -380,7 +408,8 @@ validate_handoff_body() {
     affected) handoff_require_websocket "$vhb_file" "$vhb_state" "$vhb_missing" ;;
     none)
       handoff_require_section "$vhb_file" 'WebSocket impact rationale' "$vhb_state" "$vhb_missing"
-      grep -Fqi 'No public WebSocket contract changes' "$vhb_file" ||
+      handoff_section_contains "$vhb_file" '## WebSocket impact rationale' \
+        'No public WebSocket contract changes' ||
         die HANDOFF_BODY_INVALID 'WebSocket no-impact rationale is incomplete'
       ;;
   esac

@@ -10,7 +10,7 @@ Supersedes: N/A
 Superseded by: N/A
 API impact: none
 WebSocket impact: none
-Missing sections: Errors and edge cases
+Missing sections: Errors and edge cases, FE acknowledgment
 
 ## Purpose and delivered behavior
 
@@ -43,10 +43,6 @@ Public examples will be supplied with the completed contract.
 ## Known limitations and unverified items
 
 The error behavior is not yet verified.
-
-## FE acknowledgment
-
-Frontend has not acknowledged this incomplete draft.
 
 ## API impact rationale
 

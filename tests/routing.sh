@@ -1738,8 +1738,10 @@ for handoff_link in \
   'git@github.com:beroka-vn/Beroka_Backend.git' \
   'Repository: use the provider repository as contract evidence' \
   'Branch: main contains the contract' \
+  'PR #81 is the contract evidence' \
   'Pull request: 81 contains the contract' \
-  'Commit: 19f8766 contains the contract'
+  'Commit: 19f8766 contains the contract' \
+  'Canonical: artifact-81'
 do
   cp "$handoff_dir/ready-no-impact.md" "$handoff_dir/forbidden.md"
   printf '\n%s\n' "$handoff_link" >>"$handoff_dir/forbidden.md"
@@ -1760,14 +1762,32 @@ assert_handoff_invalid "$handoff_dir/malformed.md" update 900001
 printf 'Handoff schema: 1\n' >>"$handoff_dir/malformed.md"
 assert_handoff_invalid "$handoff_dir/malformed.md" update 900001
 
+printf 'Preface\n' >"$handoff_dir/prefaced.md"
+cat "$handoff_dir/ready-no-impact.md" >>"$handoff_dir/prefaced.md"
+assert_handoff_invalid "$handoff_dir/prefaced.md" update 900001
+
+awk 'NR != 3 { print } END { print "Provider Jira: BB-42" }' \
+  "$handoff_dir/ready-no-impact.md" >"$handoff_dir/scattered.md"
+assert_handoff_invalid "$handoff_dir/scattered.md" update 900001
+
+awk '
+  NR == 2 { saved=$0; next }
+  NR == 3 { print; print saved; next }
+  { print }
+' "$handoff_dir/ready-no-impact.md" >"$handoff_dir/reordered.md"
+assert_handoff_invalid "$handoff_dir/reordered.md" update 900001
+
 cp "$handoff_dir/ready-no-impact.md" "$handoff_dir/same-project.md"
 sed 's/^Consumer Jira: BF-69$/Consumer Jira: BB-69/' \
   "$handoff_dir/same-project.md" >"$handoff_dir/same-project-next.md"
 mv "$handoff_dir/same-project-next.md" "$handoff_dir/same-project.md"
 assert_handoff_invalid "$handoff_dir/same-project.md" update 900001
 
+output=$(handoff_preflight "$handoff_dir/draft.md" create new)
+assert_contains "$output" 'Result: PASS'
+
 cp "$handoff_dir/draft.md" "$handoff_dir/draft-no-omissions.md"
-sed 's/^Missing sections: Errors and edge cases$/Missing sections: None/' \
+sed 's/^Missing sections: Errors and edge cases, FE acknowledgment$/Missing sections: None/' \
   "$handoff_dir/draft-no-omissions.md" >"$handoff_dir/draft-no-omissions-next.md"
 mv "$handoff_dir/draft-no-omissions-next.md" "$handoff_dir/draft-no-omissions.md"
 assert_handoff_invalid "$handoff_dir/draft-no-omissions.md" create new
@@ -1784,6 +1804,30 @@ then
 fi
 assert_contains "$output" 'Result: CROSS_TEAM_LINK_SCOPE_DENIED'
 [ ! -s "$CALLS" ] || fail 'incident handoff inspected a connector'
+
+assert_handoff_section_required "$handoff_dir/ready-no-impact.md" \
+  '## API impact rationale' update 900001
+assert_handoff_section_required "$handoff_dir/ready-no-impact.md" \
+  '## WebSocket impact rationale' update 900001
+for handoff_impact in api websocket; do
+  cp "$handoff_dir/ready-no-impact.md" "$handoff_dir/relocated-$handoff_impact.md"
+  case "$handoff_impact" in
+    api)
+      sed 's/^No public API operation changes\.$/API change rationale is documented separately./' \
+        "$handoff_dir/relocated-$handoff_impact.md" >"$handoff_dir/relocated-next.md"
+      printf '\n## Extra contract detail\n\nNo public API operation changes.\n' \
+        >>"$handoff_dir/relocated-next.md"
+      ;;
+    websocket)
+      sed 's/^No public WebSocket contract changes\.$/WebSocket change rationale is documented separately./' \
+        "$handoff_dir/relocated-$handoff_impact.md" >"$handoff_dir/relocated-next.md"
+      printf '\n## Extra contract detail\n\nNo public WebSocket contract changes.\n' \
+        >>"$handoff_dir/relocated-next.md"
+      ;;
+  esac
+  mv "$handoff_dir/relocated-next.md" "$handoff_dir/relocated-$handoff_impact.md"
+  assert_handoff_invalid "$handoff_dir/relocated-$handoff_impact.md" update 900001
+done
 
 for handoff_heading in \
   '## Purpose and delivered behavior' \
