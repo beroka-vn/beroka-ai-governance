@@ -262,19 +262,29 @@ create or update, include handoff delta markers (`Jira:`, `GitHub:`, and a
 `confluence-handoff-verify`; a transport mismatch on a reviewed drifted row
 returns `MAPPING_CONFLICT`.
 
-Maintain provider status as `To Do -> In Progress` when accepted work starts,
-`In Progress -> In Review` when a human marks the provider PR ready for review,
-and `In Review -> Done` only after merge and exact Confluence delivery/readback.
-The provider updates only its own project item; the consumer reviews the exact
-Confluence handoff and updates its own item.
+Maintain provider status as `To Do -> In Progress` when accepted work starts
+and `In Progress -> In Review` when a human marks the provider PR ready for
+review. `Closes #<issue>` normally closes the GitHub Issue. If it remains open,
+an agent may close it only after exact merge/link readback proves the delivered commit
+and the close write is authorized; otherwise report the issue as
+blocked. After `Closes #<issue>` automatically closes the current primary GitHub Issue,
+or after an agent completes an authorized manual close under
+this gate, resolve the exact linked Jira item, verify the authenticated account
+against the current assignee, run a fresh `jira-write` preflight, and transition
+the item to `In Review`; an item already in `In Review` is idempotently
+complete. Then resolve related documentation only by exact Confluence content ID.
+If the page, parent, or required change is missing or ambiguous, ask the user and wait.
+Otherwise run a fresh target-bound Confluence preflight, update
+the documentation, and read it back. After documentation readback Jira remains in `In Review`;
+do not move it to `Done` automatically. After successful documentation readback, report the GitHub, Jira, and Confluence outcomes separately.
+Report a blocked Jira or Confluence step separately and do not reopen the GitHub Issue.
+The provider updates only
+its own project item; the consumer reviews the exact Confluence handoff and
+updates its own item.
 For every Jira status update, the agent reads available Jira transitions first,
 performs only an allowed transition, and reads back the new Jira status. An
 absent transition or status mismatch returns a failure and blocks dependent
 work.
-`Closes #<issue>` normally closes the GitHub Issue. If it remains open, an agent
-may close it only after exact merge/link readback proves the delivered commit
-and the close write is authorized; otherwise report the issue as blocked.
-
 Before Jira Done, link all Issues, merged PRs, and completion docs, or record
 `Documentation: N/A — <reason>`.
 

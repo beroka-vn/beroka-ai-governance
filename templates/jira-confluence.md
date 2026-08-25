@@ -124,10 +124,23 @@ Ordinary Confluence writes are allow-by-default. An `UNACTIVATED` content ID or
 parent in the governance release inventory returns `DOCS_UNACTIVATED` and can
 change only through a reviewed governance release PR. Missing handoff markers
 return `HANDOFF_DELTA_REQUIRED`. A transport mismatch on a reviewed drifted row
-returns `MAPPING_CONFLICT` and must not inspect or write the connector. Provider status is `To Do -> In Progress` when
-work starts, `In Progress -> In Review` when a human marks the provider PR
-ready for review, and `In Review -> Done` only after merge and documentation
-readback.
+returns `MAPPING_CONFLICT` and must not inspect or write the connector. Provider
+status is `To Do -> In Progress` when work starts and `In Progress -> In
+Review` when a human marks the provider PR ready for review. `Closes #<issue>`
+normally closes the GitHub Issue. If it remains open, an agent may close it only
+after exact merge/link readback proves the delivered commit and the close write
+is authorized; otherwise report the issue as blocked. After `Closes #<issue>` automatically closes the current primary GitHub Issue,
+or after an agent
+completes an authorized manual close under this gate, resolve the exact linked Jira item,
+verify the authenticated account against the current assignee, run a
+fresh `jira-write` preflight, and transition the item to `In Review`; an item
+already in `In Review` is idempotently complete. Then resolve related
+documentation only by exact Confluence content ID. If the page, parent, or
+required change is missing or ambiguous, ask the user and wait. Otherwise run
+a fresh target-bound Confluence preflight, update the documentation, and read
+it back. After documentation readback Jira remains in `In Review`; do not move
+it to `Done` automatically. After successful documentation readback, report the GitHub, Jira, and Confluence outcomes separately.
+Report a blocked Jira or Confluence step separately and do not reopen the GitHub Issue.
 
 ## Jira Summary Contract
 

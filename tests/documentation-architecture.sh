@@ -101,6 +101,32 @@ for file in runtime/rules/work-items.md runtime/integrations/beroka-be-fe.md \
   require_text "$file" 'CROSS_TEAM_LINK_SCOPE_DENIED'
   require_text "$file" 'In Review'
 done
+for file in runtime/rules/general.md governance.md workflow.md \
+  templates/jira-confluence.md; do
+  require_text "$file" 'closes the current primary GitHub Issue'
+  require_text "$file" 'exact linked Jira item'
+  require_text "$file" 'already in `In Review`'
+  require_text "$file" 'exact Confluence content ID'
+  require_text "$file" 'ask the user'
+  require_text "$file" 'documentation readback'
+  require_text "$file" 'remains in `In Review`'
+  require_text "$file" \
+    'report the GitHub, Jira, and Confluence outcomes separately'
+  require_text "$file" 'Report a blocked Jira or Confluence step separately'
+  require_text "$file" 'do not reopen the GitHub Issue'
+  reject_text "$file" 'In Review -> Done'
+done
+for file in runtime/rules/general.md governance.md workflow.md; do
+  require_text "$file" '`Closes #<issue>` normally closes the GitHub Issue'
+  require_text "$file" 'exact merge/link readback proves the delivered commit'
+  require_text "$file" 'the close write is authorized'
+done
+for file in runtime/rules/work-items.md \
+  runtime/integrations/beroka-be-fe.md; do
+  reject_text "$file" 'closes the current primary GitHub Issue'
+  reject_text "$file" \
+    'report the GitHub, Jira, and Confluence outcomes separately'
+done
 reject_text templates/jira-confluence.md 'Frontend Jira/GitHub issue(s):'
 require_text workflow.md 'requester/reporter may differ from executor/assignee'
 require_text workflow.md \

@@ -30,9 +30,8 @@
 - Before a Confluence handoff, run target-bound `confluence-handoff-verify`.
   Unknown targets return `ROUTING_REQUIRED` and wait. Opposite-team private
   GitHub links return `CROSS_TEAM_LINK_SCOPE_DENIED`; use Confluence instead.
-- Provider status is `To Do -> In Progress` when work starts, `In Progress ->
-  In Review` when a human marks the PR ready, and `In Review -> Done` after
-  merge and documentation readback.
+- Provider status is `To Do -> In Progress` when work starts and `In Progress
+  -> In Review` when a human marks the PR ready.
 - Missing supported intake workflow evidence returns
   `INTAKE_CONFIGURATION_REQUIRED`. Intake is agent-driven, not an event
   listener.

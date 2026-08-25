@@ -57,8 +57,8 @@
   creation requires receiving-team confirmation. Before a Confluence handoff,
   resolve the exact target and run `confluence-handoff-verify`; unknown targets
   return `ROUTING_REQUIRED` and wait.
-- Provider status follows `To Do -> In Progress` when accepted work starts,
+- Provider status follows `To Do -> In Progress` when accepted work starts and
   `In Progress -> In Review` when a human marks the provider PR ready for
-  review, and `In Review -> Done` only after merge and documentation readback.
+  review.
 - Cross-team updates containing opposite-team private GitHub links return
   `CROSS_TEAM_LINK_SCOPE_DENIED`; use the exact accessible Confluence page.
