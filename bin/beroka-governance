@@ -430,10 +430,15 @@ validate_handoff_readback() {
     printf '%s\n' "$vhr_id" | grep -Eq '^[1-9][0-9]*$' ||
       die HANDOFF_READBACK_REQUIRED 'Handoff readback requires exact numeric identity evidence'
   done
+  case "$CONFLUENCE_READBACK_TITLE" in
+    *'
+'*) die HANDOFF_READBACK_REQUIRED 'Handoff readback title is invalid' ;;
+  esac
   [ "$CONFLUENCE_TARGET_PARENT_ID" = "$CONFLUENCE_READBACK_PARENT_ID" ] &&
     [ "$CONFLUENCE_READBACK_SPACE_KEY" = "$ROUTE_CONFLUENCE_SPACE_KEY" ] &&
-    [ -n "$CONFLUENCE_READBACK_TITLE" ] &&
-    [ -n "$CONFLUENCE_READBACK_OWNER_ACCOUNT_ID" ] &&
+    printf '%s\n' "$CONFLUENCE_READBACK_TITLE" |
+      grep -Eq "^Handoff — $vhb_provider — [a-z0-9]+(-[a-z0-9]+)*$" &&
+    [ "$CONFLUENCE_READBACK_OWNER_ACCOUNT_ID" = "$vhb_owner" ] &&
     [ "$vhb_content" = "$CONFLUENCE_TARGET_CONTENT_ID" ] &&
     [ "$vhb_version" = "$CONFLUENCE_READBACK_VERSION" ] ||
     die HANDOFF_READBACK_REQUIRED 'Handoff readback does not match the verified handoff identity'
@@ -4981,7 +4986,6 @@ print_preflight_result() {
         printf '%s\n' \
           "Readback parent ID: $CONFLUENCE_READBACK_PARENT_ID" \
           "Readback space: $CONFLUENCE_READBACK_SPACE_KEY" \
-          "Readback title: $CONFLUENCE_READBACK_TITLE" \
           "Readback version: $CONFLUENCE_READBACK_VERSION" \
           'Readback: VERIFIED'
       fi

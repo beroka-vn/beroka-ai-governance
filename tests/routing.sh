@@ -1605,7 +1605,8 @@ assert_contains "$output" 'Target transport: WebSocket'
 assert_contains "$output" 'Result: PASS'
 
 handoff_verify_body=$HOME/handoff-verify.md
-sed 's/^Confluence page version: 1$/Confluence page version: 3/' \
+sed -e 's/^Confluence page version: 1$/Confluence page version: 3/' \
+  -e 's/^Owner account ID: account-123$/Owner account ID: 712020:owner/' \
   "$ROOT/tests/fixtures/handoffs/ready-api.md" >"$handoff_verify_body"
 
 handoff_readback_preflight() {
@@ -1636,6 +1637,10 @@ assert_handoff_readback_required() {
     fail 'handoff verification passed without exact readback evidence'
   fi
   assert_contains "$output" 'Result: HANDOFF_READBACK_REQUIRED'
+  [ -z "$hrv_readback_owner" ] ||
+    assert_not_contains "$output" "$hrv_readback_owner"
+  [ -z "$hrv_readback_title" ] ||
+    assert_not_contains "$output" "$hrv_readback_title"
   [ ! -s "$CALLS" ] || fail 'invalid handoff readback inspected a connector'
 }
 
@@ -1656,6 +1661,7 @@ assert_contains "$output" 'Capability: confluence-page-read'
 assert_contains "$output" 'Readback: VERIFIED'
 assert_contains "$output" 'Result: PASS'
 assert_not_contains "$output" '712020:owner'
+assert_not_contains "$output" 'Handoff — BB-42 — broker-account-reconnect'
 assert_not_contains "$output" 'The public quote endpoint returns the latest market quote.'
 
 # Each missing or mismatched local readback fact must stop before connector inspection.
@@ -1672,10 +1678,25 @@ reset_handoff_readback
 hrv_readback_title=
 assert_handoff_readback_required
 reset_handoff_readback
+hrv_readback_title='Handoff — BB-43 — broker-account-reconnect'
+assert_handoff_readback_required
+reset_handoff_readback
+hrv_readback_title='Handoff — BB-42 — broker-account-reconnect
+Repository: private implementation'
+assert_handoff_readback_required
+assert_not_contains "$output" 'Repository: private implementation'
+reset_handoff_readback
+hrv_readback_title='https://github.com/beroka-vn/Beroka_Backend'
+assert_handoff_readback_required
+assert_not_contains "$output" 'github.com'
+reset_handoff_readback
 hrv_readback_version=0
 assert_handoff_readback_required
 reset_handoff_readback
 hrv_readback_owner=
+assert_handoff_readback_required
+reset_handoff_readback
+hrv_readback_owner='712020:other'
 assert_handoff_readback_required
 reset_handoff_readback
 sed 's/^Confluence page version: 3$/Confluence page version: 2/' \
