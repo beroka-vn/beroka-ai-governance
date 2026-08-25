@@ -1671,6 +1671,16 @@ handoff_preflight() {
     --expected-parent-id 900002 --handoff-body-file "$handoff_file"
 }
 
+handoff_parent_preflight() {
+  hpp_parent=$1
+  shift
+  $CLI preflight "$canonical_backend" --client codex \
+    --operation confluence-handoff-write --non-interactive \
+    --confluence-action create --target-content-id new \
+    --expected-parent-id "$hpp_parent" --handoff-body-file "$handoff_dir/draft.md" \
+    "$@"
+}
+
 assert_handoff_invalid() {
   ahi_file=$1 ahi_action=$2 ahi_target=$3
   : >"$CALLS"
@@ -1693,6 +1703,46 @@ assert_handoff_section_required() {
   ' "$ahsr_source" >"$ahsr_file"
   assert_handoff_invalid "$ahsr_file" "$ahsr_action" "$ahsr_target"
 }
+
+# Handoffs require one reviewed ACTIVE Folder directly below the routed root.
+for handoff_parent in 65962274 71237633 900001 990001 999999
+do
+  : >"$CALLS"
+  if output=$(handoff_parent_preflight "$handoff_parent" 2>&1)
+  then
+    fail "handoff write passed with invalid parent: $handoff_parent"
+  fi
+  assert_contains "$output" 'Result: FOLDER_CREATION_REQUIRED'
+  [ ! -s "$CALLS" ] || fail "invalid handoff parent inspected a connector: $handoff_parent"
+done
+
+: >"$CALLS"
+if output=$(handoff_parent_preflight 900002 \
+  --scope Other --domain Other --transport Other 2>&1)
+then
+  fail 'handoff write passed with mismatched ACTIVE Folder metadata'
+fi
+assert_contains "$output" 'Result: FOLDER_CREATION_REQUIRED'
+[ ! -s "$CALLS" ] || fail 'mismatched handoff Folder metadata inspected a connector'
+
+: >"$CALLS"
+output=$(handoff_parent_preflight 900002)
+assert_contains "$output" 'Result: PASS'
+
+cp "$target_file" "$target_file.before-duplicate"
+printf '%b\n' \
+  'beroka-vn/Beroka_Backend\tfolder\tACTIVE\t900002\tDuplicate Shared — Market — API\tShared\tMarket\tAPI\t65962274\t-\t-' \
+  >>"$target_file"
+pin_test_release v1.1.202
+: >"$CALLS"
+if output=$(handoff_parent_preflight 900002 2>&1)
+then
+  fail 'handoff write passed with duplicate ACTIVE Folder rows'
+fi
+assert_contains "$output" 'Result: FOLDER_CREATION_REQUIRED'
+[ ! -s "$CALLS" ] || fail 'ambiguous handoff Folder inspected a connector'
+mv "$target_file.before-duplicate" "$target_file"
+pin_test_release v1.1.203
 
 # The body is required before role or connector inspection.
 : >"$CALLS"

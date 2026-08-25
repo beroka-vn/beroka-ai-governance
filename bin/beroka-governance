@@ -1074,11 +1074,16 @@ validate_confluence_target_inventory() {
       ($2 != "folder" || $4 == "-" || $10 != "-" || $11 != "-") { invalid=1 }
     $3 == "UNACTIVATED" &&
       ($4 == "-" || $10 != "-" || $11 != "-") { invalid=1 }
-    $4 != "-" && ++content[$4] > 1 { invalid=1 }
+    $4 != "-" {
+      content[$4]++
+      if ($2 != "folder" || $3 != "ACTIVE") strict_content[$4]=1
+    }
     $10 != "-" && ++capability[$10] > 1 { invalid=1 }
     { rows++; state[NR]=$3; type[NR]=$2; repo[NR]=$1; id[NR]=$4; parent[NR]=$9;
       scope[NR]=$6; domain[NR]=$7; transport[NR]=$8 }
     END {
+      for (content_id in content)
+        if (content[content_id] > 1 && strict_content[content_id]) invalid=1
       root_count=split(roots, root_values, /[^0-9]+/)
       for (i=1; i<=root_count; i++) if (root_values[i] != "" &&
         ++content[root_values[i]] > 1) invalid=1
@@ -1090,7 +1095,7 @@ validate_confluence_target_inventory() {
           if (scope[i] != scope[j] || domain[i] != domain[j] ||
             transport[i] != transport[j]) invalid=1
         }
-        if (matches != 1) invalid=1
+        if (matches < 1) invalid=1
       }
       for (i in state) if (state[i] == "ACTIVE" && type[i] == "folder") {
         root=""
@@ -4132,6 +4137,50 @@ confluence_targets_path() {
   printf '%s\n' "$RELEASE_DIR/runtime/integrations/beroka-be-fe.confluence-targets"
 }
 
+require_active_handoff_folder() {
+  rahf_file=$1
+  [ -n "$CONFLUENCE_TARGET_PARENT_ID" ] ||
+    die_folder_creation_required \
+      'Confluence handoffs require an exact reviewed ACTIVE Folder parent'
+  [ "$CONFLUENCE_TARGET_PARENT_ID" != "$ROUTE_CONFLUENCE_ROOT_CONTENT_ID" ] ||
+    die_folder_creation_required \
+      'The routed Confluence root cannot be the parent of a handoff page'
+  rahf_record=$(
+    awk -F '\t' \
+      -v repository="$REPOSITORY_SLUG" \
+      -v parent="$CONFLUENCE_TARGET_PARENT_ID" '
+        /^#/ || /^[[:space:]]*$/ { next }
+        $1 == repository && $4 == parent { matches++; record=$0 }
+        END {
+          if (matches != 1) exit 1
+          print record
+        }
+      ' "$rahf_file"
+  ) || die_folder_creation_required \
+    'Confluence handoffs require one exact reviewed ACTIVE Folder parent'
+  validate_confluence_target_inventory "$rahf_file" \
+    "$RELEASE_DIR/runtime/repositories" ||
+    die ROUTING_REQUIRED 'Reviewed Confluence target inventory is unavailable'
+  IFS="$(printf '\t')" read -r rahf_repository rahf_type rahf_state \
+    rahf_content rahf_title rahf_scope rahf_domain rahf_transport rahf_parent \
+    rahf_capability rahf_registry <<EOF
+$rahf_record
+EOF
+  [ "$rahf_type" = folder ] && [ "$rahf_state" = ACTIVE ] &&
+    [ "$rahf_parent" = "$ROUTE_CONFLUENCE_ROOT_CONTENT_ID" ] ||
+    die_folder_creation_required \
+      'Confluence handoffs require an exact reviewed ACTIVE Folder below the routed root'
+  [ -z "$CONFLUENCE_TARGET_SCOPE" ] ||
+    [ "$rahf_scope" = "$CONFLUENCE_TARGET_SCOPE" ] ||
+    die_folder_creation_required 'The requested handoff scope does not match the ACTIVE Folder'
+  [ -z "$CONFLUENCE_TARGET_DOMAIN" ] ||
+    [ "$rahf_domain" = "$CONFLUENCE_TARGET_DOMAIN" ] ||
+    die_folder_creation_required 'The requested handoff domain does not match the ACTIVE Folder'
+  [ -z "$CONFLUENCE_TARGET_TRANSPORT" ] ||
+    [ "$rahf_transport" = "$CONFLUENCE_TARGET_TRANSPORT" ] ||
+    die_folder_creation_required 'The requested handoff transport does not match the ACTIVE Folder'
+}
+
 die_folder_creation_required() {
   dfc_message=$1
   dfc_repo=${REPO:-$REPOSITORY_SLUG}
@@ -4792,6 +4841,7 @@ require_operation_routing() {
         update) PREFLIGHT_CAPABILITY=confluence-page-update ;;
         *) die ROUTING_REQUIRED 'Confluence handoff write requires create or update' ;;
       esac
+      require_active_handoff_folder "$(confluence_targets_path)"
       resolve_confluence_target
       validate_handoff_body "$CONFLUENCE_HANDOFF_BODY_FILE" \
         "$CONFLUENCE_TARGET_ACTION" "$CONFLUENCE_TARGET_CONTENT_ID"
@@ -4807,6 +4857,7 @@ require_operation_routing() {
         *) die ROUTING_REQUIRED \
           'Confluence handoff verification requires an existing target page' ;;
       esac
+      require_active_handoff_folder "$(confluence_targets_path)"
       resolve_confluence_target
       [ "$rct_state" = ACTIVE ] ||
         die ROUTING_REQUIRED \
