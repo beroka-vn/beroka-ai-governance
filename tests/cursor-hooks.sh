@@ -287,7 +287,7 @@ assert_denied "$(hook beforeMCPExecution "$ordinary_unassigned")" WORK_ITEM_TEMP
 for private_repo in Beroka_Backend Beroka_Frontend; do
   private_link_intake=$(printf '%s\n' "$intake_base" | jq -c \
     --arg link "https://github.com/beroka-vn/$private_repo/issues/138" \
-    '.tool_input.github=$link')
+    '.tool_input.body += ("\n" + $link)')
   assert_denied "$(hook beforeMCPExecution "$private_link_intake")" CROSS_TEAM_LINK_SCOPE_DENIED
 done
 same_team_private_link=$(printf '%s\n' "$jira_write" | jq -c \
@@ -320,6 +320,100 @@ assert_denied "$(hook beforeMCPExecution "$jira_transition")" GITHUB_AUTH_REQUIR
 jira_cross_team_transition=$(printf '%s\n' "$jira_transition" | jq -c \
   '.tool_input.issueKey="BF-123"')
 assert_denied "$(hook beforeMCPExecution "$jira_cross_team_transition")" ROUTING_REQUIRED
+
+jira_cross_team_body=$(printf '%s\n' \
+  'Work-item language: English' \
+  'GitHub: N/A' \
+  'Provider Jira: BB-42' \
+  'Consumer Jira: BF-69' \
+  'Confluence content ID: 900001')
+cursor_intake=$(printf '%s\n' "$intake_base" | jq -c --arg body "$jira_cross_team_body" \
+  '.tool_input.body=$body | .tool_input.github="N/A"')
+cursor_handoff_update=$(printf '%s\n' "$jira_update_by_key" | jq -c \
+  --arg body "$jira_cross_team_body" '.tool_input.body=$body')
+for cursor_jira_request in "$cursor_intake" "$cursor_handoff_update"; do
+  cursor_jira_output=$(hook beforeMCPExecution "$cursor_jira_request")
+  assert_not_contains "$cursor_jira_output" CROSS_TEAM_LINK_SCOPE_DENIED
+  assert_denied "$cursor_jira_output" GITHUB_AUTH_REQUIRED
+  for forbidden_body in \
+    'https://github.com/example/private' \
+    'git@github.com:example/private.git' \
+    'Repository: use the provider repository as contract evidence'
+  do
+    assert_denied "$(hook beforeMCPExecution "$(printf '%s\n' "$cursor_jira_request" | \
+      jq -c --arg body "$forbidden_body" '.tool_input.body += ("\n" + $body)')")" \
+      CROSS_TEAM_LINK_SCOPE_DENIED
+  done
+done
+
+team_local_github=$(printf '%s\n' "$atlassian_create" | jq -c \
+  '.tool_input.description="Work-item language: English\n\nGitHub: https://github.com/beroka-vn/Beroka_Backend/issues/138"')
+team_local_output=$(hook beforeMCPExecution "$team_local_github")
+assert_not_contains "$team_local_output" CROSS_TEAM_LINK_SCOPE_DENIED
+assert_denied "$team_local_output" GITHUB_AUTH_REQUIRED
+
+# Any new handoff header routes the exact MCP body through the shared validator.
+cursor_handoff_input() {
+  chi_fixture=$1 chi_action=$2 chi_target=$3 chi_parent=$4
+  chi_body=$(cat "$chi_fixture")
+  printf '%s\n' "$base_input" | jq -c \
+    --arg body "$chi_body" --arg target "$chi_target" --arg parent "$chi_parent" \
+    --arg action "$chi_action" '
+      . + {
+        tool_name:(if $action == "create" then "createConfluencePage" else "confluence.update_page" end),
+        url:"https://beroka.atlassian.net/wiki",
+        tool_input:({parentId:$parent, body:$body} +
+          if $action == "create" then {title:"Handoff — BB-42 — quotes"}
+          else {pageId:$target} end)
+      }'
+}
+
+cursor_handoff_dir=$TMP_ROOT/cursor-handoffs
+mkdir -p "$cursor_handoff_dir"
+cp "$ROOT/tests/fixtures/handoffs/draft.md" "$cursor_handoff_dir/draft.md"
+cp "$ROOT/tests/fixtures/handoffs/ready-no-impact.md" "$cursor_handoff_dir/ready.md"
+cp "$ROOT/tests/fixtures/handoffs/ready-api.md" "$cursor_handoff_dir/ready-api.md"
+cp "$ROOT/tests/fixtures/handoffs/ready-websocket.md" "$cursor_handoff_dir/ready-websocket.md"
+cp "$ROOT/tests/fixtures/handoffs/incident-85360641.md" "$cursor_handoff_dir/incident.md"
+
+assert_denied "$(hook beforeMCPExecution "$(cursor_handoff_input \
+  "$cursor_handoff_dir/incident.md" update 85360641 76808195)")" \
+  CROSS_TEAM_LINK_SCOPE_DENIED
+printf '%s\n' 'Handoff schema: 1' >"$cursor_handoff_dir/partial.md"
+assert_denied "$(hook beforeMCPExecution "$(cursor_handoff_input \
+  "$cursor_handoff_dir/partial.md" create new 76808195)")" HANDOFF_BODY_INVALID
+assert_denied "$(hook beforeMCPExecution "$(cursor_handoff_input \
+  "$cursor_handoff_dir/draft.md" create new 65962274)")" FOLDER_CREATION_REQUIRED
+
+cp "$cursor_handoff_dir/ready.md" "$cursor_handoff_dir/github.md"
+printf '\nhttps://github.com/example/private\n' >>"$cursor_handoff_dir/github.md"
+assert_denied "$(hook beforeMCPExecution "$(cursor_handoff_input \
+  "$cursor_handoff_dir/github.md" update 900001 76808195)")" \
+  CROSS_TEAM_LINK_SCOPE_DENIED
+sed '/^## Affected API inventory$/d' "$cursor_handoff_dir/ready-api.md" \
+  >"$cursor_handoff_dir/missing-api.md"
+assert_denied "$(hook beforeMCPExecution "$(cursor_handoff_input \
+  "$cursor_handoff_dir/missing-api.md" update 900001 76808195)")" HANDOFF_BODY_INVALID
+sed '/^## Affected WebSocket inventory$/d' "$cursor_handoff_dir/ready-websocket.md" \
+  >"$cursor_handoff_dir/missing-websocket.md"
+assert_denied "$(hook beforeMCPExecution "$(cursor_handoff_input \
+  "$cursor_handoff_dir/missing-websocket.md" update 900001 76808195)")" HANDOFF_BODY_INVALID
+cp "$cursor_handoff_dir/draft.md" "$cursor_handoff_dir/false-ready.md"
+printf '\nREADY_FOR_FE\n' >>"$cursor_handoff_dir/false-ready.md"
+assert_denied "$(hook beforeMCPExecution "$(cursor_handoff_input \
+  "$cursor_handoff_dir/false-ready.md" create new 76808195)")" HANDOFF_BODY_INVALID
+
+cursor_draft_output=$(hook beforeMCPExecution "$(cursor_handoff_input \
+  "$cursor_handoff_dir/draft.md" create new 76808195)")
+assert_not_contains "$cursor_draft_output" HANDOFF_DELTA_REQUIRED
+assert_not_contains "$cursor_draft_output" HANDOFF_BODY_INVALID
+assert_denied "$cursor_draft_output" GITHUB_AUTH_REQUIRED
+cursor_ready_output=$(hook beforeMCPExecution "$(cursor_handoff_input \
+  "$cursor_handoff_dir/ready.md" update 900001 76808195)")
+assert_not_contains "$cursor_ready_output" HANDOFF_DELTA_REQUIRED
+assert_not_contains "$cursor_ready_output" HANDOFF_BODY_INVALID
+assert_denied "$cursor_ready_output" GITHUB_AUTH_REQUIRED
+
 confluence_handoff_body=$(printf '%s\n' \
   'Jira: BB-11' \
   'GitHub: N/A' \

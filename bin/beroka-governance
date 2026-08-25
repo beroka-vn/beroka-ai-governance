@@ -77,6 +77,7 @@ usage() {
     '  beroka-governance doctor REPO [--client codex|claude|cursor]' \
     '  beroka-governance preflight REPO --client codex|claude|cursor --operation OPERATION [--non-interactive] [CONFLUENCE-TARGET-OPTIONS]' \
     '  Confluence target options: --confluence-action create|update|move --target-content-id ID|new --capability-id ID --scope SCOPE --domain DOMAIN --transport API|WebSocket --expected-parent-id ID --registry-content-id ID' \
+    '  Cross-team body option: --handoff-body-file PATH' \
     '  Handoff readback options: --readback-parent-id ID --readback-space-key KEY --readback-title TITLE --readback-version POSITIVE_INTEGER --readback-owner-account-id ACCOUNT_ID' \
     '  beroka-governance context REPO' \
     '  beroka-governance confluence-discover REPO [--scope SCOPE --domain DOMAIN --transport API|WebSocket]' \
@@ -253,6 +254,13 @@ reject_cross_team_repository_references() {
   fi
 }
 
+validate_cross_team_body() {
+  vctb_file=$1
+  handoff_body_is_safe "$vctb_file" ||
+    die HANDOFF_BODY_REQUIRED 'A non-empty regular cross-team body file inside HOME or TMPDIR is required'
+  reject_cross_team_repository_references "$vctb_file"
+}
+
 handoff_validate_api_operations() {
   hvao_file=$1
   awk '
@@ -316,9 +324,7 @@ handoff_require_websocket() {
 
 validate_handoff_body() {
   vhb_file=$1 vhb_action=$2 vhb_target=$3
-  handoff_body_is_safe "$vhb_file" ||
-    die HANDOFF_BODY_REQUIRED 'A non-empty regular handoff body file inside HOME or TMPDIR is required'
-  reject_cross_team_repository_references "$vhb_file"
+  validate_cross_team_body "$vhb_file"
 
   vhb_schema=$(handoff_header_value "$vhb_file" 'Handoff schema') ||
     die HANDOFF_BODY_INVALID 'Handoff body has an invalid header'
@@ -4825,9 +4831,16 @@ EOF
 require_operation_routing() {
   ror_operation=$1
   case "$ror_operation" in
-    jira-write)
+    jira-write|jira-handoff-write)
       [ -n "$ROUTE_JIRA_PROJECT_KEY" ] ||
-        die ROUTING_REQUIRED 'JIRA_PROJECT_KEY is required for jira-write'
+        die ROUTING_REQUIRED "JIRA_PROJECT_KEY is required for $ror_operation"
+      if [ "$ror_operation" = jira-handoff-write ]; then
+        [ "$ROUTE_INTEGRATION_PROFILE" = beroka-be-fe ] &&
+          [ "$ROUTE_CROSS_REPO_POLICY" = profile-controlled ] ||
+          die ROUTING_REQUIRED \
+            'Cross-team Jira handoff updates require an exact integration target'
+        validate_cross_team_body "$CONFLUENCE_HANDOFF_BODY_FILE"
+      fi
       PREFLIGHT_CAPABILITY=jira-issue-write
       ;;
     jira-board-verify)
@@ -4839,6 +4852,7 @@ require_operation_routing() {
       ;;
     jira-intake-write)
       resolve_intake_route
+      validate_cross_team_body "$CONFLUENCE_HANDOFF_BODY_FILE"
       PREFLIGHT_CAPABILITY=jira-issue-write
       ;;
     confluence-write)
@@ -4955,7 +4969,7 @@ print_preflight_result() {
     "Cross-repository policy: $ROUTE_CROSS_REPO_POLICY" \
     "Operation: $ppr_operation"
   case "$ppr_operation" in
-    jira-write)
+    jira-write|jira-handoff-write)
       printf '%s\n' "Jira project: $ROUTE_JIRA_PROJECT_KEY"
       ;;
     jira-intake-write)
@@ -5150,7 +5164,7 @@ cmd_preflight() {
   esac
   if [ "$pf_seen_handoff_body" -eq 1 ]; then
     case "$pf_operation" in
-      confluence-handoff-write|confluence-handoff-verify) ;;
+      jira-intake-write|jira-handoff-write|confluence-handoff-write|confluence-handoff-verify) ;;
       *) usage >&2; exit 2 ;;
     esac
   fi
@@ -5911,11 +5925,6 @@ cursor_cross_team_private_link() {
   esac
 }
 
-cursor_any_private_repo_link() {
-  cursor_private_repo_link beroka-vn/beroka_backend ||
-    cursor_private_repo_link beroka-vn/beroka_frontend
-}
-
 cursor_has_nonempty_field() {
   printf '%s\n' "$CURSOR_TOOL_INPUT" | jq -e --arg field "$1" \
     '.. | objects | .[$field]? | strings | select(length > 0)' >/dev/null 2>&1
@@ -5924,6 +5933,41 @@ cursor_has_nonempty_field() {
 cursor_has_value() {
   printf '%s\n' "$CURSOR_TOOL_INPUT" | jq -e --arg field "$1" \
     '.. | objects | .[$field]? | select(. != null and . != "")' >/dev/null 2>&1
+}
+
+cursor_stage_exact_body() {
+  cseb_kind=$1
+  case "$cseb_kind" in
+    confluence)
+      cseb_query='[.. | objects | (.body?, .content?) | select(type == "string" and length > 0)] | unique'
+      ;;
+    jira)
+      cseb_query='[.. | objects | (.description?, .comment?, .body?) | select(type == "string" and length > 0)] | unique'
+      ;;
+    *) return 1 ;;
+  esac
+  [ "$(printf '%s\n' "$CURSOR_TOOL_INPUT" | jq -r "$cseb_query | length")" -eq 1 ] ||
+    return 1
+  PERSONAL_STAGE_ROOT=$(umask 077; mktemp -d \
+    "${TMPDIR:-/tmp}/beroka-governance-cursor-body.XXXXXX") || return 1
+  CURSOR_EXACT_BODY_FILE=$PERSONAL_STAGE_ROOT/body
+  printf '%s\n' "$CURSOR_TOOL_INPUT" |
+    jq -jr "$cseb_query | .[0]" >"$CURSOR_EXACT_BODY_FILE" || {
+      cleanup_personal_stage || :
+      return 1
+    }
+  [ -s "$CURSOR_EXACT_BODY_FILE" ] || {
+    cleanup_personal_stage || :
+    return 1
+  }
+}
+
+cursor_jira_handoff_shaped() {
+  printf '%s\n' "$CURSOR_TOOL_INPUT" | jq -r '
+    [.. | objects | (.description?, .comment?, .body?) |
+     select(type == "string")] | unique | .[]
+  ' 2>/dev/null | grep -Eq \
+    '(^|[[:space:]])(Provider Jira|Consumer Jira|Confluence content ID):[[:space:]]*[^[:space:]]'
 }
 
 # Atlassian MCP createJiraIssue uses issueTypeName / assignee_account_id /
@@ -6001,6 +6045,14 @@ cursor_jira_operation() {
   cjo_project=$(cursor_extract_single_jira_project "$CURSOR_TOOL_INPUT") || cjo_project=
   [ -n "$cjo_project" ] || return 2
   if [ "$cjo_project" = "$ROUTE_JIRA_PROJECT_KEY" ]; then
+    case "$CURSOR_TOOL_TEXT" in
+      *update*|*edit*|*comment*)
+        if cursor_jira_handoff_shaped; then
+          printf '%s\n' jira-handoff-write
+          return
+        fi
+        ;;
+    esac
     printf '%s\n' jira-write
     return
   fi
@@ -6111,6 +6163,26 @@ cursor_confluence_preflight() {
     [.. | objects | .title? | select(type == "string")] | unique |
     if length == 0 then "" elif length == 1 then .[0] else error("title") end
   ' 2>/dev/null) || ccp_title=
+  if printf '%s\n' "$ccp_body" | grep -Eq \
+    '^[[:space:]]*(Handoff schema|Handoff state|Provider Jira|Consumer Jira|Confluence content ID|Confluence page version|Owner account ID|Effective date|Supersedes|Superseded by|API impact|WebSocket impact|Missing sections):'
+  then
+    cursor_stage_exact_body confluence || {
+      printf '%s\n' \
+        'Result: HANDOFF_BODY_REQUIRED' \
+        'Provide exactly one non-empty Confluence body.'
+      return 1
+    }
+    set -- --confluence-action "$ccp_action" --target-content-id "$ccp_target"
+    if [ -n "$ccp_parent" ]; then
+      set -- "$@" --expected-parent-id "$ccp_parent"
+    fi
+    cmd_preflight "$CURSOR_WORKSPACE" --client cursor \
+      --operation confluence-handoff-write --non-interactive "$@" \
+      --handoff-body-file "$CURSOR_EXACT_BODY_FILE"
+    ccp_status=$?
+    cleanup_personal_stage || return 1
+    return "$ccp_status"
+  fi
   if ! cursor_confluence_handoff_ok "$ccp_body" "$ccp_title"; then
     printf '%s\n' \
       'Result: HANDOFF_DELTA_REQUIRED' \
@@ -6298,34 +6370,61 @@ cmd_cursor_before_mcp_execution() {
       esac
       ;;
   esac
-  if [ "$cursor_operation" = jira-intake-write ] &&
-     cursor_any_private_repo_link
-  then
-    cursor_deny CROSS_TEAM_LINK_SCOPE_DENIED \
-      'Use an accessible exact Confluence page for cross-team documentation.'
-    return
-  fi
+  case "$cursor_operation" in
+    jira-intake-write|jira-handoff-write)
+      cursor_stage_exact_body jira || {
+        cursor_deny HANDOFF_BODY_REQUIRED \
+          'Provide exactly one non-empty Jira description, comment, or body.'
+        return
+      }
+      if ! (reject_cross_team_repository_references \
+        "$CURSOR_EXACT_BODY_FILE") >/dev/null 2>&1
+      then
+        cleanup_personal_stage || :
+        cursor_deny CROSS_TEAM_LINK_SCOPE_DENIED \
+          'Use an accessible exact Confluence page for cross-team documentation.'
+        return
+      fi
+      ;;
+  esac
   cursor_template_state=0
   cursor_validate_template || cursor_template_state=$?
   case "$cursor_template_state" in
     0) ;;
     2)
+      cleanup_personal_stage || :
       cursor_deny LABEL_CONFIGURATION_REQUIRED \
         "Use one configured type label, one area label, and one priority label.${CURSOR_TEMPLATE_MISSING:+ Missing: $CURSOR_TEMPLATE_MISSING}"
       return
       ;;
     3)
+      cleanup_personal_stage || :
       cursor_deny WORK_ITEM_LANGUAGE_REQUIRED \
         'Put "Work-item language: English" (or Vietnamese) in the Jira description/body, then retry createJiraIssue.'
       return
       ;;
     *)
+      cleanup_personal_stage || :
       cursor_deny WORK_ITEM_TEMPLATE_REQUIRED \
         "Retry createJiraIssue with Atlassian MCP fields only: projectKey, issueTypeName, parent, assignee_account_id, additional_fields.priority={name}, and description containing Work-item language plus GitHub URL or GitHub: N/A.${CURSOR_TEMPLATE_MISSING:+ Missing: $CURSOR_TEMPLATE_MISSING}"
       return
       ;;
   esac
-  if cursor_preflight=$(cmd_preflight "$CURSOR_WORKSPACE" --client cursor --operation "$cursor_operation" --non-interactive 2>&1) &&
+  set --
+  case "$cursor_operation" in
+    jira-intake-write|jira-handoff-write)
+      set -- --handoff-body-file "$CURSOR_EXACT_BODY_FILE"
+      ;;
+  esac
+  cursor_preflight_state=0
+  cursor_preflight=$(cmd_preflight "$CURSOR_WORKSPACE" --client cursor \
+    --operation "$cursor_operation" --non-interactive "$@" 2>&1) ||
+    cursor_preflight_state=$?
+  cleanup_personal_stage || {
+    cursor_deny GOVERNANCE_NOT_READY 'Cannot clean up staged cross-team body.'
+    return
+  }
+  if [ "$cursor_preflight_state" -eq 0 ] &&
      printf '%s\n' "$cursor_preflight" | grep -F 'Result: PASS' >/dev/null; then
     cursor_allow
   else

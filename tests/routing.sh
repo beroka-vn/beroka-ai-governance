@@ -660,11 +660,14 @@ case "$*" in
       healthy)
         printf '%s\n' \
           '- createJiraIssue (projectKey, issueType, summary)' \
+          '- createConfluencePage (spaceId, parentId, title, body)' \
           '- getAccessibleAtlassianResources ()' \
+          '- getConfluencePage (pageId)' \
           '- getJiraIssue (issueKey)' \
           '- getJiraIssueTypeMetaWithFields (projectKey, issueType)' \
           '- getJiraProjectIssueTypesMetadata (projectKey)' \
-          '- searchJiraIssuesUsingJql (cloudId, jql)'
+          '- searchJiraIssuesUsingJql (cloudId, jql)' \
+          '- updateConfluencePage (pageId, body)'
         ;;
       description-prefixes)
         printf '%s\n' \
@@ -985,11 +988,20 @@ assert_contains "$output" 'Result: GITHUB_ROLE_REQUIRED'
 printf '%s\n' healthy >"$XDG_CONFIG_HOME/fake-github-health"
 : >"$XDG_CONFIG_HOME/fake-codex-configured"
 printf '%s\n' healthy-all >"$XDG_CONFIG_HOME/fake-codex-health"
+jira_cross_team_body=$HOME/jira-cross-team.md
+printf '%s\n' \
+  'Work-item language: English' \
+  'GitHub: N/A' \
+  'Provider Jira: BB-42' \
+  'Consumer Jira: BF-69' \
+  'Confluence content ID: 900001' \
+  >"$jira_cross_team_body"
 
 printf '%s\n' FE >"$role_file"
 printf '%s\n' frontend >"$XDG_CONFIG_HOME/fake-github-teams"
 output=$($CLI preflight "$canonical_frontend" --client codex \
-  --operation jira-intake-write --non-interactive)
+  --operation jira-intake-write --non-interactive \
+  --handoff-body-file "$jira_cross_team_body")
 assert_contains "$output" 'Operation: jira-intake-write'
 assert_contains "$output" \
   'Intake target repository: beroka-vn/Beroka_Backend'
@@ -1000,7 +1012,8 @@ assert_contains "$output" 'Result: PASS'
 printf '%s\n' BE >"$role_file"
 printf '%s\n' backend >"$XDG_CONFIG_HOME/fake-github-teams"
 output=$($CLI preflight "$canonical_backend" --client codex \
-  --operation jira-intake-write --non-interactive)
+  --operation jira-intake-write --non-interactive \
+  --handoff-body-file "$jira_cross_team_body")
 assert_contains "$output" 'Operation: jira-intake-write'
 assert_contains "$output" \
   'Intake target repository: beroka-vn/Beroka_Frontend'
@@ -1008,10 +1021,69 @@ assert_contains "$output" 'Intake Jira project: BF'
 assert_contains "$output" 'Capability: jira-issue-write'
 assert_contains "$output" 'Result: PASS'
 
+for missing_jira_operation in jira-intake-write jira-handoff-write; do
+  : >"$CALLS"
+  if output=$($CLI preflight "$canonical_backend" --client codex \
+    --operation "$missing_jira_operation" --non-interactive 2>&1)
+  then
+    fail "$missing_jira_operation passed without its exact body"
+  fi
+  assert_contains "$output" 'Result: HANDOFF_BODY_REQUIRED'
+  [ ! -s "$CALLS" ] || fail 'missing cross-team Jira body inspected a client'
+done
+
+# Intake creation and routed-team acknowledgment updates share exact-body
+# repository isolation while ordinary jira-write remains unchanged.
+mkdir -p "$HOME/.cursor"
+printf '%s\n' \
+  '{"mcpServers":{"atlassian":{"url":"https://mcp.atlassian.com/v1/mcp/authv2"}}}' \
+  >"$HOME/.cursor/mcp.json"
+: >"$XDG_CONFIG_HOME/fake-claude-configured"
+printf '%s\n' healthy >"$XDG_CONFIG_HOME/fake-claude-health"
+printf '%s\n' healthy >"$XDG_CONFIG_HOME/fake-cursor-health"
+for jira_client in codex claude cursor; do
+  for jira_operation in jira-intake-write jira-handoff-write; do
+    output=$($CLI preflight "$canonical_backend" --client "$jira_client" \
+      --operation "$jira_operation" --non-interactive \
+      --handoff-body-file "$jira_cross_team_body")
+    assert_contains "$output" "Operation: $jira_operation"
+    assert_contains "$output" 'Capability: jira-issue-write'
+    assert_contains "$output" 'Result: PASS'
+  done
+done
+
+for jira_reference in \
+  'https://github.com/example/private' \
+  'git@github.com:example/private.git' \
+  'Repository: use the provider repository as contract evidence'
+do
+  printf '%s\n' \
+    'Work-item language: English' \
+    'GitHub: N/A' \
+    'Provider Jira: BB-42' \
+    'Consumer Jira: BF-69' \
+    'Confluence content ID: 900001' \
+    "$jira_reference" >"$HOME/jira-cross-team-forbidden.md"
+  for jira_client in codex claude cursor; do
+    for jira_operation in jira-intake-write jira-handoff-write; do
+      : >"$CALLS"
+      if output=$($CLI preflight "$canonical_backend" --client "$jira_client" \
+        --operation "$jira_operation" --non-interactive \
+        --handoff-body-file "$HOME/jira-cross-team-forbidden.md" 2>&1)
+      then
+        fail "$jira_operation accepted a cross-team repository reference"
+      fi
+      assert_contains "$output" 'Result: CROSS_TEAM_LINK_SCOPE_DENIED'
+      [ ! -s "$CALLS" ] || fail 'invalid cross-team Jira body inspected a client'
+    done
+  done
+done
+
 printf '%s\n' FE >"$role_file"
 : >"$CALLS"
 if output=$($CLI preflight "$frontend_repo" --client codex \
-  --operation jira-intake-write --non-interactive 2>&1)
+  --operation jira-intake-write --non-interactive \
+  --handoff-body-file "$jira_cross_team_body" 2>&1)
 then
   fail 'deprecated alias received canonical cross-team intake routing'
 fi
@@ -1021,7 +1093,8 @@ assert_contains "$output" 'Result: ROUTING_REQUIRED'
 
 : >"$CALLS"
 if output=$($CLI preflight "$consumer" --client codex \
-  --operation jira-intake-write --non-interactive 2>&1)
+  --operation jira-intake-write --non-interactive \
+  --handoff-body-file "$jira_cross_team_body" 2>&1)
 then
   fail 'explicit-only standalone route received cross-team intake routing'
 fi
@@ -1755,6 +1828,14 @@ handoff_preflight() {
     --expected-parent-id 900002 --handoff-body-file "$handoff_file"
 }
 
+handoff_client_preflight() {
+  hcp_client=$1 hcp_file=$2 hcp_action=$3 hcp_target=$4
+  $CLI preflight "$canonical_backend" --client "$hcp_client" \
+    --operation confluence-handoff-write --non-interactive \
+    --confluence-action "$hcp_action" --target-content-id "$hcp_target" \
+    --expected-parent-id 900002 --handoff-body-file "$hcp_file"
+}
+
 handoff_parent_preflight() {
   hpp_parent=$1
   shift
@@ -1787,6 +1868,24 @@ assert_handoff_section_required() {
   ' "$ahsr_source" >"$ahsr_file"
   assert_handoff_invalid "$ahsr_file" "$ahsr_action" "$ahsr_target"
 }
+
+printf '%s\n' healthy-all >"$XDG_CONFIG_HOME/fake-codex-health"
+printf '%s\n' healthy >"$XDG_CONFIG_HOME/fake-claude-health"
+printf '%s\n' healthy >"$XDG_CONFIG_HOME/fake-cursor-health"
+for handoff_client in codex claude cursor; do
+  output=$(handoff_client_preflight "$handoff_client" \
+    "$handoff_dir/draft.md" create new)
+  assert_contains "$output" 'Result: PASS'
+  cp "$handoff_dir/ready-no-impact.md" "$handoff_dir/client-forbidden.md"
+  printf '\nRepository: use the provider repository as contract evidence\n' \
+    >>"$handoff_dir/client-forbidden.md"
+  if output=$(handoff_client_preflight "$handoff_client" \
+    "$handoff_dir/client-forbidden.md" update 900001 2>&1)
+  then
+    fail "$handoff_client accepted a cross-team repository reference"
+  fi
+  assert_contains "$output" 'Result: CROSS_TEAM_LINK_SCOPE_DENIED'
+done
 
 # Handoffs require one reviewed ACTIVE Folder directly below the routed root.
 for handoff_parent in 65962274 71237633 900001 990001 999999
