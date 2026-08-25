@@ -115,7 +115,8 @@ CROSS-TEAM CONFLUENCE HANDOFF
 - Confluence content ID and version: new/pending | <numeric ID>/<positive integer>
 - Expected parent ID: <exact reviewed ACTIVE Folder ID>
 - Pre-write arguments: --confluence-action create|update --target-content-id new|ID --expected-parent-id ACTIVE_FOLDER_ID --handoff-body-file FILE
-- Post-write: confluence-handoff-verify --confluence-action update --target-content-id ID --expected-parent-id ID --handoff-body-file FILE --readback-parent-id ID --readback-space-key KEY --readback-title TITLE --readback-version POSITIVE_INTEGER --readback-owner-account-id ACCOUNT_ID
+- Read capability: confluence-handoff-verify --confluence-action update --target-content-id ID --expected-parent-id ID --handoff-body-file FILE
+- Post-write proof: trusted client post-tool write result plus subsequent read result; caller assertions are not evidence
 - Result: PASS | FOLDER_CREATION_REQUIRED | HANDOFF_BODY_INVALID |
   CROSS_TEAM_LINK_SCOPE_DENIED | HANDOFF_READBACK_REQUIRED
 ```
@@ -728,55 +729,59 @@ All other public API operations are unchanged.
 
 wss://api.example.test/v1/quotes
 
-## Public connection URL and authentication
+## WebSocket contract: wss://api.example.test/v1/quotes
+
+Public quote change stream.
+
+### Public connection URL and authentication
 
 Connect with the documented user session.
 
-## Subscribe and unsubscribe requests
+### Subscribe and unsubscribe requests
 
 Subscribe and unsubscribe with the public symbol.
 
-## Event envelope and affected message payloads
+### Event envelope and affected message payloads
 
 Events contain type, eventId, observedAt, and quote payload.
 
-## Ordering
+### Ordering
 
 Ordering is guaranteed per symbol.
 
-## Deduplication
+### Deduplication
 
 Deduplicate by eventId.
 
-## Replay/resume
+### Replay/resume
 
 Resume from the last acknowledged eventId.
 
-## Reconnect
+### Reconnect
 
 Reconnect with bounded exponential backoff.
 
-## Heartbeat
+### Heartbeat
 
 The server sends a heartbeat every 30 seconds.
 
-## Timeout
+### Timeout
 
 Reconnect after 90 seconds without a heartbeat.
 
-## Backpressure
+### Backpressure
 
 Render the newest quote when behind.
 
-## Error events
+### Error events
 
 Invalid subscriptions emit a stable error event.
 
-## Close codes
+### Close codes
 
 4010 indicates an expired user session.
 
-## Sanitized message examples
+### Sanitized message examples
 
 {"type":"quote","eventId":"evt-1","symbol":"ABC"}
 
@@ -785,8 +790,11 @@ Invalid subscriptions emit a stable error event.
 All other public WebSocket streams are unchanged.
 ```
 
-`READY_FOR_FE` requires a successful `confluence-handoff-verify` readback. FE
-records `ACKNOWLEDGED` for the exact Confluence content ID and version. A
+`confluence-handoff-verify` proves read capability only and prints
+`Readback: CAPABILITY_ONLY`. Until a trusted client post-tool path supplies the
+actual write and subsequent read results directly, report the handoff
+unverified and do not report `READY_FOR_FE`. FE records `ACKNOWLEDGED` only for
+the exact proven Confluence content ID and version. A
 version change marks the old handoff `SUPERSEDED`, updates the changelog, and
 notifies FE again.
 
@@ -797,10 +805,10 @@ never send an unresolved token. For this READY page, run:
 beroka-governance preflight {{REPOSITORY}} --client {{CLIENT}} --operation confluence-handoff-write --non-interactive --confluence-action update --target-content-id {{CONTENT_ID}} --expected-parent-id {{ACTIVE_FOLDER_ID}} --handoff-body-file {{HANDOFF_BODY_FILE}}
 ```
 
-After the write, run:
+Before the read, prove connector capability:
 
 ```sh
-beroka-governance preflight {{REPOSITORY}} --client {{CLIENT}} --operation confluence-handoff-verify --non-interactive --confluence-action update --target-content-id {{CONTENT_ID}} --expected-parent-id {{ACTIVE_FOLDER_ID}} --handoff-body-file {{HANDOFF_BODY_FILE}} --readback-parent-id {{ACTIVE_FOLDER_ID}} --readback-space-key {{SPACE_KEY}} --readback-title {{PAGE_TITLE}} --readback-version {{PAGE_VERSION}} --readback-owner-account-id {{OWNER_ACCOUNT_ID}}
+beroka-governance preflight {{REPOSITORY}} --client {{CLIENT}} --operation confluence-handoff-verify --non-interactive --confluence-action update --target-content-id {{CONTENT_ID}} --expected-parent-id {{ACTIVE_FOLDER_ID}} --handoff-body-file {{HANDOFF_BODY_FILE}}
 ```
 
 For a DRAFT create, use `--confluence-action create --target-content-id new`.

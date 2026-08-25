@@ -2,7 +2,7 @@ Handoff schema: 1
 Handoff state: READY_FOR_FE
 Provider Jira: BB-42
 Consumer Jira: BF-69
-Confluence content ID: 900001
+Confluence content ID: 900004
 Confluence page version: 1
 Owner account ID: account-123
 Effective date: 2026-08-25
@@ -60,55 +60,59 @@ No public API operation changes.
 
 wss://api.example.test/v1/quotes
 
-## Public connection URL and authentication
+## WebSocket contract: wss://api.example.test/v1/quotes
+
+Public quote change stream.
+
+### Public connection URL and authentication
 
 Connect to wss://api.example.test/v1/quotes with the documented user session.
 
-## Subscribe and unsubscribe requests
+### Subscribe and unsubscribe requests
 
 Subscribe with {"type":"subscribe","symbol":"ABC"} and unsubscribe with the matching symbol.
 
-## Event envelope and affected message payloads
+### Event envelope and affected message payloads
 
 Events contain type, eventId, observedAt, and a quote payload.
 
-## Ordering
+### Ordering
 
 Ordering is guaranteed only per symbol.
 
-## Deduplication
+### Deduplication
 
 Deduplicate messages by eventId.
 
-## Replay/resume
+### Replay/resume
 
 Resume from the last acknowledged eventId when available.
 
-## Reconnect
+### Reconnect
 
 Reconnect with bounded exponential backoff.
 
-## Heartbeat
+### Heartbeat
 
 The server sends a heartbeat every 30 seconds.
 
-## Timeout
+### Timeout
 
 Reconnect after 90 seconds without a heartbeat.
 
-## Backpressure
+### Backpressure
 
 Render the newest quote when the browser falls behind.
 
-## Error events
+### Error events
 
 Invalid subscriptions emit {"type":"error","code":"invalid_symbol"}.
 
-## Close codes
+### Close codes
 
 4010 indicates an expired user session.
 
-## Sanitized message examples
+### Sanitized message examples
 
 {"type":"quote","eventId":"evt-1","symbol":"ABC","price":"12.34"}
 

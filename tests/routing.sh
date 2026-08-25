@@ -1003,8 +1003,8 @@ output=$($CLI preflight "$canonical_frontend" --client codex \
   --operation jira-intake-write --non-interactive \
   --handoff-body-file "$jira_cross_team_body")
 assert_contains "$output" 'Operation: jira-intake-write'
-assert_contains "$output" \
-  'Intake target repository: beroka-vn/Beroka_Backend'
+assert_not_contains "$output" 'Beroka_Backend'
+assert_contains "$output" 'Intake target profile: backend'
 assert_contains "$output" 'Intake Jira project: BB'
 assert_contains "$output" 'Capability: jira-issue-write'
 assert_contains "$output" 'Result: PASS'
@@ -1015,8 +1015,8 @@ output=$($CLI preflight "$canonical_backend" --client codex \
   --operation jira-intake-write --non-interactive \
   --handoff-body-file "$jira_cross_team_body")
 assert_contains "$output" 'Operation: jira-intake-write'
-assert_contains "$output" \
-  'Intake target repository: beroka-vn/Beroka_Frontend'
+assert_not_contains "$output" 'Beroka_Frontend'
+assert_contains "$output" 'Intake target profile: frontend'
 assert_contains "$output" 'Intake Jira project: BF'
 assert_contains "$output" 'Capability: jira-issue-write'
 assert_contains "$output" 'Result: PASS'
@@ -1638,6 +1638,10 @@ printf '%b\n' \
   'beroka-vn/Beroka_Backend\tpage\tPLANNED\t-\tPlanned REST contract\tShared\tMarket\tAPI\t900002\tMARKET-PLANNED-API\t900003' \
   'beroka-vn/Beroka_Backend\tfolder\tACTIVE\t900005\tShared — Market — WebSocket\tShared\tMarket\tWebSocket\t65962274\t-\t-' \
   'beroka-vn/Beroka_Backend\tpage\tACTIVE\t900004\tDerivative quote stream\tShared\tMarket\tWebSocket\t900005\tMARKET-DERIVATIVE-QUOTE-WS\t900003' \
+  'beroka-vn/Beroka_Backend\tfolder\tACTIVE\t900006\tShared — Market — API+WebSocket\tShared\tMarket\tAPI+WebSocket\t65962274\t-\t-' \
+  'beroka-vn/Beroka_Backend\tpage\tACTIVE\t900007\tCombined quote contract\tShared\tMarket\tAPI+WebSocket\t900006\tMARKET-QUOTE-COMBINED\t900003' \
+  'beroka-vn/Beroka_Frontend\tfolder\tACTIVE\t910002\tShared — Market — API\tShared\tMarket\tAPI\t65831203\t-\t-' \
+  'beroka-vn/Beroka_Frontend\tpage\tACTIVE\t910001\tFrontend provider contract\tShared\tMarket\tAPI\t910002\tMARKET-FE-PROVIDER-API\t910003' \
   'beroka-vn/Beroka_Backend\tfolder\tUNACTIVATED\t990001\tUnactivated parent\t-\tMarket\tAPI\t-\t-\t-' \
   'beroka-vn/Beroka_Backend\tpage\tUNACTIVATED\t990002\tUnactivated page\t-\tMarket\tAPI\t-\t-\t-' \
   >"$target_file"
@@ -1692,39 +1696,13 @@ sed -e 's/^Confluence page version: 1$/Confluence page version: 3/' \
   -e 's/^Owner account ID: account-123$/Owner account ID: 712020:owner/' \
   "$ROOT/tests/fixtures/handoffs/ready-api.md" >"$handoff_verify_body"
 
-handoff_readback_preflight() {
+handoff_read_capability_preflight() {
   $CLI preflight "$canonical_backend" --client codex \
     --operation confluence-handoff-verify --non-interactive \
-    --confluence-action "$hrv_action" --target-content-id "$hrv_target" \
-    --expected-parent-id "$hrv_expected_parent" \
-    --handoff-body-file "$hrv_body" \
-    --readback-parent-id "$hrv_readback_parent" \
-    --readback-space-key "$hrv_readback_space" \
-    --readback-title "$hrv_readback_title" \
-    --readback-version "$hrv_readback_version" \
-    --readback-owner-account-id "$hrv_readback_owner"
-}
-
-reset_handoff_readback() {
-  hrv_action=update hrv_target=900001 hrv_expected_parent=900002
-  hrv_body=$handoff_verify_body hrv_readback_parent=900002
-  hrv_readback_space=Berokaback
-  hrv_readback_title='Handoff — BB-42 — broker-account-reconnect'
-  hrv_readback_version=3 hrv_readback_owner='712020:owner'
-}
-
-assert_handoff_readback_required() {
-  : >"$CALLS"
-  if output=$(handoff_readback_preflight 2>&1)
-  then
-    fail 'handoff verification passed without exact readback evidence'
-  fi
-  assert_contains "$output" 'Result: HANDOFF_READBACK_REQUIRED'
-  [ -z "$hrv_readback_owner" ] ||
-    assert_not_contains "$output" "$hrv_readback_owner"
-  [ -z "$hrv_readback_title" ] ||
-    assert_not_contains "$output" "$hrv_readback_title"
-  [ ! -s "$CALLS" ] || fail 'invalid handoff readback inspected a connector'
+    --confluence-action update --target-content-id 900001 \
+    --capability-id MARKET-FU-INDEX-API --scope Shared --domain Market \
+    --transport API --expected-parent-id 900002 \
+    --registry-content-id 900003 --handoff-body-file "$handoff_verify_body"
 }
 
 if output=$($CLI preflight "$canonical_backend" --client codex \
@@ -1738,67 +1716,42 @@ then
 fi
 assert_contains "$output" 'Result: MAPPING_CONFLICT'
 
-reset_handoff_readback
-output=$(handoff_readback_preflight)
+output=$(handoff_read_capability_preflight)
 assert_contains "$output" 'Capability: confluence-page-read'
-assert_contains "$output" 'Readback: VERIFIED'
+assert_contains "$output" 'Readback: CAPABILITY_ONLY'
+assert_not_contains "$output" 'Readback: VERIFIED'
 assert_contains "$output" 'Result: PASS'
 assert_not_contains "$output" '712020:owner'
 assert_not_contains "$output" 'Handoff — BB-42 — broker-account-reconnect'
 assert_not_contains "$output" 'The public quote endpoint returns the latest market quote.'
 
-# Each missing or mismatched local readback fact must stop before connector inspection.
-reset_handoff_readback
-hrv_target=
-assert_handoff_readback_required
-reset_handoff_readback
-hrv_readback_parent=900003
-assert_handoff_readback_required
-reset_handoff_readback
-hrv_readback_space=Wrong
-assert_handoff_readback_required
-reset_handoff_readback
-hrv_readback_title=
-assert_handoff_readback_required
-reset_handoff_readback
-hrv_readback_title='Handoff — BB-43 — broker-account-reconnect'
-assert_handoff_readback_required
-reset_handoff_readback
-hrv_readback_title='Handoff — BB-42 — broker-account-reconnect
-Repository: private implementation'
-assert_handoff_readback_required
-assert_not_contains "$output" 'Repository: private implementation'
-reset_handoff_readback
-hrv_readback_title='https://github.com/beroka-vn/Beroka_Backend'
-assert_handoff_readback_required
-assert_not_contains "$output" 'github.com'
-reset_handoff_readback
-hrv_readback_version=0
-assert_handoff_readback_required
-reset_handoff_readback
-hrv_readback_owner=
-assert_handoff_readback_required
-reset_handoff_readback
-hrv_readback_owner='712020:other'
-assert_handoff_readback_required
-reset_handoff_readback
-sed 's/^Confluence page version: 3$/Confluence page version: 2/' \
-  "$handoff_verify_body" >"$HOME/handoff-verify-stale.md"
-hrv_body=$HOME/handoff-verify-stale.md
-assert_handoff_readback_required
-
-reset_handoff_readback
+# Caller assertions have no connector provenance and can never establish a
+# post-write/read proof.
+: >"$CALLS"
 if output=$($CLI preflight "$canonical_backend" --client codex \
   --operation confluence-handoff-verify --non-interactive \
-  --confluence-action create --target-content-id new \
-  --capability-id MARKET-PLANNED-API --scope Shared --domain Market \
+  --confluence-action update --target-content-id 900001 \
+  --capability-id MARKET-FU-INDEX-API --scope Shared --domain Market \
   --transport API --expected-parent-id 900002 \
   --registry-content-id 900003 --handoff-body-file "$handoff_verify_body" \
   --readback-parent-id 900002 --readback-space-key Berokaback \
   --readback-title 'Handoff — BB-42 — broker-account-reconnect' \
   --readback-version 3 --readback-owner-account-id '712020:owner' 2>&1)
 then
-  fail 'handoff verification accepted create/new'
+  fail 'caller-supplied assertions produced a verified readback'
+fi
+assert_contains "$output" 'Result: HANDOFF_READBACK_REQUIRED'
+assert_not_contains "$output" 'Readback: VERIFIED'
+[ ! -s "$CALLS" ] || fail 'untrusted readback assertions inspected a connector'
+
+if output=$($CLI preflight "$canonical_backend" --client codex \
+  --operation confluence-handoff-verify --non-interactive \
+  --confluence-action create --target-content-id new \
+  --capability-id MARKET-PLANNED-API --scope Shared --domain Market \
+  --transport API --expected-parent-id 900002 \
+  --registry-content-id 900003 --handoff-body-file "$handoff_verify_body" 2>&1)
+then
+  fail 'handoff read capability accepted create/new'
 fi
 assert_contains "$output" 'Result: HANDOFF_READBACK_REQUIRED'
 
@@ -1809,10 +1762,7 @@ if output=$($CLI preflight "$canonical_backend" --client codex \
   --confluence-action update --target-content-id 900001 \
   --capability-id MARKET-FU-INDEX-API --scope Shared --domain Market \
   --transport API --expected-parent-id 900002 \
-  --registry-content-id 900003 --handoff-body-file "$handoff_verify_body" \
-  --readback-parent-id 900002 --readback-space-key Berokaback \
-  --readback-title 'Handoff — BB-42 — broker-account-reconnect' \
-  --readback-version 3 --readback-owner-account-id '712020:owner' 2>&1)
+  --registry-content-id 900003 --handoff-body-file "$handoff_verify_body" 2>&1)
 then
   fail 'handoff passed without Confluence read capability'
 fi
@@ -1832,10 +1782,13 @@ done
 
 handoff_preflight() {
   handoff_file=$1 handoff_action=$2 handoff_target=$3
-  $CLI preflight "$canonical_backend" --client codex \
+  handoff_parent=${4:-900002} handoff_transport=${5:-API}
+  handoff_repo=${6:-$canonical_backend}
+  $CLI preflight "$handoff_repo" --client codex \
     --operation confluence-handoff-write --non-interactive \
     --confluence-action "$handoff_action" --target-content-id "$handoff_target" \
-    --expected-parent-id 900002 --handoff-body-file "$handoff_file"
+    --scope Shared --domain Market --transport "$handoff_transport" \
+    --expected-parent-id "$handoff_parent" --handoff-body-file "$handoff_file"
 }
 
 handoff_client_preflight() {
@@ -2039,8 +1992,75 @@ sed 's/^Consumer Jira: BF-69$/Consumer Jira: BB-69/' \
 mv "$handoff_dir/same-project-next.md" "$handoff_dir/same-project.md"
 assert_handoff_invalid "$handoff_dir/same-project.md" update 900001
 
+# Provider direction is bound to the routed team; FE -> BE uses the inverse
+# provider/consumer pair and remains a supported symmetric flow.
+sed \
+  -e 's/^Provider Jira: BB-42$/Provider Jira: BF-42/' \
+  -e 's/^Consumer Jira: BF-69$/Consumer Jira: BB-69/' \
+  -e 's/^Confluence content ID: 900001$/Confluence content ID: 910001/' \
+  "$handoff_dir/ready-api.md" >"$handoff_dir/ready-api-fe-provider.md"
+: >"$CALLS"
+if output=$(handoff_preflight "$handoff_dir/ready-api-fe-provider.md" update \
+  910001 910002 API 2>&1)
+then
+  fail 'Backend route accepted a Frontend provider handoff'
+fi
+assert_contains "$output" 'Result: HANDOFF_BODY_INVALID'
+[ ! -s "$CALLS" ] || fail 'wrong provider direction inspected a connector'
+
+printf '%s\n' FE >"$role_file"
+printf '%s\n' frontend >"$XDG_CONFIG_HOME/fake-github-teams"
+output=$(handoff_preflight "$handoff_dir/ready-api-fe-provider.md" update \
+  910001 910002 API "$canonical_frontend")
+assert_contains "$output" 'Result: PASS'
+printf '%s\n' BE >"$role_file"
+printf '%s\n' backend >"$XDG_CONFIG_HOME/fake-github-teams"
+
 output=$(handoff_preflight "$handoff_dir/draft.md" create new)
 assert_contains "$output" 'Result: PASS'
+
+# Folder transport is a body contract, not optional caller guidance.
+: >"$CALLS"
+if output=$(handoff_preflight "$handoff_dir/ready-websocket.md" update 900004 \
+  900002 API 2>&1)
+then
+  fail 'WebSocket handoff passed under an API Folder'
+fi
+assert_contains "$output" 'Result: FOLDER_CREATION_REQUIRED'
+[ ! -s "$CALLS" ] || fail 'wrong-transport handoff inspected a connector'
+
+: >"$CALLS"
+if output=$(handoff_preflight "$handoff_dir/ready-api-websocket.md" update \
+  900007 900002 API 2>&1)
+then
+  fail 'combined handoff passed under an API-only Folder'
+fi
+assert_contains "$output" 'Result: FOLDER_CREATION_REQUIRED'
+[ ! -s "$CALLS" ] || fail 'wrong combined-transport handoff inspected a connector'
+
+# A tracked update remains bound to the parent recorded in the reviewed row,
+# even when the alternate ACTIVE Folder itself is otherwise valid.
+: >"$CALLS"
+if output=$(handoff_preflight "$handoff_dir/ready-no-impact.md" update 900001 \
+  900005 WebSocket 2>&1)
+then
+  fail 'tracked handoff update accepted a different parent ancestry'
+fi
+assert_contains "$output" 'Result: MAPPING_CONFLICT'
+[ ! -s "$CALLS" ] || fail 'wrong tracked parent inspected a connector'
+
+# An update cannot claim ancestry for a page absent from the reviewed target
+# inventory, even when its requested Folder is ACTIVE.
+sed 's/^Confluence content ID: 900001$/Confluence content ID: 999991/' \
+  "$handoff_dir/ready-no-impact.md" >"$handoff_dir/untracked-update.md"
+: >"$CALLS"
+if output=$(handoff_preflight "$handoff_dir/untracked-update.md" update 999991 \
+  900002 API 2>&1)
+then
+  fail 'untracked handoff update accepted caller-asserted parent ancestry'
+fi
+assert_contains "$output" 'Result: MAPPING_CONFLICT'
+[ ! -s "$CALLS" ] || fail 'untracked update parent inspected a connector'
 
 cp "$handoff_dir/draft.md" "$handoff_dir/draft-no-omissions.md"
 sed 's/^Missing sections: Errors and edge cases, FE acknowledgment$/Missing sections: None/' \
@@ -2053,6 +2073,38 @@ assert_handoff_invalid "$handoff_dir/draft.md" update 900001
 cp "$handoff_dir/ready-no-impact.md" "$handoff_dir/placeholder.md"
 printf '\n## Extra contract detail\n\nTBD\n' >>"$handoff_dir/placeholder.md"
 assert_handoff_invalid "$handoff_dir/placeholder.md" update 900001
+
+for handoff_leak in \
+  'client_secret=plain-reusable-value' \
+  'Password: plain-reusable-value' \
+  'Authorization: Basic Zm9vOmJhcg==' \
+  'Kafka topic: broker.account.internal' \
+  'Topology: account-events -> reconnect-worker' \
+  'Adapter: brokerReconnectAdapter' \
+  'Provider credential: reusable-provider-token'
+do
+  cp "$handoff_dir/ready-no-impact.md" "$handoff_dir/leakage.md"
+  printf '\n## Extra contract detail\n\n%s\n' "$handoff_leak" \
+    >>"$handoff_dir/leakage.md"
+  assert_handoff_invalid "$handoff_dir/leakage.md" update 900001
+done
+
+# Every affected inventory entry needs its own complete contract block.
+awk '
+  { print }
+  $0 == "GET /v1/quotes/{symbol}" && !added {
+    print "POST /v1/quotes/refresh"; added=1
+  }
+' "$handoff_dir/ready-api.md" >"$handoff_dir/multi-api-missing-block.md"
+assert_handoff_invalid "$handoff_dir/multi-api-missing-block.md" update 900001
+
+awk '
+  { print }
+  $0 == "wss://api.example.test/v1/quotes" && !added {
+    print "wss://api.example.test/v1/orders"; added=1
+  }
+' "$handoff_dir/ready-websocket.md" >"$handoff_dir/multi-ws-missing-block.md"
+assert_handoff_invalid "$handoff_dir/multi-ws-missing-block.md" update 900004
 : >"$CALLS"
 if output=$(handoff_preflight "$handoff_dir/incident-85360641.md" update 85360641 2>&1)
 then
@@ -2128,16 +2180,17 @@ done
 
 for handoff_heading in \
   '## Affected WebSocket inventory' \
-  '## Public connection URL and authentication' \
-  '## Subscribe and unsubscribe requests' \
-  '## Event envelope and affected message payloads' \
-  '## Ordering' '## Deduplication' '## Replay/resume' '## Reconnect' \
-  '## Heartbeat' '## Timeout' '## Backpressure' '## Error events' \
-  '## Close codes' '## Sanitized message examples' \
+  '## WebSocket contract: wss://api.example.test/v1/quotes' \
+  '### Public connection URL and authentication' \
+  '### Subscribe and unsubscribe requests' \
+  '### Event envelope and affected message payloads' \
+  '### Ordering' '### Deduplication' '### Replay/resume' '### Reconnect' \
+  '### Heartbeat' '### Timeout' '### Backpressure' '### Error events' \
+  '### Close codes' '### Sanitized message examples' \
   '## Unaffected WebSocket inventory'
 do
   assert_handoff_section_required "$handoff_dir/ready-websocket.md" \
-    "$handoff_heading" update 900001
+    "$handoff_heading" update 900004
 done
 
 extract_advertised_handoff_body() {
@@ -2156,7 +2209,7 @@ render_advertised_handoff_body() {
   sed \
     -e 's/{{PROVIDER_JIRA}}/BB-42/g' \
     -e 's/{{CONSUMER_JIRA}}/BF-69/g' \
-    -e 's/{{CONTENT_ID}}/900001/g' \
+    -e 's/{{CONTENT_ID}}/900007/g' \
     -e 's/{{PAGE_VERSION}}/1/g' \
     -e 's/{{OWNER_ACCOUNT_ID}}/account-123/g' \
     -e 's/{{EFFECTIVE_DATE}}/2026-08-25/g' \
@@ -2185,8 +2238,8 @@ for handoff_template in templates/ai-agent-assignment.md templates/jira-confluen
     -e "s|beroka-governance|$CLI|" \
     -e "s|{{REPOSITORY}}|$canonical_backend|g" \
     -e 's/{{CLIENT}}/codex/g' \
-    -e 's/{{CONTENT_ID}}/900001/g' \
-    -e 's/{{ACTIVE_FOLDER_ID}}/900002/g' \
+    -e 's/{{CONTENT_ID}}/900007/g' \
+    -e 's/{{ACTIVE_FOLDER_ID}}/900006/g' \
     -e "s|{{HANDOFF_BODY_FILE}}|$handoff_template_body|g" \
     "$handoff_template_command" >"$handoff_dir/prewrite-rendered.sh"
   if grep -Eq '{{[A-Z_]+}}' "$handoff_dir/prewrite-rendered.sh"; then
@@ -2203,11 +2256,18 @@ for handoff_fixture in draft ready-api ready-websocket ready-api-websocket \
 do
   case "$handoff_fixture" in
     draft) handoff_action=create handoff_target=new ;;
+    ready-websocket) handoff_action=update handoff_target=900004 ;;
+    ready-api-websocket) handoff_action=update handoff_target=900007 ;;
     *) handoff_action=update handoff_target=900001 ;;
+  esac
+  case "$handoff_fixture" in
+    ready-websocket) handoff_parent=900005 handoff_transport=WebSocket ;;
+    ready-api-websocket) handoff_parent=900006 handoff_transport=API+WebSocket ;;
+    *) handoff_parent=900002 handoff_transport=API ;;
   esac
   : >"$CALLS"
   output=$(handoff_preflight "$handoff_dir/$handoff_fixture.md" \
-    "$handoff_action" "$handoff_target")
+    "$handoff_action" "$handoff_target" "$handoff_parent" "$handoff_transport")
   assert_contains "$output" 'Result: PASS'
   [ -s "$CALLS" ] || fail "positive handoff did not reach connector: $handoff_fixture"
 done

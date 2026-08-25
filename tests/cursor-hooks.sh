@@ -37,6 +37,11 @@ mkdir -p "$source_repo/bin"
 cp -R "$ROOT/runtime" "$source_repo/runtime"
 cp -R "$ROOT/templates" "$source_repo/templates"
 cp "$ROOT/bin/beroka-governance" "$source_repo/bin/beroka-governance"
+# Positive Cursor update fixtures need reviewed target ancestry; production
+# inventory intentionally has no synthetic page 900001.
+printf '%b\n' \
+  'beroka-vn/Beroka_Backend\tpage\tACTIVE\t900001\tTest handoff page\tDerivatives\tMarket\tAPI\t76808195\tMARKET-TEST-HANDOFF-API\t76808196' \
+  >>"$source_repo/runtime/integrations/beroka-be-fe.confluence-targets"
 for file in governance.md handbook.md workflow.md; do cp "$ROOT/$file" "$source_repo/$file"; done
 printf '%s\n' v1.1.0 >"$source_repo/VERSION"
 git -C "$source_repo" add .
@@ -389,6 +394,21 @@ cursor_github_bypass=$(printf '%s\n' "$cursor_intake" | jq -c \
   '.tool_input.github="https://github.com/example/private"')
 assert_denied "$(hook beforeMCPExecution "$cursor_github_bypass")" \
   CROSS_TEAM_LINK_SCOPE_DENIED
+
+# Plain acknowledgment language plus Confluence evidence is cross-team even
+# without the new handoff labels, and every textual input value is isolated.
+cursor_plain_ack=$(printf '%s\n' "$jira_update_by_key" | jq -c '
+  .tool_input.body="Work-item language: English\nAcknowledged Confluence page 900001 version 3 for review."
+  | .tool_input.metadata={evidence:"https://github.com/example/private"}
+')
+assert_denied "$(hook beforeMCPExecution "$cursor_plain_ack")" \
+  CROSS_TEAM_LINK_SCOPE_DENIED
+cursor_pair_ack=$(printf '%s\n' "$jira_update_by_key" | jq -c '
+  .tool_input.body="Work-item language: English\nBB-42 and BF-69 are aligned on Confluence content 900001."
+  | .tool_input.custom_text="Repository: use the provider repository as evidence"
+')
+assert_denied "$(hook beforeMCPExecution "$cursor_pair_ack")" \
+  CROSS_TEAM_LINK_SCOPE_DENIED
 assert_no_cursor_body_stage
 
 team_local_github=$(printf '%s\n' "$atlassian_create" | jq -c \
@@ -448,6 +468,30 @@ cp "$cursor_handoff_dir/draft.md" "$cursor_handoff_dir/false-ready.md"
 printf '\nREADY_FOR_FE\n' >>"$cursor_handoff_dir/false-ready.md"
 assert_denied "$(hook beforeMCPExecution "$(cursor_handoff_input \
   "$cursor_handoff_dir/false-ready.md" create new 76808195)")" HANDOFF_BODY_INVALID
+
+assert_denied "$(hook beforeMCPExecution "$(cursor_handoff_input \
+  "$cursor_handoff_dir/ready-websocket.md" update 900004 76808195)")" \
+  FOLDER_CREATION_REQUIRED
+
+# The exact legacy incident shape must never fall back to ordinary
+# confluence-write merely because it predates the schema-1 labels.
+legacy_incident_body=$(printf '%s\n' \
+  'Jira: BB-42' \
+  'GitHub: https://github.com/beroka-vn/Beroka_Backend/issues/217' \
+  'State: READY_FOR_FE' \
+  'Provider Jira: BB-42' \
+  'Consumer Jira: BF-69' \
+  '' \
+  '## Handoff — BB-42' \
+  '' \
+  'Summary-only payload guidance.')
+legacy_incident=$(printf '%s\n' "$base_input" | jq -c --arg body "$legacy_incident_body" '. + {
+  tool_name:"confluence.update_page",
+  url:"https://beroka.atlassian.net/wiki",
+  tool_input:{pageId:"85360641",parentId:"65962274",body:$body}
+}')
+assert_denied "$(hook beforeMCPExecution "$legacy_incident")" \
+  CROSS_TEAM_LINK_SCOPE_DENIED
 
 cursor_draft_output=$(hook beforeMCPExecution "$(cursor_handoff_input \
   "$cursor_handoff_dir/draft.md" create new 76808195)")

@@ -261,8 +261,11 @@ in the governance release (`DOCS_UNACTIVATED`). Cross-team handoffs require an
 exact reviewed ACTIVE Folder and the self-contained Confluence page; never use
 an opposite-team repository link as the consumer contract. Before a handoff,
 run `beroka-governance preflight REPO --client CLIENT --operation confluence-handoff-write --non-interactive --confluence-action create|update --target-content-id new|ID --expected-parent-id ACTIVE_FOLDER_ID --handoff-body-file FILE`. Create is
-`DRAFT` only. Before reporting `READY_FOR_FE`, run a fresh
-`beroka-governance preflight REPO --client CLIENT --operation confluence-handoff-verify --non-interactive --confluence-action update --target-content-id ID --expected-parent-id ID --handoff-body-file FILE --readback-parent-id ID --readback-space-key KEY --readback-title TITLE --readback-version POSITIVE_INTEGER --readback-owner-account-id ACCOUNT_ID`.
+`DRAFT` only. Run a fresh
+`beroka-governance preflight REPO --client CLIENT --operation confluence-handoff-verify --non-interactive --confluence-action update --target-content-id ID --expected-parent-id ID --handoff-body-file FILE`
+to prove read capability only. Its `Readback: CAPABILITY_ONLY` result is not
+post-write proof; without a trusted client post-tool write/read result, report
+the handoff unverified and do not report `READY_FOR_FE`.
 Jira remains in its governed lifecycle state independently. A transport
 mismatch on a reviewed drifted row returns `MAPPING_CONFLICT`.
 

@@ -51,8 +51,9 @@ Add this team-local reference block to any Feature/Bug/Technical issue with BE
 - FE acknowledgment:
 ```
 
-`READY_FOR_FE` requires successful Confluence readback. FE acknowledges the
-exact page version. If impact is `None`, record the reason.
+`READY_FOR_FE` requires trusted post-tool Confluence write/read evidence. A
+read-capability preflight alone remains unverified. FE acknowledges the exact
+proven page version. If impact is `None`, record the reason.
 
 ## Documentation Change Block
 

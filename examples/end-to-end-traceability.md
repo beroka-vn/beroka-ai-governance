@@ -209,8 +209,9 @@ AI đối chiếu issue, diff và evidence, sau đó approve đúng commit. An t
 squash merge. GitHub đóng `#121` qua `Closes #121`.
 
 Sau merge, Nam tạo DRAFT từ exact template, hoàn thiện toàn bộ common/API/no-WS
-sections trong chính Confluence page, rồi chạy readback verification. Hub và
-linked FE Jira chỉ nhận record đã verify:
+sections trong chính Confluence page, rồi chạy read-capability preflight. Vì
+runtime chưa có trusted post-tool hook nhận trực tiếp write receipt và kết quả
+read sau đó, Hub và linked FE Jira chưa nhận record này:
 
 ```markdown
 Provider Jira: BB-120
@@ -221,12 +222,13 @@ Parent Folder content ID: 900002
 API impact: affected
 WebSocket impact: none
 Missing sections: None
-Readback: VERIFIED
-State: READY_FOR_FE
+Readback: CAPABILITY_ONLY — post-tool write/read evidence pending
+Proposed state: READY_FOR_FE
+Reported readiness: UNVERIFIED
 ```
 
-Nam comment record này vào `BF-87`. Linh đọc exact Confluence content ID/version
-và ghi `ACKNOWLEDGED — content 900001 version 3 — 2026-07-17T14:30:00+07:00`.
+Nam không comment record này vào `BF-87`; Linh chưa ghi `ACKNOWLEDGED` cho tới
+khi trusted post-tool evidence chứng minh exact Confluence content ID/version.
 FE không tự tổng hợp contract từ repository, Issue hoặc PR của Backend.
 
 ## 5. Frontend Issue `#122`

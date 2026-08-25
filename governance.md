@@ -335,9 +335,10 @@ same-capability children use `Relates`.
 
 Frontend → Backend and Backend → Frontend use the same constrained lifecycle.
 The requester runs a fresh `jira-intake-write` preflight from their own exact
-repository. Only the canonical opposite-team repository and Jira project
-returned by preflight may receive the intake; ordinary `jira-write`, repository
-role checks, and `cross-repo-write` remain unchanged.
+repository. Only the receiving profile and Jira project returned by preflight
+may receive the intake; governance does not disclose the opposite private
+repository identity. Ordinary `jira-write`, repository role checks, and
+`cross-repo-write` remain unchanged.
 
 The requester/reporter creates only the intake record. Leave Sprint and the
 receiving-project parent unset. An exact receiving-team account may be assigned
@@ -367,8 +368,10 @@ Confluence page instead.
 Ordinary Confluence create, update, and move use `confluence-write`; they do
 not publish cross-team readiness. Every cross-team handoff uses the dedicated
 `confluence-handoff-write` preflight with its exact body and reviewed ACTIVE
-Folder, then a fresh `confluence-handoff-verify` preflight with exact body and
-readback identity. Consumer-facing content uses the provider/consumer Jira pair
+Folder, then a fresh `confluence-handoff-verify` preflight with the exact body.
+That second preflight proves read capability only, never a completed write/read;
+without trusted post-tool evidence, report the handoff unverified and do not
+report `READY_FOR_FE`. Consumer-facing content uses the provider/consumer Jira pair
 and Confluence content ID/version only—never a GitHub, repository, branch, or
 commit reference. An `UNACTIVATED` content ID or parent returns
 `DOCS_UNACTIVATED` and can change only through a reviewed governance release

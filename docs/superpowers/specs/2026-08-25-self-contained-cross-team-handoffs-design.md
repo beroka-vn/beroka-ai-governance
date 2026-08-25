@@ -69,23 +69,22 @@ beroka-governance preflight REPO \
 `confluence-handoff-write` rejects a missing, symlinked, non-regular, empty, or
 unsafe body file before probing a connector.
 
-The post-write command is the existing `confluence-handoff-verify`, extended
-with:
+`confluence-handoff-verify` is a read-capability preflight. It receives the
+proposed body and exact target/Folder identity:
 
 ```text
 --handoff-body-file PATH
---readback-parent-id ID
---readback-space-key KEY
---readback-title TITLE
---readback-version POSITIVE_INTEGER
---readback-owner-account-id ACCOUNT_ID
 ```
 
-Verification requires a numeric target content ID and exact readback evidence.
-It repeats body and Folder validation, checks the routed space and expected
-parent, and requires non-empty title and owner plus a positive page version.
-Only this successful verification authorizes an agent to report
-`READY_FOR_FE`; a pre-write PASS alone never does.
+It requires a numeric target content ID, repeats body and Folder validation,
+and proves only that the routed read connector is available. Caller-supplied
+readback assertions are rejected with `HANDOFF_READBACK_REQUIRED`: a local CLI
+argument or result file is not trustworthy evidence that Atlassian returned
+that value. This release has no trusted post-tool hook that directly receives
+both the write receipt and subsequent read response, so it never emits
+`Readback: VERIFIED`. Agents must report the handoff as unverified and must not
+report `READY_FOR_FE` until such a trusted runtime path proves exact identity,
+parent, space, version, title, owner, and body.
 
 ## Body Contract
 
@@ -107,8 +106,9 @@ WebSocket impact: affected | none
 Missing sections: comma-separated names | None
 ```
 
-Provider and consumer keys must be opposite `BB`/`BF` projects and each must
-occur exactly once in the header. Cross-team content may contain Jira keys,
+Provider and consumer keys must be opposite `BB`/`BF` projects, the provider
+project must equal the routed team's Jira project, and each key must occur
+exactly once in the header. Cross-team content may contain Jira keys,
 Atlassian Jira URLs, Confluence content IDs, and Atlassian Confluence URLs. It
 rejects GitHub URLs, Git remotes, repository/branch/commit instructions, and
 the legacy `Canonical:` repository marker. Team-local Jira records may retain
@@ -146,11 +146,13 @@ that no public API operation changes.
 `WebSocket impact: affected` additionally requires:
 
 - `Affected WebSocket inventory`
-- public connection URL and authentication
-- subscribe and unsubscribe requests
-- event envelope and affected message payloads
-- ordering, deduplication, replay/resume, reconnect, heartbeat, timeout,
-  backpressure, error events, close codes, and sanitized message examples
+- one `WebSocket contract: <PUBLIC_URL>` block for every exact affected
+  inventory entry;
+- within each contract block: public connection URL and authentication,
+  subscribe and unsubscribe requests, event envelope and affected message
+  payloads, ordering, deduplication, replay/resume, reconnect, heartbeat,
+  timeout, backpressure, error events, close codes, and sanitized message
+  examples;
 - `Unaffected WebSocket inventory`
 
 `WebSocket impact: none` requires `WebSocket impact rationale` and an explicit
@@ -191,8 +193,9 @@ for the routed repository in
 - state `ACTIVE`;
 - the exact numeric content ID;
 - parent equal to the catalog Confluence root;
-- matching scope/domain/transport when those optional target fields are
-  supplied.
+- matching scope, domain, and transport derived from the exact Folder row;
+- transport `API`, `WebSocket`, or `API+WebSocket` matching the body's impact;
+- for an update, a tracked target whose recorded parent is this exact Folder.
 
 The catalog root itself, a page, `LEGACY`, `PLANNED`, `DRIFTED`,
 `UNACTIVATED`, untracked, unrelated, duplicated, or ambiguous targets return
@@ -208,16 +211,20 @@ this issue does not change unrelated documentation writes.
 
 - Codex and Claude instructions require the explicit handoff operation with a
   temporary file containing the exact body passed to Atlassian.
-- Cursor classifies a Confluence create/update as cross-team when the exact
-  body contains the handoff schema and opposite BB/BF Jira header. It validates
-  that body in-process and invokes the same operation before allowing the MCP
-  call.
+- Cursor classifies a Confluence create/update as cross-team when any textual
+  input contains the new schema, opposite BB/BF Jira evidence, a legacy
+  handoff with a private provider GitHub link, or readiness evidence. It
+  validates the complete body in-process and invokes the same operation before
+  allowing the MCP call.
 - Cursor rejects a cross-team-shaped body that is partial or malformed rather
   than falling back to ordinary `confluence-write`.
 - Cross-team Jira intake and acknowledgment text rejects GitHub URLs. Cursor
-  checks the actual Jira description/comment body; Codex and Claude use the
-  same body validator before `jira-intake-write` or a cross-team acknowledgment
-  update. Team-local Jira fields outside the handoff flow remain unchanged.
+  classifies plain acknowledgments and opposite-project Jira evidence, then
+  checks every textual tool-input value, including nested structured fields;
+  Codex and Claude use the same body validator before `jira-intake-write` or a
+  cross-team acknowledgment update. Intake output exposes only the routed Jira
+  project/profile, never the opposite private repository identity. Team-local
+  Jira fields outside the handoff flow remain unchanged.
 
 The three clients must produce the same stable result class for the same body
 and target fixture.
@@ -251,7 +258,8 @@ Focused shell fixtures cover:
 - GitHub URL and repository-dependent instruction rejection in Confluence and
   cross-team Jira bodies;
 - secret/internal-detail leakage patterns;
-- exact readback identity, parent, space, version, title, owner, and body;
+- rejection of caller-supplied readback assertions and capability-only verify
+  output that never claims `VERIFIED`;
 - equivalent Codex, Claude, and Cursor outcomes;
 - preservation of ordinary allow-by-default Confluence writes and all existing
   capability, OAuth, role, routing, and inventory failures.
@@ -265,6 +273,8 @@ remediation remain outside implementation validation.
 This change must ship with the inventory fix in a reviewed governance release.
 Before release, qualify a source-pinned runtime against the incident proposal
 and confirm it fails before any Atlassian write. Then test one complete handoff
-under an exact reviewed `ACTIVE` Folder, read it back, and confirm the page is
-self-contained and contains no GitHub URL. Publishing the release and changing
-live Jira/Confluence still require separate authorization.
+under an exact reviewed `ACTIVE` Folder and inspect its actual connector write
+receipt plus subsequent read response. Until a trusted post-tool hook binds
+those responses, report readback as unverified even when manual inspection
+confirms the page is self-contained and contains no GitHub URL. Publishing the
+release and changing live Jira/Confluence still require separate authorization.

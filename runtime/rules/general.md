@@ -45,8 +45,13 @@
   Cross-team Jira intake or acknowledgment text uses `jira-intake-write` or
   `jira-handoff-write` with the exact body and never an opposite-team GitHub
   link; use Jira keys and Confluence references only.
-- Create is DRAFT-only. `READY_FOR_FE` is update-only and may be reported only
-  after a fresh `beroka-governance preflight REPO --client CLIENT --operation confluence-handoff-verify --non-interactive --confluence-action update --target-content-id ID --expected-parent-id ID --handoff-body-file FILE --readback-parent-id ID --readback-space-key KEY --readback-title TITLE --readback-version POSITIVE_INTEGER --readback-owner-account-id ACCOUNT_ID` passes. A pre-write PASS authorizes only the write. Jira remains in its governed lifecycle state independently.
+- Create is DRAFT-only. `READY_FOR_FE` is update-only. A fresh
+  `beroka-governance preflight REPO --client CLIENT --operation confluence-handoff-verify --non-interactive --confluence-action update --target-content-id ID --expected-parent-id ID --handoff-body-file FILE`
+  proves read capability only and prints `Readback: CAPABILITY_ONLY`; it never
+  proves that a write or subsequent read occurred. Until a trusted client
+  post-tool path supplies both results directly, report readback as unverified
+  and do not report `READY_FOR_FE`. Caller-supplied readback assertions return
+  `HANDOFF_READBACK_REQUIRED`. Jira remains in its governed lifecycle state independently.
 - A content ID or parent ID listed as `UNACTIVATED` in the pinned release
   inventory returns `DOCS_UNACTIVATED` (only a reviewed governance release PR
   can change that list). A transport mismatch on a reviewed drifted row returns

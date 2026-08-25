@@ -383,7 +383,8 @@ for file in runtime/rules/general.md workflow.md templates/jira-confluence.md \
     '--confluence-action create|update --target-content-id new|ID --expected-parent-id ACTIVE_FOLDER_ID --handoff-body-file FILE'
   require_text "$file" \
     '--confluence-action update --target-content-id ID --expected-parent-id ID --handoff-body-file FILE'
-  require_text "$file" '--readback-parent-id ID --readback-space-key KEY'
+  reject_text "$file" '--readback-parent-id'
+  require_text "$file" 'read capability only'
 done
 require_text templates/jira-confluence.md \
   'beroka-governance preflight {{REPOSITORY}} --client {{CLIENT}} --operation confluence-handoff-write --non-interactive --confluence-action update --target-content-id {{CONTENT_ID}} --expected-parent-id {{ACTIVE_FOLDER_ID}} --handoff-body-file {{HANDOFF_BODY_FILE}}'
@@ -391,7 +392,8 @@ for file in templates/ai-agent-assignment.md templates/jira-confluence.md; do
   require_text "$file" \
     'beroka-governance preflight {{REPOSITORY}} --client {{CLIENT}} --operation confluence-handoff-write --non-interactive --confluence-action update --target-content-id {{CONTENT_ID}} --expected-parent-id {{ACTIVE_FOLDER_ID}} --handoff-body-file {{HANDOFF_BODY_FILE}}'
   require_text "$file" \
-    '--operation confluence-handoff-verify --non-interactive --confluence-action update --target-content-id {{CONTENT_ID}} --expected-parent-id {{ACTIVE_FOLDER_ID}} --handoff-body-file {{HANDOFF_BODY_FILE}} --readback-parent-id {{ACTIVE_FOLDER_ID}} --readback-space-key {{SPACE_KEY}} --readback-title {{PAGE_TITLE}} --readback-version {{PAGE_VERSION}} --readback-owner-account-id {{OWNER_ACCOUNT_ID}}'
+    '--operation confluence-handoff-verify --non-interactive --confluence-action update --target-content-id {{CONTENT_ID}} --expected-parent-id {{ACTIVE_FOLDER_ID}} --handoff-body-file {{HANDOFF_BODY_FILE}}'
+  reject_text "$file" '--readback-parent-id'
 done
 for file in workflow.md runtime/profiles/frontend.md templates/jira-confluence.md; do
   reject_text "$file" 'artifact/version'
@@ -418,8 +420,8 @@ for context in standalone backend frontend integration; do
   [ "$actual" -eq 1 ] || fail "$context context has $actual handoff writes"
   actual=$(grep -F -c 'confluence-handoff-verify' "$DOC_TEST_TMP/$context.md" || :)
   [ "$actual" -eq 1 ] || fail "$context context has $actual handoff verifies"
-  actual=$(grep -F -c -- '--readback-parent-id ID' "$DOC_TEST_TMP/$context.md" || :)
-  [ "$actual" -eq 1 ] || fail "$context context has $actual handoff readbacks"
+  actual=$(grep -F -c -- 'Readback: CAPABILITY_ONLY' "$DOC_TEST_TMP/$context.md" || :)
+  [ "$actual" -eq 1 ] || fail "$context context has $actual capability-only readbacks"
 done
 
 # Cross-team handoffs have one universal lifecycle in generated context. Profile
@@ -431,7 +433,8 @@ for file in runtime/rules/general.md; do
   require_text "$file" 'self-contained Confluence page'
   require_text "$file" 'DRAFT-only'
   require_text "$file" 'confluence-handoff-verify'
-  require_text "$file" '--readback-parent-id ID'
+  require_text "$file" 'Readback: CAPABILITY_ONLY'
+  reject_text "$file" '--readback-parent-id'
   require_text "$file" 'Jira remains in its governed lifecycle state independently'
   require_count "$file" 'confluence-handoff-write' 1
 done
