@@ -30,11 +30,10 @@ returns `Result: PASS`.
 Repository-specific instructions may narrow central governance. They must not
 broaden authority or bypass a central stop condition.
 
-Before a Confluence write, prefer allow-by-default create/update/move with
-handoff delta markers (`Jira:`, `GitHub:`, and either `## Handoff — <JiraKey>`
-or `Handoff form: child-page` with `Canonical: <URL|content-id>`). Targets
-listed as `UNACTIVATED` in the pinned governance release return
-`DOCS_UNACTIVATED` and can change only via a reviewed governance release PR.
+Ordinary Confluence create/update/move is allow-by-default unless the target is
+`UNACTIVATED` and returns `DOCS_UNACTIVATED`. A cross-team handoff is a self-contained Jira-and-Confluence-only
+contract: use `confluence-handoff-write` with the exact body and reviewed ACTIVE
+Folder, then use a fresh `confluence-handoff-verify --confluence-action update --target-content-id ID --expected-parent-id ID --handoff-body-file PATH --readback-parent-id ID --readback-space-key KEY --readback-title TITLE --readback-version POSITIVE_INTEGER --readback-owner-account-id ACCOUNT_ID` before reporting `READY_FOR_FE`.
 Use optional `confluence-discover` / `confluence-bootstrap-*` only as hierarchy
 guidance, never as a write gate.
 Create Jira items with Atlassian MCP `createJiraIssue` using official fields

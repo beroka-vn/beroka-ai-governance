@@ -103,9 +103,9 @@ Use a hybrid model:
   JSON Schema, or event-schema artifacts. A consumer-facing cross-team handoff
   is instead a self-contained Confluence page with the complete public contract.
 - `Backend Capability Registry` is the canonical cross-Epic mapping of one
-  Capability ID to scope, domain, transport, repository
-  artifact/version/commit, Confluence content ID, base Capability ID, and
-  owner.
+  Capability ID to scope, domain, transport, Confluence content ID/version,
+  base Capability ID, and owner. Team-local artifact details stay in the
+  owning repository.
 - Each cross-team Epic has exactly one `Epic Integration Hub` as the readable
   current-state index, linked from both `BB` and `BF`. It references Registry
   rows and owns only Epic-specific Jira relationships, consumers, handoff
@@ -363,17 +363,17 @@ updates. Cross-team Jira or handoff text containing opposite-team private
 GitHub links returns `CROSS_TEAM_LINK_SCOPE_DENIED`; use the exact accessible
 Confluence page instead.
 
-Before a Confluence create, update, move, or handoff, run
-`confluence-write` or `confluence-handoff-verify`. Targets not listed as
-`UNACTIVATED` in the governance release are writable by default. An
-`UNACTIVATED` content ID or parent returns `DOCS_UNACTIVATED` and can change
-only through a reviewed governance release PR. Create/update bodies must
-include `Jira:`, `GitHub:`, and a handoff delta (`## Handoff — <JiraKey>`
-section or child page with `Handoff form: child-page` and
-`Canonical: <URL|content-id>`); missing markers return
-`HANDOFF_DELTA_REQUIRED`. A transport mismatch on a reviewed drifted row
-returns `MAPPING_CONFLICT`, and the agent asks the user and waits. Hierarchy
-bootstrap remains optional guidance, not a write gate.
+Ordinary Confluence create, update, and move use `confluence-write`; they do
+not publish cross-team readiness. Every cross-team handoff uses the dedicated
+`confluence-handoff-write` preflight with its exact body and reviewed ACTIVE
+Folder, then a fresh `confluence-handoff-verify` preflight with exact body and
+readback identity. Consumer-facing content uses the provider/consumer Jira pair
+and Confluence content ID/version only—never a GitHub, repository, branch, or
+commit reference. An `UNACTIVATED` content ID or parent returns
+`DOCS_UNACTIVATED` and can change only through a reviewed governance release
+PR. A transport mismatch on a reviewed drifted row returns `MAPPING_CONFLICT`,
+and the agent asks the user and waits. Hierarchy bootstrap remains optional
+guidance, not a write gate.
 
 Provider status remains `To Do -> In Progress` when the receiving assignee
 starts accepted, ready work and `In Progress -> In Review` when a human marks

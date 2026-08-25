@@ -2129,6 +2129,29 @@ do
     "$handoff_heading" update 900001
 done
 
+extract_advertised_handoff_body() {
+  eahb_template=$1 eahb_body=$2
+  awk '
+    $0 == "Handoff schema: 1" { copy = 1 }
+    copy && $0 == "```" { exit }
+    copy { print }
+  ' "$ROOT/$eahb_template" >"$eahb_body"
+  [ -s "$eahb_body" ] || fail "missing advertised handoff body: $eahb_template"
+}
+
+for handoff_template in templates/ai-agent-assignment.md templates/jira-confluence.md; do
+  handoff_template_body=$handoff_dir/$(basename "$handoff_template").md
+  extract_advertised_handoff_body "$handoff_template" "$handoff_template_body"
+  : >"$CALLS"
+  if output=$(handoff_preflight "$handoff_template_body" update 900001 2>&1)
+  then
+    assert_contains "$output" 'Result: PASS'
+  else
+    fail "advertised handoff body did not pass: $handoff_template: $output"
+  fi
+  [ -s "$CALLS" ] || fail "advertised handoff did not reach connector: $handoff_template"
+done
+
 for handoff_fixture in draft ready-api ready-websocket ready-api-websocket \
   ready-no-impact
 do

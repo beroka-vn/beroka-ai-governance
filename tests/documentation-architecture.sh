@@ -94,8 +94,8 @@ for file in templates/agent-entrypoints/AGENTS.md \
   require_text "$file" 'DOCS_UNACTIVATED'
   require_text "$file" 'ASSIGNEE_CONFIRMATION_REQUIRED'
   require_text "$file" 'opposite-team private GitHub links'
-  require_text "$file" 'Handoff form: child-page'
-  require_text "$file" 'Canonical: <URL|content-id>'
+  require_text "$file" 'self-contained Jira-and-Confluence-only'
+  require_text "$file" 'confluence-handoff-verify'
 done
 for file in runtime/rules/general.md governance.md workflow.md \
   templates/jira-confluence.md; do
@@ -326,6 +326,62 @@ require_text examples/homepage-market-overview-epic-packet.md \
 require_text examples/homepage-market-overview-epic-packet.md \
   'MARKET-INDEX-STREAM'
 
+DOC_TEST_TMP=$(mktemp -d)
+trap 'rm -rf "$DOC_TEST_TMP"' EXIT HUP INT TERM
+
+extract_advertised_handoff_body() {
+  template=$1 output=$2
+  awk '
+    $0 == "Handoff schema: 1" { copy = 1 }
+    copy && $0 == "```" { exit }
+    copy { print }
+  ' "$ROOT/$template" >"$output"
+  [ -s "$output" ] || fail "missing advertised handoff body in $template"
+}
+
+for template in templates/ai-agent-assignment.md templates/jira-confluence.md; do
+  advertised_body=$DOC_TEST_TMP/$(basename "$template").md
+  extract_advertised_handoff_body "$template" "$advertised_body"
+  cmp -s "$advertised_body" "$ROOT/tests/fixtures/handoffs/ready-api-websocket.md" ||
+    fail "advertised handoff body in $template differs from the accepted fixture"
+done
+
+reject_text governance.md '`confluence-write` or `confluence-handoff-verify`'
+reject_text governance.md 'include `Jira:`, `GitHub:`, and a handoff delta'
+for file in runtime/rules/general.md workflow.md templates/jira-confluence.md \
+  templates/agent-entrypoints/AGENTS.md \
+  templates/agent-entrypoints/CLAUDE.md \
+  templates/agent-entrypoints/CURSOR-USER-RULE.txt; do
+  require_text "$file" \
+    '--confluence-action update --target-content-id ID --expected-parent-id ID'
+  require_text "$file" '--handoff-body-file PATH'
+  require_text "$file" '--readback-parent-id ID --readback-space-key KEY'
+done
+
+render_context() {
+  profile=$1 integration=${2:-none}
+  cat "$ROOT/runtime/rules/general.md" "$ROOT/runtime/profiles/$profile.md"
+  if [ "$integration" = beroka-be-fe ]; then
+    cat "$ROOT/runtime/rules/work-items.md" \
+      "$ROOT/runtime/integrations/beroka-be-fe.md"
+  fi
+}
+
+for context in standalone backend frontend integration; do
+  case "$context" in
+    standalone) render_context standalone ;;
+    backend) render_context backend ;;
+    frontend) render_context frontend ;;
+    integration) render_context backend beroka-be-fe ;;
+  esac >"$DOC_TEST_TMP/$context.md"
+  actual=$(grep -F -c 'confluence-handoff-write' "$DOC_TEST_TMP/$context.md" || :)
+  [ "$actual" -eq 1 ] || fail "$context context has $actual handoff writes"
+  actual=$(grep -F -c 'confluence-handoff-verify' "$DOC_TEST_TMP/$context.md" || :)
+  [ "$actual" -eq 1 ] || fail "$context context has $actual handoff verifies"
+  actual=$(grep -F -c -- '--readback-parent-id ID' "$DOC_TEST_TMP/$context.md" || :)
+  [ "$actual" -eq 1 ] || fail "$context context has $actual handoff readbacks"
+done
+
 # Cross-team handoffs have one universal lifecycle in generated context. Profile
 # and integration rules add ownership only, so they cannot dilute the contract.
 for file in runtime/rules/general.md; do
@@ -363,7 +419,7 @@ for file in templates/ai-agent-assignment.md templates/jira-confluence.md; do
   require_text "$file" 'Handoff schema: 1'
   require_text "$file" 'Provider Jira:'
   require_text "$file" 'Consumer Jira:'
-  require_text "$file" 'API operation: <METHOD> <PUBLIC_PATH>'
+  require_text "$file" 'API operation: GET /v1/quotes/{symbol}'
   require_text "$file" 'Affected WebSocket inventory'
   require_text "$file" 'FE acknowledgment'
   require_text "$file" 'Superseded by:'

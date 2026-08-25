@@ -144,7 +144,8 @@ For an outcome requiring both teams:
    developer confirmation;
 2. create/reuse separate BB and BF Epics and link them with `Relates`;
 3. resolve one immutable Capability ID in one canonical Registry row;
-4. create separate Jira/GitHub items; a BE provider may `Blocks` BF consumers;
+4. create separate BB/BF Jira items; team-local GitHub Issues remain only in
+   their owning repository, and a BE provider may `Blocks` BF consumers;
 5. link each Epic Hub to the Registry row and record its BE/BF items, state,
    consumers, and acknowledgements;
 6. read back parents, links, Capability ID, Registry row, and Hub references
@@ -260,11 +261,10 @@ in the governance release (`DOCS_UNACTIVATED`). Cross-team handoffs require an
 exact reviewed ACTIVE Folder and the self-contained Confluence page; never use
 an opposite-team repository link as the consumer contract. Before a handoff,
 run `confluence-handoff-write` with `--handoff-body-file PATH`. Create is
-`DRAFT` only. Before reporting `READY_FOR_FE`, run
-`confluence-handoff-verify` with the exact body plus readback parent, space,
-title, version, and owner. Jira remains in its governed lifecycle state
-independently. A transport mismatch on a reviewed drifted row returns
-`MAPPING_CONFLICT`.
+`DRAFT` only. Before reporting `READY_FOR_FE`, run a fresh
+`beroka-governance preflight REPO --client CLIENT --operation confluence-handoff-verify --non-interactive --confluence-action update --target-content-id ID --expected-parent-id ID --handoff-body-file PATH --readback-parent-id ID --readback-space-key KEY --readback-title TITLE --readback-version POSITIVE_INTEGER --readback-owner-account-id ACCOUNT_ID`.
+Jira remains in its governed lifecycle state independently. A transport
+mismatch on a reviewed drifted row returns `MAPPING_CONFLICT`.
 
 Maintain provider status as `To Do -> In Progress` when accepted work starts
 and `In Progress -> In Review` when a human marks the provider PR ready for
@@ -300,7 +300,7 @@ Before Jira Done, link all Issues, merged PRs, and completion docs, or record
 | GitHub Issue | Primary Jira item and relevant inputs |
 | Branch | GitHub Issue number in the branch name |
 | Pull Request | Jira, `Closes #<issue>`, Hub/handoff when needed, related docs |
-| Backend Capability Registry | Capability ID, canonical content ID, artifact/version/commit, scope/domain/transport, owner |
+| Backend Capability Registry | Capability ID, canonical content ID/version, scope/domain/transport, owner |
 | Epic Integration Hub | Registry rows, paired items, Epic Folders, states, consumers, PRs |
 | Frontend Capability Index | Registry rows, Backend content IDs, artifact versions, FE usage/owner |
 | Completion page | Jira, Issues, PRs, Hub, owning Folder |
