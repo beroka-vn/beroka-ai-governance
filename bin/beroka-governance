@@ -32,6 +32,9 @@ CONFLUENCE_TARGET_CAPABILITY_ID= CONFLUENCE_TARGET_SCOPE=
 CONFLUENCE_TARGET_DOMAIN= CONFLUENCE_TARGET_TRANSPORT=
 CONFLUENCE_TARGET_PARENT_ID= CONFLUENCE_TARGET_REGISTRY_CONTENT_ID=
 CONFLUENCE_HANDOFF_BODY_FILE=
+CONFLUENCE_READBACK_PARENT_ID= CONFLUENCE_READBACK_SPACE_KEY=
+CONFLUENCE_READBACK_TITLE= CONFLUENCE_READBACK_VERSION=
+CONFLUENCE_READBACK_OWNER_ACCOUNT_ID=
 GITHUB_ROLE=
 GITHUB_FRONTEND_MEMBER=0 GITHUB_BACKEND_MEMBER=0
 CONNECTOR_PROBE_CLIENT= CONNECTOR_PROBE_OUTPUT= CONNECTOR_PROBE_STATUS=
@@ -74,6 +77,7 @@ usage() {
     '  beroka-governance doctor REPO [--client codex|claude|cursor]' \
     '  beroka-governance preflight REPO --client codex|claude|cursor --operation OPERATION [--non-interactive] [CONFLUENCE-TARGET-OPTIONS]' \
     '  Confluence target options: --confluence-action create|update|move --target-content-id ID|new --capability-id ID --scope SCOPE --domain DOMAIN --transport API|WebSocket --expected-parent-id ID --registry-content-id ID' \
+    '  Handoff readback options: --readback-parent-id ID --readback-space-key KEY --readback-title TITLE --readback-version POSITIVE_INTEGER --readback-owner-account-id ACCOUNT_ID' \
     '  beroka-governance context REPO' \
     '  beroka-governance confluence-discover REPO [--scope SCOPE --domain DOMAIN --transport API|WebSocket]' \
     '  beroka-governance confluence-bootstrap-plan REPO --scope SCOPE --domain DOMAIN --transport API|WebSocket' \
@@ -416,6 +420,23 @@ validate_handoff_body() {
   if LC_ALL=C grep -Eiq '(^|[^[:alnum:]])(tbd|todo)([^[:alnum:]]|$)|<[^>]+>|fill later|api[ _-]?key[[:space:]]*[:=]|authorization:[[:space:]]*bearer|internal (topic|topology|adapter|provider)|upstream payload' "$vhb_file"; then
     die HANDOFF_BODY_INVALID 'Handoff body contains placeholders or publication leakage'
   fi
+}
+
+validate_handoff_readback() {
+  for vhr_id in "$CONFLUENCE_TARGET_CONTENT_ID" \
+    "$CONFLUENCE_TARGET_PARENT_ID" "$CONFLUENCE_READBACK_PARENT_ID" \
+    "$CONFLUENCE_READBACK_VERSION"
+  do
+    printf '%s\n' "$vhr_id" | grep -Eq '^[1-9][0-9]*$' ||
+      die HANDOFF_READBACK_REQUIRED 'Handoff readback requires exact numeric identity evidence'
+  done
+  [ "$CONFLUENCE_TARGET_PARENT_ID" = "$CONFLUENCE_READBACK_PARENT_ID" ] &&
+    [ "$CONFLUENCE_READBACK_SPACE_KEY" = "$ROUTE_CONFLUENCE_SPACE_KEY" ] &&
+    [ -n "$CONFLUENCE_READBACK_TITLE" ] &&
+    [ -n "$CONFLUENCE_READBACK_OWNER_ACCOUNT_ID" ] &&
+    [ "$vhb_content" = "$CONFLUENCE_TARGET_CONTENT_ID" ] &&
+    [ "$vhb_version" = "$CONFLUENCE_READBACK_VERSION" ] ||
+    die HANDOFF_READBACK_REQUIRED 'Handoff readback does not match the verified handoff identity'
 }
 
 assert_install_paths() {
@@ -4848,9 +4869,13 @@ require_operation_routing() {
         die ROUTING_REQUIRED \
           'Confluence handoff verification requires an exact integration target'
       case "$CONFLUENCE_TARGET_ACTION:$CONFLUENCE_TARGET_CONTENT_ID" in
-        update:[1-9]*) ;;
-        *) die ROUTING_REQUIRED \
-          'Confluence handoff verification requires an existing target page' ;;
+        update:[1-9]*)
+          printf '%s\n' "$CONFLUENCE_TARGET_CONTENT_ID" | grep -Eq '^[1-9][0-9]*$' ||
+            die HANDOFF_READBACK_REQUIRED \
+              'Handoff readback requires an exact numeric target content ID'
+          ;;
+        *) die HANDOFF_READBACK_REQUIRED \
+          'Handoff readback requires an existing target page' ;;
       esac
       require_active_handoff_folder "$(confluence_targets_path)"
       resolve_confluence_target
@@ -4859,6 +4884,7 @@ require_operation_routing() {
           'Confluence handoff verification requires an ACTIVE target page'
       validate_handoff_body "$CONFLUENCE_HANDOFF_BODY_FILE" \
         "$CONFLUENCE_TARGET_ACTION" "$CONFLUENCE_TARGET_CONTENT_ID"
+      validate_handoff_readback
       PREFLIGHT_CAPABILITY=confluence-page-read
       ;;
     cross-repo-write)
@@ -4951,6 +4977,14 @@ print_preflight_result() {
         "Target transport: $CONFLUENCE_TARGET_TRANSPORT" \
         "Expected parent ID: $CONFLUENCE_TARGET_PARENT_ID" \
         "Registry content ID: $CONFLUENCE_TARGET_REGISTRY_CONTENT_ID"
+      if [ "$ppr_operation" = confluence-handoff-verify ]; then
+        printf '%s\n' \
+          "Readback parent ID: $CONFLUENCE_READBACK_PARENT_ID" \
+          "Readback space: $CONFLUENCE_READBACK_SPACE_KEY" \
+          "Readback title: $CONFLUENCE_READBACK_TITLE" \
+          "Readback version: $CONFLUENCE_READBACK_VERSION" \
+          'Readback: VERIFIED'
+      fi
       ;;
   esac
   printf '%s\n' \
@@ -4969,11 +5003,16 @@ cmd_preflight() {
   pf_seen_action=0 pf_seen_content=0 pf_seen_capability=0 pf_seen_scope=0
   pf_seen_domain=0 pf_seen_transport=0 pf_seen_parent=0 pf_seen_registry=0
   pf_seen_handoff_body=0
+  pf_seen_readback_parent=0 pf_seen_readback_space=0 pf_seen_readback_title=0
+  pf_seen_readback_version=0 pf_seen_readback_owner=0
   CONFLUENCE_TARGET_ACTION= CONFLUENCE_TARGET_CONTENT_ID=
   CONFLUENCE_TARGET_CAPABILITY_ID= CONFLUENCE_TARGET_SCOPE=
   CONFLUENCE_TARGET_DOMAIN= CONFLUENCE_TARGET_TRANSPORT=
   CONFLUENCE_TARGET_PARENT_ID= CONFLUENCE_TARGET_REGISTRY_CONTENT_ID=
   CONFLUENCE_HANDOFF_BODY_FILE=
+  CONFLUENCE_READBACK_PARENT_ID= CONFLUENCE_READBACK_SPACE_KEY=
+  CONFLUENCE_READBACK_TITLE= CONFLUENCE_READBACK_VERSION=
+  CONFLUENCE_READBACK_OWNER_ACCOUNT_ID=
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --client)
@@ -5002,6 +5041,40 @@ cmd_preflight() {
         case "$2" in --*) usage >&2; exit 2 ;; esac
         pf_seen_handoff_body=1
         CONFLUENCE_HANDOFF_BODY_FILE=$2
+        shift 2
+        ;;
+      --readback-parent-id|--readback-space-key|--readback-title|\
+      --readback-version|--readback-owner-account-id)
+        pf_readback_option=$1
+        [ "$#" -ge 2 ] || { usage >&2; exit 2; }
+        case "$2" in --*) usage >&2; exit 2 ;; esac
+        case "$pf_readback_option" in
+          --readback-parent-id)
+            [ "$pf_seen_readback_parent" -eq 0 ] || { usage >&2; exit 2; }
+            pf_seen_readback_parent=1
+            CONFLUENCE_READBACK_PARENT_ID=$2
+            ;;
+          --readback-space-key)
+            [ "$pf_seen_readback_space" -eq 0 ] || { usage >&2; exit 2; }
+            pf_seen_readback_space=1
+            CONFLUENCE_READBACK_SPACE_KEY=$2
+            ;;
+          --readback-title)
+            [ "$pf_seen_readback_title" -eq 0 ] || { usage >&2; exit 2; }
+            pf_seen_readback_title=1
+            CONFLUENCE_READBACK_TITLE=$2
+            ;;
+          --readback-version)
+            [ "$pf_seen_readback_version" -eq 0 ] || { usage >&2; exit 2; }
+            pf_seen_readback_version=1
+            CONFLUENCE_READBACK_VERSION=$2
+            ;;
+          --readback-owner-account-id)
+            [ "$pf_seen_readback_owner" -eq 0 ] || { usage >&2; exit 2; }
+            pf_seen_readback_owner=1
+            CONFLUENCE_READBACK_OWNER_ACCOUNT_ID=$2
+            ;;
+        esac
         shift 2
         ;;
       --confluence-action|--target-content-id|--capability-id|--scope|\
@@ -5076,6 +5149,12 @@ cmd_preflight() {
       confluence-handoff-write|confluence-handoff-verify) ;;
       *) usage >&2; exit 2 ;;
     esac
+  fi
+  if [ "$pf_seen_readback_parent" -eq 1 ] || [ "$pf_seen_readback_space" -eq 1 ] ||
+     [ "$pf_seen_readback_title" -eq 1 ] || [ "$pf_seen_readback_version" -eq 1 ] ||
+     [ "$pf_seen_readback_owner" -eq 1 ]
+  then
+    [ "$pf_operation" = confluence-handoff-verify ] || { usage >&2; exit 2; }
   fi
   [ "$pf_operation" != cross-repo-write ] ||
     require_operation_routing "$pf_operation"

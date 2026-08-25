@@ -1605,7 +1605,39 @@ assert_contains "$output" 'Target transport: WebSocket'
 assert_contains "$output" 'Result: PASS'
 
 handoff_verify_body=$HOME/handoff-verify.md
-cp "$ROOT/tests/fixtures/handoffs/ready-api.md" "$handoff_verify_body"
+sed 's/^Confluence page version: 1$/Confluence page version: 3/' \
+  "$ROOT/tests/fixtures/handoffs/ready-api.md" >"$handoff_verify_body"
+
+handoff_readback_preflight() {
+  $CLI preflight "$canonical_backend" --client codex \
+    --operation confluence-handoff-verify --non-interactive \
+    --confluence-action "$hrv_action" --target-content-id "$hrv_target" \
+    --expected-parent-id "$hrv_expected_parent" \
+    --handoff-body-file "$hrv_body" \
+    --readback-parent-id "$hrv_readback_parent" \
+    --readback-space-key "$hrv_readback_space" \
+    --readback-title "$hrv_readback_title" \
+    --readback-version "$hrv_readback_version" \
+    --readback-owner-account-id "$hrv_readback_owner"
+}
+
+reset_handoff_readback() {
+  hrv_action=update hrv_target=900001 hrv_expected_parent=900002
+  hrv_body=$handoff_verify_body hrv_readback_parent=900002
+  hrv_readback_space=Berokaback
+  hrv_readback_title='Handoff — BB-42 — broker-account-reconnect'
+  hrv_readback_version=3 hrv_readback_owner='712020:owner'
+}
+
+assert_handoff_readback_required() {
+  : >"$CALLS"
+  if output=$(handoff_readback_preflight 2>&1)
+  then
+    fail 'handoff verification passed without exact readback evidence'
+  fi
+  assert_contains "$output" 'Result: HANDOFF_READBACK_REQUIRED'
+  [ ! -s "$CALLS" ] || fail 'invalid handoff readback inspected a connector'
+}
 
 if output=$($CLI preflight "$canonical_backend" --client codex \
   --operation confluence-handoff-verify --non-interactive \
@@ -1618,25 +1650,53 @@ then
 fi
 assert_contains "$output" 'Result: MAPPING_CONFLICT'
 
-output=$($CLI preflight "$canonical_backend" --client codex \
-  --operation confluence-handoff-verify --non-interactive \
-  --confluence-action update --target-content-id 900001 \
-  --capability-id MARKET-FU-INDEX-API --scope Shared --domain Market \
-  --transport API --expected-parent-id 900002 \
-  --registry-content-id 900003 --handoff-body-file "$handoff_verify_body")
+reset_handoff_readback
+output=$(handoff_readback_preflight)
 assert_contains "$output" 'Capability: confluence-page-read'
+assert_contains "$output" 'Readback: VERIFIED'
 assert_contains "$output" 'Result: PASS'
+assert_not_contains "$output" '712020:owner'
+assert_not_contains "$output" 'The public quote endpoint returns the latest market quote.'
 
+# Each missing or mismatched local readback fact must stop before connector inspection.
+reset_handoff_readback
+hrv_target=
+assert_handoff_readback_required
+reset_handoff_readback
+hrv_readback_parent=900003
+assert_handoff_readback_required
+reset_handoff_readback
+hrv_readback_space=Wrong
+assert_handoff_readback_required
+reset_handoff_readback
+hrv_readback_title=
+assert_handoff_readback_required
+reset_handoff_readback
+hrv_readback_version=0
+assert_handoff_readback_required
+reset_handoff_readback
+hrv_readback_owner=
+assert_handoff_readback_required
+reset_handoff_readback
+sed 's/^Confluence page version: 3$/Confluence page version: 2/' \
+  "$handoff_verify_body" >"$HOME/handoff-verify-stale.md"
+hrv_body=$HOME/handoff-verify-stale.md
+assert_handoff_readback_required
+
+reset_handoff_readback
 if output=$($CLI preflight "$canonical_backend" --client codex \
   --operation confluence-handoff-verify --non-interactive \
   --confluence-action create --target-content-id new \
   --capability-id MARKET-PLANNED-API --scope Shared --domain Market \
   --transport API --expected-parent-id 900002 \
-  --registry-content-id 900003 --handoff-body-file "$handoff_verify_body" 2>&1)
+  --registry-content-id 900003 --handoff-body-file "$handoff_verify_body" \
+  --readback-parent-id 900002 --readback-space-key Berokaback \
+  --readback-title 'Handoff — BB-42 — broker-account-reconnect' \
+  --readback-version 3 --readback-owner-account-id '712020:owner' 2>&1)
 then
-  fail 'handoff accepted a planned target without a content ID'
+  fail 'handoff verification accepted create/new'
 fi
-assert_contains "$output" 'Result: ROUTING_REQUIRED'
+assert_contains "$output" 'Result: HANDOFF_READBACK_REQUIRED'
 
 printf '%s\n' healthy-missing-confluence-read \
   >"$XDG_CONFIG_HOME/fake-codex-health"
@@ -1645,7 +1705,10 @@ if output=$($CLI preflight "$canonical_backend" --client codex \
   --confluence-action update --target-content-id 900001 \
   --capability-id MARKET-FU-INDEX-API --scope Shared --domain Market \
   --transport API --expected-parent-id 900002 \
-  --registry-content-id 900003 --handoff-body-file "$handoff_verify_body" 2>&1)
+  --registry-content-id 900003 --handoff-body-file "$handoff_verify_body" \
+  --readback-parent-id 900002 --readback-space-key Berokaback \
+  --readback-title 'Handoff — BB-42 — broker-account-reconnect' \
+  --readback-version 3 --readback-owner-account-id '712020:owner' 2>&1)
 then
   fail 'handoff passed without Confluence read capability'
 fi
