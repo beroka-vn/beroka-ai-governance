@@ -75,7 +75,7 @@ scope, acceptance criteria, repository, or validation already recorded.
 - [ ] For FE work that depends on BE, the Backend Capability Registry row, Hub,
       linked BE item, and handoff state exist; dependent work is Ready only
       after `READY_FOR_FE` and the FE owner has `ACKNOWLEDGED` the exact
-      contract version.
+      Confluence content ID and page version.
 
 If a required item is missing, the issue is not Ready. Ask the responsible
 owner instead of inventing an assumption that changes scope or priority.
@@ -110,7 +110,8 @@ Use a hybrid model:
   current-state index, linked from both `BB` and `BF`. It references Registry
   rows and owns only Epic-specific Jira relationships, consumers, handoff
   states, and acknowledgements.
-- Each BE issue/PR contains only a short delta, contract version, test path,
+- Each BE issue/PR contains only a short delta, Confluence content ID/page
+  version, test path,
   limitations, and linked FE item.
 - FE consumes the self-contained Confluence page by exact content ID and
   version; it never needs an opposite-team GitHub repository or reconstructs a
@@ -137,16 +138,16 @@ Ownership:
 
 - BE Issue Owner publishes the contract, updates the Registry row and
   referencing Hub changelogs, and sends the handoff.
-- FE Issue Owner acknowledges the exact version and owns UI integration/usage
-  notes without changing the BE contract definition.
+- FE Issue Owner acknowledges the exact Confluence content ID/page version and
+  owns UI integration/usage notes without changing the BE contract definition.
 - Manager/Coordinator owns Hub placement and resolves conflicting mapping or
   readiness claims.
 
 | State | Meaning |
 | --- | --- |
 | `DRAFT` | Contract is under discussion and is not a finalized dependency |
-| `READY_FOR_FE` | BE PR is merged, artifact is published, and a test path works |
-| `ACKNOWLEDGED` | FE owner confirms receipt of the exact contract version |
+| `READY_FOR_FE` | The self-contained page passes post-write readback and a test path works |
+| `ACKNOWLEDGED` | FE owner confirms the exact Confluence content ID/page version |
 | `BLOCKED` | Contract, environment, permission, or required evidence is missing |
 | `SUPERSEDED` | A newer version replaces this handoff |
 
@@ -165,7 +166,7 @@ rewrite an acknowledged version.
 
 BE work with no FE impact records `Frontend impact: None — <reason>` and needs
 no handoff. Multiple FE items or Epics reuse the Registry row and exact
-artifact version.
+Confluence content ID/page version.
 
 ## Canonical capability documentation
 
@@ -207,9 +208,9 @@ Confluence content ID and version.
 
 Durable FE pages use `<Module> — Capability Index`, such as
 `HomePage — Capability Index`, `Portfolio — Capability Index`, or
-`Quote — Capability Index`. They link exact Registry rows, Backend content IDs,
-and artifact versions without copying payloads. UI layout, route, component, or
-page-title changes update the FE index only.
+`Quote — Capability Index`. They link exact Registry rows and Confluence
+content IDs/page versions without copying payloads. UI layout, route,
+component, or page-title changes update the FE index only.
 
 ## Review, approval, and merge authority
 
@@ -317,7 +318,7 @@ When the child has a BE dependency or its BF Epic is paired, require:
 - exact BB Feature/Story/Task/Bug counterpart when it exists;
 - dependency direction and `Blocks` or `Relates` link type;
 - immutable Capability ID, Registry row, and Hub reference;
-- contract version and handoff state when FE consumes a BE contract.
+- Confluence content ID/page version and handoff state when FE consumes a BE contract.
 
 If a required BB record cannot be resolved, show candidates and wait for one of
 four decisions: Frontend-only, pair an existing BB record, record `Pending` with

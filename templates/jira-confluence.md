@@ -114,8 +114,8 @@ CROSS-TEAM CONFLUENCE HANDOFF
 - GitHub: N/A
 - Confluence content ID and version: new/pending | <numeric ID>/<positive integer>
 - Expected parent ID: <exact reviewed ACTIVE Folder ID>
-- Pre-write: confluence-handoff-write --handoff-body-file PATH
-- Post-write: confluence-handoff-verify --confluence-action update --target-content-id ID --expected-parent-id ID --handoff-body-file PATH --readback-parent-id ID --readback-space-key KEY --readback-title TITLE --readback-version POSITIVE_INTEGER --readback-owner-account-id ACCOUNT_ID
+- Pre-write arguments: --confluence-action create|update --target-content-id new|ID --expected-parent-id ACTIVE_FOLDER_ID --handoff-body-file FILE
+- Post-write: confluence-handoff-verify --confluence-action update --target-content-id ID --expected-parent-id ID --handoff-body-file FILE --readback-parent-id ID --readback-space-key KEY --readback-title TITLE --readback-version POSITIVE_INTEGER --readback-owner-account-id ACCOUNT_ID
 - Result: PASS | FOLDER_CREATION_REQUIRED | HANDOFF_BODY_INVALID |
   CROSS_TEAM_LINK_SCOPE_DENIED | HANDOFF_READBACK_REQUIRED
 ```
@@ -361,8 +361,8 @@ Confluence page identity.
 ```markdown
 # <Module> — Capability Index
 
-| FE feature/use | Capability ID | Product scope | Transport | Canonical content ID | Artifact/version | FE owner |
-| --- | --- | --- | --- | --- | --- | --- |
+| FE feature/use | Capability ID | Product scope | Transport | Confluence content ID/page version | FE owner |
+| --- | --- | --- | --- | --- | --- |
 ```
 
 The Index may reference capabilities used by several FE modules and never
@@ -545,7 +545,7 @@ Provider private delivery links stay in provider-owned records only.
 ### Cross-team integration
 
 - Epic Integration Hub: <URL | N/A>
-- Final contract artifact/version: <link/version | N/A>
+- Final Confluence content ID/page version: <ID/version | N/A>
 - Required BE → FE handoffs: ACKNOWLEDGED | N/A
 
 ### Final status
@@ -608,14 +608,14 @@ impact != None`. Keep GitHub links only in team-local Issue/PR sections.
 ```markdown
 Handoff schema: 1
 Handoff state: READY_FOR_FE
-Provider Jira: BB-42
-Consumer Jira: BF-69
-Confluence content ID: 900001
-Confluence page version: 1
-Owner account ID: account-123
-Effective date: 2026-08-25
-Supersedes: N/A
-Superseded by: N/A
+Provider Jira: {{PROVIDER_JIRA}}
+Consumer Jira: {{CONSUMER_JIRA}}
+Confluence content ID: {{CONTENT_ID}}
+Confluence page version: {{PAGE_VERSION}}
+Owner account ID: {{OWNER_ACCOUNT_ID}}
+Effective date: {{EFFECTIVE_DATE}}
+Supersedes: {{SUPERSEDES}}
+Superseded by: {{SUPERSEDED_BY}}
 API impact: affected
 WebSocket impact: affected
 Missing sections: None
@@ -658,7 +658,7 @@ Exchange outages can delay updates.
 
 ## FE acknowledgment
 
-Frontend reviewed both public contracts.
+Frontend acknowledgment is pending. Respond on {{CONSUMER_JIRA}} with Confluence content ID {{CONTENT_ID}} version {{PAGE_VERSION}}.
 
 ## Affected API inventory
 
@@ -789,6 +789,21 @@ All other public WebSocket streams are unchanged.
 records `ACKNOWLEDGED` for the exact Confluence content ID and version. A
 version change marks the old handoff `SUPERSEDED`, updates the changelog, and
 notifies FE again.
+
+Resolve every `{{TOKEN}}` from exact user or readback evidence before preflight;
+never send an unresolved token. For this READY page, run:
+
+```sh
+beroka-governance preflight {{REPOSITORY}} --client {{CLIENT}} --operation confluence-handoff-write --non-interactive --confluence-action update --target-content-id {{CONTENT_ID}} --expected-parent-id {{ACTIVE_FOLDER_ID}} --handoff-body-file {{HANDOFF_BODY_FILE}}
+```
+
+After the write, run:
+
+```sh
+beroka-governance preflight {{REPOSITORY}} --client {{CLIENT}} --operation confluence-handoff-verify --non-interactive --confluence-action update --target-content-id {{CONTENT_ID}} --expected-parent-id {{ACTIVE_FOLDER_ID}} --handoff-body-file {{HANDOFF_BODY_FILE}} --readback-parent-id {{ACTIVE_FOLDER_ID}} --readback-space-key {{SPACE_KEY}} --readback-title {{PAGE_TITLE}} --readback-version {{PAGE_VERSION}} --readback-owner-account-id {{OWNER_ACCOUNT_ID}}
+```
+
+For a DRAFT create, use `--confluence-action create --target-content-id new`.
 
 ## Confluence Completion Document Template
 

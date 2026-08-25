@@ -274,9 +274,8 @@ CROSS-TEAM HANDOFF
 - Child link type/readback: <Blocks | Relates | None> — <pass | fail | pending | N/A>
 - Hub mapping-row readback: <pass | fail | pending | N/A>
 - Mapping result: <PASS | NO_BACKEND_DEPENDENCY | MAPPING_INCOMPLETE | MAPPING_CONFLICT | FAILED_READBACK | N/A>
-- Team-local artifact revision: <version | N/A>
 - Handoff state: <DRAFT | READY_FOR_FE | ACKNOWLEDGED | BLOCKED | SUPERSEDED>
-- FE acknowledgement: <owner, exact version, timestamp | pending | N/A>
+- FE acknowledgement: <owner, exact Confluence content ID/page version, timestamp | pending | N/A>
 
 DOCUMENTATION ROUTING
 - Work area: <Frontend | Backend | Shared/cross-service>
@@ -349,14 +348,14 @@ item solely because a child implementation request was made.
 ```text
 Handoff schema: 1
 Handoff state: READY_FOR_FE
-Provider Jira: BB-42
-Consumer Jira: BF-69
-Confluence content ID: 900001
-Confluence page version: 1
-Owner account ID: account-123
-Effective date: 2026-08-25
-Supersedes: N/A
-Superseded by: N/A
+Provider Jira: {{PROVIDER_JIRA}}
+Consumer Jira: {{CONSUMER_JIRA}}
+Confluence content ID: {{CONTENT_ID}}
+Confluence page version: {{PAGE_VERSION}}
+Owner account ID: {{OWNER_ACCOUNT_ID}}
+Effective date: {{EFFECTIVE_DATE}}
+Supersedes: {{SUPERSEDES}}
+Superseded by: {{SUPERSEDED_BY}}
 API impact: affected
 WebSocket impact: affected
 Missing sections: None
@@ -399,7 +398,7 @@ Exchange outages can delay updates.
 
 ## FE acknowledgment
 
-Frontend reviewed both public contracts.
+Frontend acknowledgment is pending. Respond on {{CONSUMER_JIRA}} with Confluence content ID {{CONTENT_ID}} version {{PAGE_VERSION}}.
 
 ## Affected API inventory
 
@@ -528,7 +527,22 @@ All other public WebSocket streams are unchanged.
 
 This consumer-facing page contains Jira and Confluence references only. Keep
 GitHub URLs in team-local Issue/PR sections. The BE owner updates the Registry
-and Hub after merge; the FE owner acknowledges the exact version.
+and Hub after merge; the FE owner acknowledges the exact Confluence content ID/page version.
+
+Resolve every `{{TOKEN}}` from exact user or readback evidence before preflight;
+never send an unresolved token. For this READY page, run:
+
+```sh
+beroka-governance preflight {{REPOSITORY}} --client {{CLIENT}} --operation confluence-handoff-write --non-interactive --confluence-action update --target-content-id {{CONTENT_ID}} --expected-parent-id {{ACTIVE_FOLDER_ID}} --handoff-body-file {{HANDOFF_BODY_FILE}}
+```
+
+After the write, run:
+
+```sh
+beroka-governance preflight {{REPOSITORY}} --client {{CLIENT}} --operation confluence-handoff-verify --non-interactive --confluence-action update --target-content-id {{CONTENT_ID}} --expected-parent-id {{ACTIVE_FOLDER_ID}} --handoff-body-file {{HANDOFF_BODY_FILE}} --readback-parent-id {{ACTIVE_FOLDER_ID}} --readback-space-key {{SPACE_KEY}} --readback-title {{PAGE_TITLE}} --readback-version {{PAGE_VERSION}} --readback-owner-account-id {{OWNER_ACCOUNT_ID}}
+```
+
+For a DRAFT create, use `--confluence-action create --target-content-id new`.
 
 ## Cross-Team Capability Mapping Template
 
@@ -652,7 +666,7 @@ Clarification needed
 - Unverified items and exact blockers:
 - Residual risks:
 - Frontend impact: None | Handoff required
-- Epic Integration Hub / contract version / handoff state:
+- Epic Integration Hub / Confluence content ID/page version / handoff state:
 - Linked FE issue acknowledgement:
 - Recommended next action:
 ```

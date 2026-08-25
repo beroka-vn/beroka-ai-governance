@@ -339,11 +339,34 @@ extract_advertised_handoff_body() {
   [ -s "$output" ] || fail "missing advertised handoff body in $template"
 }
 
+render_advertised_handoff_body() {
+  template=$1 output=$2 raw=$DOC_TEST_TMP/raw.md
+  extract_advertised_handoff_body "$template" "$raw"
+  sed \
+    -e 's/{{PROVIDER_JIRA}}/BB-42/g' \
+    -e 's/{{CONSUMER_JIRA}}/BF-69/g' \
+    -e 's/{{CONTENT_ID}}/900001/g' \
+    -e 's/{{PAGE_VERSION}}/1/g' \
+    -e 's/{{OWNER_ACCOUNT_ID}}/account-123/g' \
+    -e 's/{{EFFECTIVE_DATE}}/2026-08-25/g' \
+    -e 's/{{SUPERSEDES}}/N\/A/g' \
+    -e 's/{{SUPERSEDED_BY}}/N\/A/g' \
+    "$raw" >"$output"
+  if grep -Eq '{{[A-Z_]+}}' "$output"; then
+    fail "rendered handoff body in $template has unresolved tokens"
+  fi
+}
+
 for template in templates/ai-agent-assignment.md templates/jira-confluence.md; do
   advertised_body=$DOC_TEST_TMP/$(basename "$template").md
   extract_advertised_handoff_body "$template" "$advertised_body"
-  cmp -s "$advertised_body" "$ROOT/tests/fixtures/handoffs/ready-api-websocket.md" ||
-    fail "advertised handoff body in $template differs from the accepted fixture"
+  for token in PROVIDER_JIRA CONSUMER_JIRA CONTENT_ID PAGE_VERSION \
+    OWNER_ACCOUNT_ID EFFECTIVE_DATE SUPERSEDES SUPERSEDED_BY
+  do
+    require_text "$template" "{{$token}}"
+  done
+  require_text "$template" 'Frontend acknowledgment is pending. Respond on {{CONSUMER_JIRA}} with Confluence content ID {{CONTENT_ID}} version {{PAGE_VERSION}}.'
+  render_advertised_handoff_body "$template" "$DOC_TEST_TMP/rendered-$(basename "$template").md"
 done
 
 reject_text governance.md '`confluence-write` or `confluence-handoff-verify`'
@@ -352,10 +375,25 @@ for file in runtime/rules/general.md workflow.md templates/jira-confluence.md \
   templates/agent-entrypoints/AGENTS.md \
   templates/agent-entrypoints/CLAUDE.md \
   templates/agent-entrypoints/CURSOR-USER-RULE.txt; do
+  require_text "$file" '--operation confluence-handoff-write'
+  require_text "$file" '--operation confluence-handoff-verify'
   require_text "$file" \
-    '--confluence-action update --target-content-id ID --expected-parent-id ID'
-  require_text "$file" '--handoff-body-file PATH'
+    '--confluence-action create|update --target-content-id new|ID --expected-parent-id ACTIVE_FOLDER_ID --handoff-body-file FILE'
+  require_text "$file" \
+    '--confluence-action update --target-content-id ID --expected-parent-id ID --handoff-body-file FILE'
   require_text "$file" '--readback-parent-id ID --readback-space-key KEY'
+done
+require_text templates/jira-confluence.md \
+  'beroka-governance preflight {{REPOSITORY}} --client {{CLIENT}} --operation confluence-handoff-write --non-interactive --confluence-action update --target-content-id {{CONTENT_ID}} --expected-parent-id {{ACTIVE_FOLDER_ID}} --handoff-body-file {{HANDOFF_BODY_FILE}}'
+for file in templates/ai-agent-assignment.md templates/jira-confluence.md; do
+  require_text "$file" \
+    'beroka-governance preflight {{REPOSITORY}} --client {{CLIENT}} --operation confluence-handoff-write --non-interactive --confluence-action update --target-content-id {{CONTENT_ID}} --expected-parent-id {{ACTIVE_FOLDER_ID}} --handoff-body-file {{HANDOFF_BODY_FILE}}'
+  require_text "$file" \
+    '--operation confluence-handoff-verify --non-interactive --confluence-action update --target-content-id {{CONTENT_ID}} --expected-parent-id {{ACTIVE_FOLDER_ID}} --handoff-body-file {{HANDOFF_BODY_FILE}} --readback-parent-id {{ACTIVE_FOLDER_ID}} --readback-space-key {{SPACE_KEY}} --readback-title {{PAGE_TITLE}} --readback-version {{PAGE_VERSION}} --readback-owner-account-id {{OWNER_ACCOUNT_ID}}'
+done
+for file in workflow.md runtime/profiles/frontend.md templates/jira-confluence.md; do
+  reject_text "$file" 'artifact/version'
+  reject_text "$file" 'repository/path'
 done
 
 render_context() {
@@ -386,7 +424,7 @@ done
 # and integration rules add ownership only, so they cannot dilute the contract.
 for file in runtime/rules/general.md; do
   require_text "$file" 'confluence-handoff-write'
-  require_text "$file" '--handoff-body-file PATH'
+  require_text "$file" '--handoff-body-file FILE'
   require_text "$file" 'ACTIVE Folder'
   require_text "$file" 'self-contained Confluence page'
   require_text "$file" 'DRAFT-only'

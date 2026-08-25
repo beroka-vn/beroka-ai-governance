@@ -24,7 +24,7 @@ preflight immediately before each write. Agent instructions govern workflow beha
 | Branch/commit | Changes for exactly one issue | Unrelated work |
 | Pull Request | Diff, review, validation, approval, and merge evidence | The Issue or Confluence |
 | Confluence | Delivered behavior, decisions, guides, and limitations | Daily status tracking |
-| Backend Capability Registry | Cross-Epic Capability ID, canonical content, artifact/version, and owner | Epic-specific handoff state |
+| Backend Capability Registry | Cross-Epic Capability ID, Confluence content ID/page version, and owner | Epic-specific handoff state |
 
 ## 2. Standard lifecycle
 
@@ -171,8 +171,8 @@ fallback labels return `LABEL_CONFIGURATION_REQUIRED`; do not create them
 silently. Ask when scope, priority, or type is ambiguous. Read back owner,
 type, area, priority, and Jira link, then check
 [Definition of Ready](governance.md#definition-of-ready). FE dependent scope is
-Ready only after `READY_FOR_FE`, an exact contract version, and FE
-`ACKNOWLEDGED`. Independent FE scope may continue.
+Ready only after `READY_FOR_FE`, an exact Confluence content ID/page version,
+and FE `ACKNOWLEDGED`. Independent FE scope may continue.
 
 ### Step 4 — Create the branch and implement
 
@@ -226,7 +226,7 @@ Confluence content ID and version, use `GitHub: N/A` in cross-team Jira text,
 and include the complete affected API/WS contract, omissions, owner, effective
 date, supersession metadata, and FE acknowledgment path. Report
 `READY_FOR_FE` only after post-write readback; FE records `ACKNOWLEDGED` for
-that exact version before dependent work.
+that exact Confluence content ID/page version before dependent work.
 
 After merge:
 
@@ -252,7 +252,7 @@ transport. Never create generic repeated `Market`, `User`, `API`, or
 Every Jira Epic still owns one native Folder named
 `<Epic key> — <Epic summary>` for Epic-specific pages and its Hub. The Hub
 references exact Registry rows. Durable Frontend pages use
-`<Module> — Capability Index` and link exact Backend content IDs and artifact
+`<Module> — Capability Index` and link exact Confluence content IDs/page
 versions without copying payloads. Create pages only when content and an owner
 exist.
 
@@ -260,9 +260,9 @@ Ordinary page writes remain allow-by-default unless the target is `UNACTIVATED`
 in the governance release (`DOCS_UNACTIVATED`). Cross-team handoffs require an
 exact reviewed ACTIVE Folder and the self-contained Confluence page; never use
 an opposite-team repository link as the consumer contract. Before a handoff,
-run `confluence-handoff-write` with `--handoff-body-file PATH`. Create is
+run `beroka-governance preflight REPO --client CLIENT --operation confluence-handoff-write --non-interactive --confluence-action create|update --target-content-id new|ID --expected-parent-id ACTIVE_FOLDER_ID --handoff-body-file FILE`. Create is
 `DRAFT` only. Before reporting `READY_FOR_FE`, run a fresh
-`beroka-governance preflight REPO --client CLIENT --operation confluence-handoff-verify --non-interactive --confluence-action update --target-content-id ID --expected-parent-id ID --handoff-body-file PATH --readback-parent-id ID --readback-space-key KEY --readback-title TITLE --readback-version POSITIVE_INTEGER --readback-owner-account-id ACCOUNT_ID`.
+`beroka-governance preflight REPO --client CLIENT --operation confluence-handoff-verify --non-interactive --confluence-action update --target-content-id ID --expected-parent-id ID --handoff-body-file FILE --readback-parent-id ID --readback-space-key KEY --readback-title TITLE --readback-version POSITIVE_INTEGER --readback-owner-account-id ACCOUNT_ID`.
 Jira remains in its governed lifecycle state independently. A transport
 mismatch on a reviewed drifted row returns `MAPPING_CONFLICT`.
 
@@ -302,7 +302,7 @@ Before Jira Done, link all Issues, merged PRs, and completion docs, or record
 | Pull Request | Jira, `Closes #<issue>`, Hub/handoff when needed, related docs |
 | Backend Capability Registry | Capability ID, canonical content ID/version, scope/domain/transport, owner |
 | Epic Integration Hub | Registry rows, paired items, Epic Folders, states, consumers, PRs |
-| Frontend Capability Index | Registry rows, Backend content IDs, artifact versions, FE usage/owner |
+| Frontend Capability Index | Registry rows, Confluence content IDs/page versions, FE usage/owner |
 | Completion page | Jira, Issues, PRs, Hub, owning Folder |
 
 Use `Pending` with an owner only while a link does not exist. No placeholder may
@@ -345,7 +345,7 @@ scan, affected entrypoint/smoke path, and `Not run` reasons.
 - [ ] Receiving-team executor and current assignee accountId are confirmed;
       requester/reporter may differ.
 - [ ] Objective, scope, criteria, dependencies, owner, labels, and validation are Ready.
-- [ ] Registry row, Hub references, contract version, and handoff state are exact.
+- [ ] Registry row, Hub references, Confluence content ID/page version, and handoff state are exact.
 - [ ] AI authority and stop conditions are explicit.
 
 ### Before Ready for review

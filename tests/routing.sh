@@ -2139,16 +2139,51 @@ extract_advertised_handoff_body() {
   [ -s "$eahb_body" ] || fail "missing advertised handoff body: $eahb_template"
 }
 
+render_advertised_handoff_body() {
+  rahb_template=$1 rahb_body=$2 rahb_raw=$handoff_dir/raw-template.md
+  extract_advertised_handoff_body "$rahb_template" "$rahb_raw"
+  sed \
+    -e 's/{{PROVIDER_JIRA}}/BB-42/g' \
+    -e 's/{{CONSUMER_JIRA}}/BF-69/g' \
+    -e 's/{{CONTENT_ID}}/900001/g' \
+    -e 's/{{PAGE_VERSION}}/1/g' \
+    -e 's/{{OWNER_ACCOUNT_ID}}/account-123/g' \
+    -e 's/{{EFFECTIVE_DATE}}/2026-08-25/g' \
+    -e 's/{{SUPERSEDES}}/N\/A/g' \
+    -e 's/{{SUPERSEDED_BY}}/N\/A/g' \
+    "$rahb_raw" >"$rahb_body"
+  if grep -Eq '{{[A-Z_]+}}' "$rahb_body"; then
+    fail "rendered advertised handoff has unresolved tokens: $rahb_template"
+  fi
+}
+
+extract_advertised_prewrite_command() {
+  eapc_template=$1 eapc_command=$2
+  awk '/^beroka-governance preflight \{\{REPOSITORY\}\}/ { print; exit }' \
+    "$ROOT/$eapc_template" >"$eapc_command"
+  [ -s "$eapc_command" ] || fail "missing advertised pre-write command: $eapc_template"
+}
+
 for handoff_template in templates/ai-agent-assignment.md templates/jira-confluence.md; do
   handoff_template_body=$handoff_dir/$(basename "$handoff_template").md
-  extract_advertised_handoff_body "$handoff_template" "$handoff_template_body"
+  render_advertised_handoff_body "$handoff_template" "$handoff_template_body"
   : >"$CALLS"
-  if output=$(handoff_preflight "$handoff_template_body" update 900001 2>&1)
-  then
-    assert_contains "$output" 'Result: PASS'
-  else
-    fail "advertised handoff body did not pass: $handoff_template: $output"
+  handoff_template_command=$handoff_dir/prewrite-command.sh
+  extract_advertised_prewrite_command "$handoff_template" "$handoff_template_command"
+  sed \
+    -e "s|beroka-governance|$CLI|" \
+    -e "s|{{REPOSITORY}}|$canonical_backend|g" \
+    -e 's/{{CLIENT}}/codex/g' \
+    -e 's/{{CONTENT_ID}}/900001/g' \
+    -e 's/{{ACTIVE_FOLDER_ID}}/900002/g' \
+    -e "s|{{HANDOFF_BODY_FILE}}|$handoff_template_body|g" \
+    "$handoff_template_command" >"$handoff_dir/prewrite-rendered.sh"
+  if grep -Eq '{{[A-Z_]+}}' "$handoff_dir/prewrite-rendered.sh"; then
+    fail 'rendered advertised pre-write command has unresolved tokens'
   fi
+  output=$(sh "$handoff_dir/prewrite-rendered.sh" 2>&1) ||
+    fail "advertised pre-write command did not pass: $handoff_template: $output"
+  assert_contains "$output" 'Result: PASS'
   [ -s "$CALLS" ] || fail "advertised handoff did not reach connector: $handoff_template"
 done
 
