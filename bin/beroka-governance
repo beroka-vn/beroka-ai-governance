@@ -1074,16 +1074,11 @@ validate_confluence_target_inventory() {
       ($2 != "folder" || $4 == "-" || $10 != "-" || $11 != "-") { invalid=1 }
     $3 == "UNACTIVATED" &&
       ($4 == "-" || $10 != "-" || $11 != "-") { invalid=1 }
-    $4 != "-" {
-      content[$4]++
-      if ($2 != "folder" || $3 != "ACTIVE") strict_content[$4]=1
-    }
+    $4 != "-" && ++content[$4] > 1 { invalid=1 }
     $10 != "-" && ++capability[$10] > 1 { invalid=1 }
     { rows++; state[NR]=$3; type[NR]=$2; repo[NR]=$1; id[NR]=$4; parent[NR]=$9;
       scope[NR]=$6; domain[NR]=$7; transport[NR]=$8 }
     END {
-      for (content_id in content)
-        if (content[content_id] > 1 && strict_content[content_id]) invalid=1
       root_count=split(roots, root_values, /[^0-9]+/)
       for (i=1; i<=root_count; i++) if (root_values[i] != "" &&
         ++content[root_values[i]] > 1) invalid=1
@@ -1095,7 +1090,7 @@ validate_confluence_target_inventory() {
           if (scope[i] != scope[j] || domain[i] != domain[j] ||
             transport[i] != transport[j]) invalid=1
         }
-        if (matches < 1) invalid=1
+        if (matches != 1) invalid=1
       }
       for (i in state) if (state[i] == "ACTIVE" && type[i] == "folder") {
         root=""

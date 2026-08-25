@@ -1737,10 +1737,23 @@ pin_test_release v1.1.202
 : >"$CALLS"
 if output=$(handoff_parent_preflight 900002 2>&1)
 then
-  fail 'handoff write passed with duplicate ACTIVE Folder rows'
+  fail 'handoff write passed with duplicate ACTIVE Folder rows in the release'
 fi
-assert_contains "$output" 'Result: FOLDER_CREATION_REQUIRED'
-[ ! -s "$CALLS" ] || fail 'ambiguous handoff Folder inspected a connector'
+assert_contains "$output" 'Result: VERSION_MISMATCH'
+assert_contains "$output" 'Invalid Confluence target inventory'
+[ ! -s "$CALLS" ] || fail 'duplicate handoff inventory inspected a connector'
+
+: >"$CALLS"
+if output=$($CLI preflight "$canonical_backend" --client codex \
+  --operation confluence-write --non-interactive \
+  --confluence-action create --target-content-id new \
+  --expected-parent-id 900002 2>&1)
+then
+  fail 'ordinary write passed with duplicate ACTIVE Folder rows in the release'
+fi
+assert_contains "$output" 'Result: VERSION_MISMATCH'
+assert_contains "$output" 'Invalid Confluence target inventory'
+[ ! -s "$CALLS" ] || fail 'duplicate ordinary inventory inspected a connector'
 mv "$target_file.before-duplicate" "$target_file"
 pin_test_release v1.1.203
 
