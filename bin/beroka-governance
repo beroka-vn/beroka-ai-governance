@@ -3184,11 +3184,14 @@ codex_canonical_tool_names() {
       canonical["mcp__codex_apps__atlassian_rovo_getjiraprojectiss_ccce75cac970"]="getJiraProjectIssueTypesMetadata"
       canonical["mcp__codex_apps__atlassian_rovo_searchjiraissuesusingjql"]="searchJiraIssuesUsingJql"
       canonical["atlassian_rovo.createJiraIssue"]="createJiraIssue"
+      canonical["atlassian_rovo.createConfluencePage"]="createConfluencePage"
       canonical["atlassian_rovo.getAccessibleAtlassianResources"]="getAccessibleAtlassianResources"
+      canonical["atlassian_rovo.getConfluencePage"]="getConfluencePage"
       canonical["atlassian_rovo.getJiraIssue"]="getJiraIssue"
       canonical["atlassian_rovo.getJiraIssueTypeMetaWithFields"]="getJiraIssueTypeMetaWithFields"
       canonical["atlassian_rovo.getJiraProjectIssueTypesMetadata"]="getJiraProjectIssueTypesMetadata"
       canonical["atlassian_rovo.searchJiraIssuesUsingJql"]="searchJiraIssuesUsingJql"
+      canonical["atlassian_rovo.updateConfluencePage"]="updateConfluencePage"
     }
     {
       if (mode == "apps-only" && !($0 in canonical)) next

@@ -147,6 +147,12 @@ case "$*" in
           healthy-codex-apps-overlap)
             printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{},"updateConfluencePage":{}},"authStatus":"oAuth"},{"name":"codex_apps","tools":{"atlassian_rovo.createJiraIssue":{},"atlassian_rovo.getAccessibleAtlassianResources":{},"atlassian_rovo.getJiraIssue":{},"atlassian_rovo.getJiraIssueTypeMetaWithFields":{},"atlassian_rovo.getJiraProjectIssueTypesMetadata":{},"atlassian_rovo.searchJiraIssuesUsingJql":{}},"authStatus":"bearerToken"}],"nextCursor":null}}'
             ;;
+          healthy-codex-apps-confluence)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{},"authStatus":"oAuth"},{"name":"codex_apps","tools":{"atlassian_rovo.getAccessibleAtlassianResources":{},"atlassian_rovo.createConfluencePage":{},"atlassian_rovo.getConfluencePage":{},"atlassian_rovo.updateConfluencePage":{}},"authStatus":"bearerToken"}],"nextCursor":null}}'
+            ;;
+          healthy-codex-apps-confluence-preview)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{},"authStatus":"oAuth"},{"name":"codex_apps","tools":{"atlassian_rovo.getAccessibleAtlassianResources":{},"atlassian_rovo.createConfluencePagePreview":{},"atlassian_rovo.getConfluencePage":{},"atlassian_rovo.updateConfluencePage":{}},"authStatus":"bearerToken"}],"nextCursor":null}}'
+            ;;
           healthy-codex-apps-split-unreviewed)
             printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{},"authStatus":"oAuth"},{"name":"codex_apps","tools":{"createJiraIssue":{},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{}},"authStatus":"bearerToken"}]}}'
             ;;
@@ -1413,6 +1419,43 @@ output=$($CLI preflight "$canonical_backend" --client codex \
 assert_contains "$output" 'Target transport: API'
 assert_contains "$output" 'Capability: confluence-page-update'
 assert_contains "$output" 'Result: PASS'
+
+printf '%s\n' healthy-codex-apps-confluence \
+  >"$XDG_CONFIG_HOME/fake-codex-health"
+output=$($CLI preflight "$canonical_backend" --client codex \
+  --operation confluence-write --non-interactive \
+  --confluence-action update --target-content-id 900001 \
+  --capability-id MARKET-FU-INDEX-API --scope Shared --domain Market \
+  --transport API --expected-parent-id 900002 \
+  --registry-content-id 900003)
+assert_contains "$output" 'Capability state: SUPPORTED'
+assert_contains "$output" 'Runtime inventory: COMPLETE'
+assert_contains "$output" 'Result: PASS'
+output=$($CLI preflight "$canonical_backend" --client codex \
+  --operation confluence-write --non-interactive \
+  --confluence-action create --target-content-id new \
+  --capability-id MARKET-PLANNED-API --scope Shared --domain Market \
+  --transport API --expected-parent-id 900002 \
+  --registry-content-id 900003)
+assert_contains "$output" 'Capability state: SUPPORTED'
+assert_contains "$output" 'Runtime inventory: COMPLETE'
+assert_contains "$output" 'Result: PASS'
+
+printf '%s\n' healthy-codex-apps-confluence-preview \
+  >"$XDG_CONFIG_HOME/fake-codex-health"
+if output=$($CLI preflight "$canonical_backend" --client codex \
+  --operation confluence-write --non-interactive \
+  --confluence-action create --target-content-id new \
+  --capability-id MARKET-PLANNED-API --scope Shared --domain Market \
+  --transport API --expected-parent-id 900002 \
+  --registry-content-id 900003 2>&1)
+then
+  fail 'Confluence preview alias authorized create'
+fi
+assert_contains "$output" 'Capability state: UNSUPPORTED'
+assert_contains "$output" 'Runtime inventory: COMPLETE'
+assert_contains "$output" 'Result: CONNECTOR_CAPABILITY_REQUIRED'
+printf '%s\n' healthy-all >"$XDG_CONFIG_HOME/fake-codex-health"
 
 printf '%s\n' healthy-no-confluence-update \
   >"$XDG_CONFIG_HOME/fake-codex-health"

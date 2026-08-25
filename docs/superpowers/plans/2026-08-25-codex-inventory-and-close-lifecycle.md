@@ -13,7 +13,11 @@
 ## Global Constraints
 
 - Technical artifacts remain in English.
-- No new dependency, daemon, webhook, credential, configuration value, or capability alias.
+- No new dependency, daemon, webhook, credential, or configuration value. The
+  only capability-alias expansion is the explicitly authorized exact
+  `atlassian_rovo.createConfluencePage`, `atlassian_rovo.getConfluencePage`,
+  and `atlassian_rovo.updateConfluencePage` aliases; no legacy, hashed,
+  preview, suffixed, or other aliases are allowed.
 - Only exact reviewed aliases from the optional single `codex_apps` record are accepted.
 - Malformed or duplicate names within one record remain blocked.
 - A non-null pagination cursor cannot make missing tools authoritative.
@@ -91,7 +95,10 @@ CAPABILITY_INVENTORY=$({
 CAPABILITY_INVENTORY_FORMAT=json
 ```
 
-Do not change `codex_canonical_tool_names`; its per-record duplicate rejection protects the existing ambiguous-alias test.
+Keep `codex_canonical_tool_names` duplicate rejection intact. The later
+integrated fix adds only the three explicitly authorized exact Confluence
+aliases named in Global Constraints; it does not add any legacy, hashed,
+preview, suffixed, or other aliases.
 
 - [ ] **Step 4: Run routing tests and verify GREEN for overlap and existing negatives**
 

@@ -1,6 +1,6 @@
 # Codex Inventory and GitHub Close Lifecycle Design
 
-**Issue:** beroka-vn/beroka-ai-governance#77  
+**Issue:** beroka-vn/beroka-ai-governance#77
 **Work-item language:** English
 
 ## Goal
@@ -20,6 +20,12 @@ duplicate canonical name, so the valid overlap makes the complete inventory
 unavailable. Issue #78 covered an empty direct record plus a populated Codex
 Apps record, but not the live populated/populated shape.
 
+The terminal live inventory later exposed the required Confluence operations
+only in Codex Apps. The user explicitly authorized these three exact reviewed
+dot-namespace aliases: `atlassian_rovo.createConfluencePage`,
+`atlassian_rovo.getConfluencePage`, and
+`atlassian_rovo.updateConfluencePage`.
+
 ## Inventory resolution
 
 Keep the existing two exact trusted inputs:
@@ -32,6 +38,10 @@ Validate and canonicalize each record independently. Reject duplicates within
 either record because they are ambiguous. Merge the two validated sets as a
 set, allowing the same canonical capability to appear once in each trusted
 record. This overlap is corroborating evidence, not ambiguity.
+
+The canonical allowlist includes only the three explicitly authorized
+Confluence aliases above. It does not accept legacy, hashed, preview,
+suffixed, or any other new aliases.
 
 All existing fail-closed behavior remains: malformed records, duplicate server
 records, unreviewed aliases, near matches, cross-provider names,
@@ -94,4 +104,5 @@ introduced.
 - Reopening a closed GitHub Issue when an external follow-up is blocked.
 - Adding webhook infrastructure or persistent credentials.
 - Guessing Jira or Confluence mappings.
-- Broadening the reviewed Codex Apps alias allowlist.
+- Adding Codex Apps aliases beyond the three explicitly authorized Confluence
+  aliases.
