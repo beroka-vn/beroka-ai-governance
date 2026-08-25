@@ -101,6 +101,17 @@ for file in runtime/rules/work-items.md runtime/integrations/beroka-be-fe.md \
   require_text "$file" 'CROSS_TEAM_LINK_SCOPE_DENIED'
   require_text "$file" 'In Review'
 done
+for file in governance.md workflow.md runtime/rules/work-items.md \
+  runtime/integrations/beroka-be-fe.md templates/jira-confluence.md; do
+  require_text "$file" 'closes the current primary GitHub Issue'
+  require_text "$file" 'exact linked Jira item'
+  require_text "$file" 'already in `In Review`'
+  require_text "$file" 'exact Confluence content ID'
+  require_text "$file" 'ask the user'
+  require_text "$file" 'documentation readback'
+  require_text "$file" 'remains in `In Review`'
+  reject_text "$file" 'In Review -> Done'
+done
 reject_text templates/jira-confluence.md 'Frontend Jira/GitHub issue(s):'
 require_text workflow.md 'requester/reporter may differ from executor/assignee'
 require_text workflow.md \

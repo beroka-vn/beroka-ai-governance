@@ -30,9 +30,17 @@
 - Before a Confluence handoff, run target-bound `confluence-handoff-verify`.
   Unknown targets return `ROUTING_REQUIRED` and wait. Opposite-team private
   GitHub links return `CROSS_TEAM_LINK_SCOPE_DENIED`; use Confluence instead.
-- Provider status is `To Do -> In Progress` when work starts, `In Progress ->
-  In Review` when a human marks the PR ready, and `In Review -> Done` after
-  merge and documentation readback.
+- Provider status is `To Do -> In Progress` when work starts and `In Progress
+  -> In Review` when a human marks the PR ready. When an agent closes the current primary GitHub Issue,
+  or observes during completion work that it has
+  just been closed, it resolves the exact linked Jira item, verifies the
+  authenticated account against the current assignee, runs a fresh `jira-write`
+  preflight, and transitions the item to `In Review`; an item already in `In Review` is idempotently complete.
+  It then resolves related documentation only
+  by exact Confluence content ID. If the page, parent, or required change is
+  missing or ambiguous, ask the user and wait. Otherwise run a fresh
+  target-bound Confluence preflight, update the documentation, and read it back.
+  After documentation readback Jira remains in `In Review`; do not move it to `Done` automatically.
 - Missing supported intake workflow evidence returns
   `INTAKE_CONFIGURATION_REQUIRED`. Intake is agent-driven, not an event
   listener.
