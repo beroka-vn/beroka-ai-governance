@@ -144,11 +144,17 @@ case "$*" in
           healthy-codex-apps-split-jira)
             printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{},"authStatus":"oAuth"},{"name":"codex_apps","tools":{"github.get-pr-diff":{},"atlassian_rovo.createJiraIssue":{},"atlassian_rovo.getAccessibleAtlassianResources":{},"atlassian_rovo.getJiraIssue":{},"atlassian_rovo.getJiraIssueTypeMetaWithFields":{},"atlassian_rovo.getJiraProjectIssueTypesMetadata":{},"atlassian_rovo.searchJiraIssuesUsingJql":{}},"authStatus":"bearerToken"}]}}'
             ;;
+          healthy-codex-apps-overlap)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{"createJiraIssue":{},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{},"createConfluencePage":{},"getConfluencePage":{},"updateConfluencePage":{}},"authStatus":"oAuth"},{"name":"codex_apps","tools":{"atlassian_rovo.createJiraIssue":{},"atlassian_rovo.getAccessibleAtlassianResources":{},"atlassian_rovo.getJiraIssue":{},"atlassian_rovo.getJiraIssueTypeMetaWithFields":{},"atlassian_rovo.getJiraProjectIssueTypesMetadata":{},"atlassian_rovo.searchJiraIssuesUsingJql":{}},"authStatus":"bearerToken"}],"nextCursor":null}}'
+            ;;
           healthy-codex-apps-split-unreviewed)
             printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{},"authStatus":"oAuth"},{"name":"codex_apps","tools":{"createJiraIssue":{},"getAccessibleAtlassianResources":{},"getJiraIssue":{},"getJiraIssueTypeMetaWithFields":{},"getJiraProjectIssueTypesMetadata":{},"searchJiraIssuesUsingJql":{}},"authStatus":"bearerToken"}]}}'
             ;;
           healthy-codex-apps-read-only)
             printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{},"authStatus":"oAuth"},{"name":"codex_apps","tools":{"atlassian_rovo.getAccessibleAtlassianResources":{},"atlassian_rovo.getJiraIssue":{},"atlassian_rovo.getJiraIssueTypeMetaWithFields":{},"atlassian_rovo.getJiraProjectIssueTypesMetadata":{},"atlassian_rovo.searchJiraIssuesUsingJql":{}},"authStatus":"bearerToken"}]}}'
+            ;;
+          partial-codex-apps-read-only)
+            printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{},"authStatus":"oAuth"},{"name":"codex_apps","tools":{"atlassian_rovo.getAccessibleAtlassianResources":{},"atlassian_rovo.getJiraIssue":{},"atlassian_rovo.getJiraIssueTypeMetaWithFields":{},"atlassian_rovo.getJiraProjectIssueTypesMetadata":{},"atlassian_rovo.searchJiraIssuesUsingJql":{}},"authStatus":"bearerToken"}],"nextCursor":"page-2"}}'
             ;;
           healthy-codex-apps-similar)
             printf '%s\n' '{"id":1,"result":{"data":[{"name":"atlassian","tools":{},"authStatus":"oAuth"},{"name":"codex_apps","tools":{"atlassian_rovo.createJiraIssuePreview":{},"atlassian_rovo.getAccessibleAtlassianResources":{},"atlassian_rovo.getJiraIssue":{},"atlassian_rovo.getJiraIssueTypeMetaWithFields":{},"atlassian_rovo.getJiraProjectIssueTypesMetadata":{},"atlassian_rovo.searchJiraIssuesUsingJql":{}},"authStatus":"bearerToken"}]}}'
@@ -2459,6 +2465,14 @@ assert_contains "$output" 'Capability state: SUPPORTED'
 assert_contains "$output" 'Capability evidence: PROVIDER_CONTRACT'
 assert_contains "$output" 'Runtime inventory: COMPLETE'
 assert_contains "$output" 'Result: PASS'
+
+printf '%s\n' healthy-codex-apps-overlap \
+  >"$XDG_CONFIG_HOME/fake-codex-health"
+output=$($CLI preflight "$consumer" \
+  --client codex --operation jira-write --non-interactive)
+assert_contains "$output" 'Capability state: SUPPORTED'
+assert_contains "$output" 'Runtime inventory: COMPLETE'
+assert_contains "$output" 'Result: PASS'
 assert_not_contains "$output" 'createJiraIssue'
 assert_not_contains "$output" 'getAccessibleAtlassianResources'
 assert_not_contains "$output" 'getJiraIssueTypeMetaWithFields'
@@ -2508,6 +2522,17 @@ do
   assert_contains "$output" 'Runtime inventory: COMPLETE'
   assert_contains "$output" 'Result: CONNECTOR_CAPABILITY_REQUIRED'
 done
+
+printf '%s\n' partial-codex-apps-read-only \
+  >"$XDG_CONFIG_HOME/fake-codex-health"
+if output=$($CLI preflight "$consumer" \
+  --client codex --operation jira-write --non-interactive 2>&1)
+then
+  fail 'partial Codex inventory authorized Jira write'
+fi
+assert_contains "$output" 'Capability state: UNKNOWN'
+assert_not_contains "$output" 'Capability state: UNSUPPORTED'
+assert_contains "$output" 'Result: CONNECTOR_CAPABILITY_REQUIRED'
 
 printf '%s\n' healthy-codex-apps-ambiguous \
   >"$XDG_CONFIG_HOME/fake-codex-health"
@@ -2568,6 +2593,16 @@ output=$($CLI preflight "$consumer" \
   --client codex --operation confluence-write --non-interactive \
   --confluence-action move --target-content-id 555001 \
   --expected-parent-id 555002)
+assert_contains "$output" 'Result: PASS'
+
+printf '%s\n' healthy-codex-apps-overlap \
+  >"$XDG_CONFIG_HOME/fake-codex-health"
+output=$($CLI preflight "$consumer" \
+  --client codex --operation confluence-write --non-interactive \
+  --confluence-action move --target-content-id 555001 \
+  --expected-parent-id 555002)
+assert_contains "$output" 'Capability state: SUPPORTED'
+assert_contains "$output" 'Runtime inventory: COMPLETE'
 assert_contains "$output" 'Result: PASS'
 
 printf '%s\n' healthy-missing-confluence-read \

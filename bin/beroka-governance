@@ -3279,6 +3279,15 @@ cursor_tool_names() {
   '
 }
 
+codex_inventory_page_complete() {
+  jq -e -s '
+    length == 1 and
+    (.[0] | type == "object" and .id == 1 and
+      (.result | type == "object") and
+      ((.result.nextCursor? // null) == null))
+  ' >/dev/null 2>&1
+}
+
 connector_inventory() {
   ci_client=$1
   ci_mode=${2:-provider}
@@ -3295,20 +3304,27 @@ connector_inventory() {
         codex_atlassian_record) || return 1
       ci_tools=$(printf '%s\n' "$ci_record" |
         json_top_level_tools) || return 1
+      ci_tools=$(printf '%s\n' "$ci_tools" |
+        codex_canonical_tool_names) || return 1
       ci_apps_record=$(printf '%s\n' "$CONNECTOR_PROBE_OUTPUT" |
         codex_atlassian_record codex_apps optional) || return 1
       ci_apps_tools=
       if [ -n "$ci_apps_record" ]; then
         ci_apps_tools=$(printf '%s\n' "$ci_apps_record" |
           json_top_level_tools tools) || return 1
+        ci_apps_tools=$(printf '%s\n' "$ci_apps_tools" |
+          codex_canonical_tool_names apps-only) || return 1
       fi
       CAPABILITY_INVENTORY=$({
         [ -z "$ci_tools" ] || printf '%s\n' "$ci_tools"
-        [ -z "$ci_apps_tools" ] || printf '%s\n' "$ci_apps_tools" |
-          codex_canonical_tool_names apps-only
-      } | codex_canonical_tool_names) || return 1
+        [ -z "$ci_apps_tools" ] || printf '%s\n' "$ci_apps_tools"
+      } | LC_ALL=C sort -u) || return 1
       CAPABILITY_INVENTORY_FORMAT=json
-      CAPABILITY_INVENTORY_COMPLETE=1
+      if printf '%s\n' "$CONNECTOR_PROBE_OUTPUT" |
+         codex_inventory_page_complete
+      then
+        CAPABILITY_INVENTORY_COMPLETE=1
+      fi
       ;;
     claude)
       CAPABILITY_INVENTORY_COMPLETE=0
@@ -3622,13 +3638,20 @@ resolve_provider_capability() {
     return 0
   }
   connector_inventory "$rpc_client" || return 0
-  if [ "$CAPABILITY_INVENTORY_COMPLETE" -eq 1 ]; then
-    CAPABILITY_INVENTORY_STATE=COMPLETE
-    inventory_has_required_tools || {
+  if [ -n "$CAPABILITY_INVENTORY_FORMAT" ]; then
+    if inventory_has_required_tools; then
+      :
+    elif [ "$CAPABILITY_INVENTORY_COMPLETE" -eq 1 ]; then
+      CAPABILITY_INVENTORY_STATE=COMPLETE
       CAPABILITY_STATE=UNSUPPORTED
       CAPABILITY_EVIDENCE_SOURCE=RUNTIME_INVENTORY
       return 0
-    }
+    else
+      return 0
+    fi
+  fi
+  if [ "$CAPABILITY_INVENTORY_COMPLETE" -eq 1 ]; then
+    CAPABILITY_INVENTORY_STATE=COMPLETE
   fi
   CAPABILITY_STATE=SUPPORTED
   CAPABILITY_EVIDENCE_SOURCE=PROVIDER_CONTRACT
