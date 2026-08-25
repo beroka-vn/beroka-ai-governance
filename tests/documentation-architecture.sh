@@ -371,6 +371,8 @@ done
 
 reject_text governance.md '`confluence-write` or `confluence-handoff-verify`'
 reject_text governance.md 'include `Jira:`, `GitHub:`, and a handoff delta'
+reject_text examples/end-to-end-traceability.md 'Repository artifact'
+reject_text examples/end-to-end-traceability.md 'Canonical contract artifact/version/commit'
 for file in runtime/rules/general.md workflow.md templates/jira-confluence.md \
   templates/agent-entrypoints/AGENTS.md \
   templates/agent-entrypoints/CLAUDE.md \

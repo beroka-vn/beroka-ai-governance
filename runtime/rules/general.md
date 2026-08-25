@@ -31,7 +31,8 @@
   `confluence-page-parent-write`. Targets not listed as `UNACTIVATED` in the
   governance release are writable by default.
 - Ordinary Confluence create, update, or move uses `confluence-write` and
-  cannot publish cross-team readiness.
+  cannot publish cross-team readiness. Missing its existing Jira/GitHub
+  handoff delta markers returns `HANDOFF_DELTA_REQUIRED`.
 - A cross-team handoff is a self-contained Confluence page, not a link to an
   opposite-team repository. Team-local repositories remain private and may
   retain their own canonical artifacts and GitHub links; the consumer-facing

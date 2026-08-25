@@ -1,8 +1,9 @@
 # Ví dụ traceability end-to-end
 
 Ví dụ này dùng record giả định để minh họa một outcome được tách thành Jira
-items trong hai projects `BB`/`BF`, triển khai bằng hai repositories/PRs, handoff
-qua một Epic Integration Hub và hoàn tất bằng một Confluence document.
+items trong hai projects `BB`/`BF`, triển khai trong phạm vi riêng của từng team,
+handoff bằng một Confluence contract tự chứa và hoàn tất bằng một Confluence
+document.
 
 ## 1. Jira task `APP-120`
 
@@ -37,25 +38,25 @@ Dashboard hiện chỉ hiển thị từng tài sản, khiến người dùng ph
 
 ## Delivery links
 
-- GitHub Issues: Pending
-- Merged PRs: Pending
+- Delivery Jira: BB-120, BF-87
+- Contract handoff: Pending
 - Completion document: Pending
 ```
 
 Jira không chỉ định endpoint, component, file hoặc library.
 
 `APP-120` là coordination item do Product Manager An sở hữu; executable
-assignments trong ví dụ là GitHub Issues `#121` và `#122`. Vì vậy assignee gate
-không reassign `APP-120`. Nếu team tạo Jira Story/Task/Bug/Feature riêng để Nam
-hoặc Linh yêu cầu AI thực thi, Jira item đó phải assign đúng developer trước khi
-implementation bắt đầu.
+assignments được từng team theo dõi riêng. Vì vậy assignee gate không reassign
+`APP-120`. Nếu team tạo Jira Story/Task/Bug/Feature riêng để Nam hoặc Linh yêu
+cầu AI thực thi, Jira item đó phải assign đúng developer trước khi implementation
+bắt đầu.
 
 ## 2. Issue decomposition
 
-| Jira / GitHub Issue | Outcome | Labels | Primary owner | Dependency |
+| Jira item | Outcome | Labels | Primary owner | Dependency |
 | --- | --- | --- | --- | --- |
-| `BB-120` / `#121` | Cung cấp portfolio summary API | `type:feature`, `area:backend`, `priority:p1` | Nam | Existing holdings/pricing contracts |
-| `BF-87` / `#122` | Hiển thị portfolio summary trên dashboard | `type:feature`, `area:frontend`, `priority:p1` | Linh | Contract handoff từ `BB-120` / `#121` |
+| `BB-120` | Cung cấp portfolio summary API | `type:feature`, `area:backend`, `priority:p1` | Nam | Existing holdings/pricing contracts |
+| `BF-87` | Hiển thị portfolio summary trên dashboard | `type:feature`, `area:frontend`, `priority:p1` | Linh | Confluence contract từ `BB-120` |
 
 Manager cập nhật coordination item `APP-120`, cross-links `BB-120` và `BF-87`,
 và link cả hai tới cùng một Integration Hub.
@@ -63,13 +64,13 @@ và link cả hai tới cùng một Integration Hub.
 ### Backend Capability Registry
 
 ```markdown
-| Capability ID | Scope / domain / transport | Repository artifact | Canonical Confluence content | Owner / version |
-| --- | --- | --- | --- | --- |
-| `PORTFOLIO-SUMMARY` | Derivatives / User / API | `contracts/openapi.yaml` | `BE-DOC-PORTFOLIO-SUMMARY` | Backend / Pending |
+| Capability ID | Scope / domain / transport | Canonical Confluence content | Owner / page version |
+| --- | --- | --- | --- |
+| `PORTFOLIO-SUMMARY` | Derivatives / User / API | Content ID `900001` | Backend / Pending |
 ```
 
-Registry row là canonical mapping. Page `BE-DOC-PORTFOLIO-SUMMARY` thuộc Folder
-`Derivatives — User — API`; Hub và FE Index chỉ tham chiếu row này.
+Registry row là canonical mapping. Page content ID `900001` thuộc ACTIVE Folder
+content ID `900002`; Hub và FE Index chỉ tham chiếu exact content ID/version.
 
 ### Epic Integration Hub `APP-INTEGRATION-12`
 
@@ -80,13 +81,14 @@ Registry row là canonical mapping. Page `BE-DOC-PORTFOLIO-SUMMARY` thuộc Fold
 - Frontend Epic/Task: BF-87
 - Coordinator: An
 
-| Registry reference | BE issue/PR | Handoff state | FE issue/PR | Breaking |
+| Canonical handoff | Provider Jira | Handoff state | Consumer Jira | Breaking |
 | --- | --- | --- | --- | --- | --- |
-| `PORTFOLIO-SUMMARY` — `BE-CAP-REGISTRY#PORTFOLIO-SUMMARY` | #121 / Pending | DRAFT | #122 / Pending | None |
+| Confluence `900001`, version pending | BB-120 | DRAFT | BF-87 | None |
 ```
 
-Hub là Epic current-state index. OpenAPI body vẫn thuộc Backend repository; Hub
-chỉ tham chiếu Registry row và không copy schema.
+Hub là Epic current-state index. Public contract snapshot nằm đầy đủ trong
+Confluence page; Hub chỉ tham chiếu exact content ID/version và không chứa
+repository, branch, PR hoặc commit của team cung cấp.
 
 ## 3. Backend Issue `#121`
 
@@ -99,8 +101,8 @@ chỉ tham chiếu Registry row và không copy schema.
 - Product docs: Confluence/APP-PORTFOLIO-OVERVIEW
 - Epic Integration Hub: APP-INTEGRATION-12
 - Capability ID: PORTFOLIO-SUMMARY
-- Capability Registry reference: BE-CAP-REGISTRY#PORTFOLIO-SUMMARY
-- Related issues: BF-87 / #122 consumes this API
+- Capability Registry reference: PORTFOLIO-SUMMARY — Confluence 900001
+- Related Jira: BF-87 consumes Confluence handoff content ID 900001
 
 ## Classification
 
@@ -152,10 +154,10 @@ accounts; verify `200`, `200` and `401` respectively.
 ## BE → FE handoff
 
 - Epic Integration Hub: APP-INTEGRATION-12
-- Frontend Jira/GitHub issue: BF-87 / #122
+- Frontend Jira: BF-87
 - Capability ID / Registry reference:
-  `PORTFOLIO-SUMMARY` / `BE-CAP-REGISTRY#PORTFOLIO-SUMMARY`
-- Canonical contract artifact/version: `contracts/openapi.yaml`, pending merge
+  `PORTFOLIO-SUMMARY` / Confluence content ID `900001`
+- Active parent Folder: content ID `900002`
 - State: DRAFT
 ```
 
@@ -206,30 +208,26 @@ AI authorization
 AI đối chiếu issue, diff và evidence, sau đó approve đúng commit. An thực hiện
 squash merge. GitHub đóng `#121` qua `Closes #121`.
 
-Sau merge, Nam cập nhật Hub và linked FE issue:
+Sau merge, Nam tạo DRAFT từ exact template, hoàn thiện toàn bộ common/API/no-WS
+sections trong chính Confluence page, rồi chạy readback verification. Hub và
+linked FE Jira chỉ nhận record đã verify:
 
 ```markdown
-## BE → FE handoff
-
-- Backend Jira/GitHub issue and merged PR: BB-120 / #121 / #131
-- Frontend Jira/GitHub issue: BF-87 / #122
-- Capability ID / Registry reference:
-  `PORTFOLIO-SUMMARY` / `BE-CAP-REGISTRY#PORTFOLIO-SUMMARY`
-- Canonical document content ID: `BE-DOC-PORTFOLIO-SUMMARY`
-- Canonical contract artifact/version/commit:
-  `contracts/openapi.yaml`, `portfolio-summary-v1`, merge commit `aaaa1111`
-- Authentication: existing authenticated portfolio scope
-- Error cases: `401` unauthenticated; empty portfolio returns `200` with zeros
-- Test environment: local test API; three sanitized smoke cases passed
-- Breaking/migration impact: None
-- Known limitations/unverified items: None
-- State: READY_FOR_FE
-- Ready by: Nam at 2026-07-17T14:20:00+07:00
+Provider Jira: BB-120
+Consumer Jira: BF-87
+Confluence content ID: 900001
+Confluence page version: 3
+Parent Folder content ID: 900002
+API impact: affected
+WebSocket impact: none
+Missing sections: None
+Readback: VERIFIED
+State: READY_FOR_FE
 ```
 
-Nam comment cùng block vào `BF-87`/`#122`. Linh đọc exact artifact/version và
-ghi `ACKNOWLEDGED — portfolio-summary-v1 — 2026-07-17T14:30:00+07:00`. FE không
-tự tổng hợp contract từ nội dung `#121` và PR comments.
+Nam comment record này vào `BF-87`. Linh đọc exact Confluence content ID/version
+và ghi `ACKNOWLEDGED — content 900001 version 3 — 2026-07-17T14:30:00+07:00`.
+FE không tự tổng hợp contract từ repository, Issue hoặc PR của Backend.
 
 ## 5. Frontend Issue `#122`
 
@@ -242,9 +240,9 @@ tự tổng hợp contract từ nội dung `#121` và PR comments.
 - Design: Figma/portfolio-dashboard-v2
 - Epic Integration Hub: APP-INTEGRATION-12
 - Capability ID: PORTFOLIO-SUMMARY
-- Capability Registry reference: BE-CAP-REGISTRY#PORTFOLIO-SUMMARY
+- Capability Registry reference: PORTFOLIO-SUMMARY — Confluence 900001 version 3
 - Frontend Capability Index: `Portfolio — Capability Index`
-- Dependency: `portfolio-summary-v1` handoff from BB-120 / #121 — ACKNOWLEDGED
+- Dependency: Confluence content ID `900001`, version `3`, from BB-120 — ACKNOWLEDGED
 
 ## Classification
 
@@ -264,7 +262,7 @@ API.
 
 - Add Portfolio Summary card to the existing dashboard.
 - Render loading, populated, empty and API-error states.
-- Use the contract delivered by #121.
+- Use the contract delivered by Confluence content ID `900001`, version `3`.
 
 ### Out of scope
 
@@ -298,7 +296,7 @@ Manual: verify four states at mobile and desktop widths with keyboard navigation
 Branch: feature/122-portfolio-summary-card
 Commit: feat(portfolio): show dashboard summary
 PR: #132 feat(portfolio): show dashboard summary
-Links: BF-87, APP-120, APP-INTEGRATION-12, Closes #122, consumes portfolio-summary-v1 from #131
+Links: BF-87, APP-120, APP-INTEGRATION-12, Closes #122, consumes Confluence content 900001 version 3
 Labels: type:feature, area:frontend, priority:p1
 ```
 
@@ -351,10 +349,8 @@ AI review current SHA, approve và squash merge theo authorization. GitHub đón
 | Jira | APP-120, BB-120, BF-87 |
 | Owners | An, Nam, Linh |
 | Completed at | 2026-07-17T16:00:00+07:00 |
-| GitHub Issues | #121, #122 |
-| Merged PRs | #131, #132 |
 | Epic Integration Hub | APP-INTEGRATION-12 |
-| Capability Registry reference | BE-CAP-REGISTRY#PORTFOLIO-SUMMARY |
+| Capability Registry reference | PORTFOLIO-SUMMARY — Confluence 900001 version 3 |
 | Frontend Capability Index | Portfolio — Capability Index |
 
 ## Summary
@@ -371,8 +367,8 @@ loading, empty and error states.
 
 | Decision | Reason | Trade-off | Record |
 | --- | --- | --- | --- |
-| Reuse existing pricing precision | Preserve contract consistency | No new display precision | #121/#131 |
-| Accept Safari as unverified | Environment unavailable in initial release | Follow-up browser check required | #122/#132 |
+| Reuse existing pricing precision | Preserve contract consistency | No new display precision | BB-120 |
+| Accept Safari as unverified | Environment unavailable in initial release | Follow-up browser check required | BF-87 |
 
 ## Validation evidence
 
@@ -382,7 +378,7 @@ loading, empty and error states.
 
 ## Known limitations and follow-ups
 
-- Safari visual verification: linked follow-up issue #133.
+- Safari visual verification: linked follow-up Jira APP-121.
 ```
 
 ## 8. Jira completion
@@ -392,28 +388,23 @@ An cập nhật `APP-120`:
 ```markdown
 ## Delivery evidence
 
-### GitHub Issues
+### Delivery Jira
 
-- #121 — Portfolio summary API — Closed
-- #122 — Portfolio summary dashboard card — Closed
-
-### Merged Pull Requests
-
-- #131 — feat(portfolio): add summary endpoint — Merged
-- #132 — feat(portfolio): show dashboard summary — Merged
+- BB-120 — Portfolio summary API — In review
+- BF-87 — Portfolio summary dashboard card — In review
 
 ### Completion documentation
 
 - Confluence: APP-DOC-45
-- Epic Integration Hub: APP-INTEGRATION-12 — current contract `portfolio-summary-v1`
-- Capability Registry: `PORTFOLIO-SUMMARY` — `BE-CAP-REGISTRY#PORTFOLIO-SUMMARY`
+- Epic Integration Hub: APP-INTEGRATION-12 — Confluence content 900001 version 3
+- Capability Registry: `PORTFOLIO-SUMMARY` — Confluence content 900001 version 3
 - Frontend Capability Index: `Portfolio — Capability Index`
 - Documentation status: Updated
 
 ### Final status
 
 - Delivered outcome: users can see portfolio total and daily change.
-- Known limitation: Safari visual check tracked in #133.
+- Known limitation: Safari visual check tracked in APP-121.
 ```
 
 Jira chỉ chuyển `Done` sau khi các links trên đã được kiểm tra.
@@ -423,14 +414,12 @@ Jira chỉ chuyển `Done` sau khi các links trên đã được kiểm tra.
 | From | To | Evidence |
 | --- | --- | --- |
 | `APP-120` | `BB-120`, `BF-87`, `APP-INTEGRATION-12` | Coordination links |
-| `PORTFOLIO-SUMMARY` Registry row | `contracts/openapi.yaml`, `BE-DOC-PORTFOLIO-SUMMARY` | Canonical artifact and content links |
-| `APP-INTEGRATION-12` | `PORTFOLIO-SUMMARY` Registry row, `BB-120`, `BF-87` | Epic mapping and Registry reference |
-| `BB-120` / `#121` | `PORTFOLIO-SUMMARY`, `portfolio-summary-v1`, `BF-87` / `#122` | READY_FOR_FE handoff |
-| `BF-87` / `#122` | `PORTFOLIO-SUMMARY`, `portfolio-summary-v1`, `Portfolio — Capability Index` | FE ACKNOWLEDGED record |
-| `#121` | `feature/121-portfolio-summary-api`, `#131` | Branch name và `Closes #121` |
-| `#122` | `feature/122-portfolio-summary-card`, `#132` | Branch name và `Closes #122` |
-| `#131`, `#132` | `APP-INTEGRATION-12`, `APP-DOC-45` | Hub and completion metadata |
-| `APP-DOC-45` | Jira items, issues, PRs, Integration Hub | Completion document links |
+| `PORTFOLIO-SUMMARY` Registry row | Confluence `900001`, version `3` | Canonical content identity |
+| `APP-INTEGRATION-12` | Confluence `900001`, `BB-120`, `BF-87` | Epic mapping and Registry reference |
+| `BB-120` | Confluence `900001`, version `3`, `BF-87` | READY_FOR_FE handoff |
+| `BF-87` | Confluence `900001`, version `3`, `Portfolio — Capability Index` | FE ACKNOWLEDGED record |
+| Confluence `900001` | `BB-120`, `BF-87` | Self-contained public contract |
+| `APP-DOC-45` | Jira items, Confluence `900001`, Integration Hub | Completion document links |
 
 Manager có thể bắt đầu từ bất kỳ record nào trong bảng và trace tới toàn bộ
 delivery chain mà không phải tìm kiếm theo tên người hoặc nội dung chat.
