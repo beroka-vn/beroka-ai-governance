@@ -377,7 +377,7 @@ idempotently complete. It then resolves related documentation only by exact Conf
 If the page, parent, or required change is missing or
 ambiguous, ask the user and wait. Otherwise run a fresh target-bound Confluence
 preflight, update the documentation, and read it back. After documentation readback Jira remains in `In Review`;
-do not move it to `Done` automatically.
+do not move it to `Done` automatically. Report a blocked Jira or Confluence step separately and do not reopen the GitHub Issue.
 The provider updates only its own project item; the consumer reviews through the
 exact Confluence handoff and updates its own item.
 

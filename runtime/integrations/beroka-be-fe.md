@@ -40,7 +40,7 @@
   by exact Confluence content ID. If the page, parent, or required change is
   missing or ambiguous, ask the user and wait. Otherwise run a fresh
   target-bound Confluence preflight, update the documentation, and read it back.
-  After documentation readback Jira remains in `In Review`; do not move it to `Done` automatically.
+  After documentation readback Jira remains in `In Review`; do not move it to `Done` automatically. Report a blocked Jira or Confluence step separately and do not reopen the GitHub Issue.
 - Missing supported intake workflow evidence returns
   `INTAKE_CONFIGURATION_REQUIRED`. Intake is agent-driven, not an event
   listener.

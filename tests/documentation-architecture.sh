@@ -110,6 +110,8 @@ for file in governance.md workflow.md runtime/rules/work-items.md \
   require_text "$file" 'ask the user'
   require_text "$file" 'documentation readback'
   require_text "$file" 'remains in `In Review`'
+  require_text "$file" 'Report a blocked Jira or Confluence step separately'
+  require_text "$file" 'do not reopen the GitHub Issue'
   reject_text "$file" 'In Review -> Done'
 done
 reject_text templates/jira-confluence.md 'Frontend Jira/GitHub issue(s):'
