@@ -6,8 +6,10 @@
   canonical capabilities.
 - One Registry capability may be referenced by several Epics and Frontend
   module indexes.
-- Backend publishes the canonical contract artifact; Frontend consumes its
-  exact version and does not reconstruct it from issue descriptions.
+- Backend publishes team-local canonical artifacts. Frontend consumes the
+  self-contained Confluence handoff snapshot and its exact Confluence content
+  ID/version; consumer-facing Jira and Confluence text uses Jira references,
+  never opposite-team GitHub links.
 - Similar names produce candidates only and never authorize links or writes.
 - Counterpart and handoff discovery requires exact Jira, Hub, or contract
   evidence plus developer confirmation where the mapping is not unique.
@@ -27,9 +29,10 @@
   requires receiving-team confirmation. FE owns BF updates and BE owns BB
   updates; the other team reviews its own item through the exact accessible
   Confluence handoff.
-- Before a Confluence handoff, run target-bound `confluence-handoff-verify`.
-  Unknown targets return `ROUTING_REQUIRED` and wait. Opposite-team private
-  GitHub links return `CROSS_TEAM_LINK_SCOPE_DENIED`; use Confluence instead.
+- Before a handoff, resolve the exact active Folder and Confluence page
+  identity. Unknown targets return `ROUTING_REQUIRED` and wait. Opposite-team
+  private GitHub links return `CROSS_TEAM_LINK_SCOPE_DENIED`; use the
+  self-contained Confluence page instead.
 - Provider status is `To Do -> In Progress` when work starts and `In Progress
   -> In Review` when a human marks the PR ready.
 - Missing supported intake workflow evidence returns

@@ -218,10 +218,14 @@ approve or merge without human confirmation for the exact PR and SHA. See
 
 ### Step 7 — Merge, publish handoff, and close
 
-Prefer squash merge. For BE changes with FE impact, publish the contract after
-merge, update the Registry row, update every referencing Hub changelog to
-`READY_FOR_FE`, and comment on the linked FE item with the exact version. FE
-records `ACKNOWLEDGED` before dependent work.
+Prefer squash merge. For BE changes with FE impact, create a `DRAFT`
+self-contained Confluence page under the exact reviewed ACTIVE Folder, then
+update it after merge. Pair provider and consumer Jira keys with the exact
+Confluence content ID and version, use `GitHub: N/A` in cross-team Jira text,
+and include the complete affected API/WS contract, omissions, owner, effective
+date, supersession metadata, and FE acknowledgment path. Report
+`READY_FOR_FE` only after post-write readback; FE records `ACKNOWLEDGED` for
+that exact version before dependent work.
 
 After merge:
 
@@ -251,16 +255,16 @@ references exact Registry rows. Durable Frontend pages use
 versions without copying payloads. Create pages only when content and an owner
 exist.
 
-Prefer creating Epic Folders when hierarchy guidance calls for them; ordinary
-page writes remain allow-by-default unless the target is `UNACTIVATED` in the
-governance release (`DOCS_UNACTIVATED`). After write/move, verify `parentId` and
-`parentType = Folder`, otherwise return `DOC_HIERARCHY_FAILED`. If FE cannot
-open the BE Hub, return `CROSS_SPACE_ACCESS_REQUIRED`. Before every Confluence
-create or update, include handoff delta markers (`Jira:`, `GitHub:`, and a
-`## Handoff —` section or `Handoff form: child-page` with `Canonical:`). Run
-`confluence-write` or
-`confluence-handoff-verify`; a transport mismatch on a reviewed drifted row
-returns `MAPPING_CONFLICT`.
+Ordinary page writes remain allow-by-default unless the target is `UNACTIVATED`
+in the governance release (`DOCS_UNACTIVATED`). Cross-team handoffs require an
+exact reviewed ACTIVE Folder and the self-contained Confluence page; never use
+an opposite-team repository link as the consumer contract. Before a handoff,
+run `confluence-handoff-write` with `--handoff-body-file PATH`. Create is
+`DRAFT` only. Before reporting `READY_FOR_FE`, run
+`confluence-handoff-verify` with the exact body plus readback parent, space,
+title, version, and owner. Jira remains in its governed lifecycle state
+independently. A transport mismatch on a reviewed drifted row returns
+`MAPPING_CONFLICT`.
 
 Maintain provider status as `To Do -> In Progress` when accepted work starts
 and `In Progress -> In Review` when a human marks the provider PR ready for

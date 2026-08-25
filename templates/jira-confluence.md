@@ -108,25 +108,31 @@ cross-team Jira or handoff text return `CROSS_TEAM_LINK_SCOPE_DENIED`; use the
 exact accessible Confluence page.
 
 ```text
-CONFLUENCE TARGET
-- Action: create | update | move
-- Confluence content ID: <numeric ID | new>
-- Expected parent ID: <numeric ID | omit when not nesting>
-- Jira: <KEY|URL>
-- GitHub: <URL|N/A>
-- Handoff delta: ## Handoff — <JiraKey> section OR Handoff form: child-page
-  with Canonical: <URL|content-id>
-- Preflight: confluence-write | confluence-handoff-verify
-- Result: PASS | DOCS_UNACTIVATED | HANDOFF_DELTA_REQUIRED | ROUTING_REQUIRED | MAPPING_CONFLICT
+CROSS-TEAM CONFLUENCE HANDOFF
+- Provider Jira: <BB-KEY>
+- Consumer Jira: <BF-KEY>
+- GitHub: N/A
+- Confluence content ID and version: new/pending | <numeric ID>/<positive integer>
+- Expected parent ID: <exact reviewed ACTIVE Folder ID>
+- Pre-write: confluence-handoff-write --handoff-body-file PATH
+- Post-write: confluence-handoff-verify --handoff-body-file PATH
+  --readback-parent-id ID --readback-space-key KEY --readback-title TITLE
+  --readback-version POSITIVE_INTEGER --readback-owner-account-id ACCOUNT_ID
+- Result: PASS | FOLDER_CREATION_REQUIRED | HANDOFF_BODY_INVALID |
+  CROSS_TEAM_LINK_SCOPE_DENIED | HANDOFF_READBACK_REQUIRED
 ```
 
-Ordinary Confluence writes are allow-by-default. An `UNACTIVATED` content ID or
-parent in the governance release inventory returns `DOCS_UNACTIVATED` and can
-change only through a reviewed governance release PR. Missing handoff markers
-return `HANDOFF_DELTA_REQUIRED`. A transport mismatch on a reviewed drifted row
-returns `MAPPING_CONFLICT` and must not inspect or write the connector. Provider
-status is `To Do -> In Progress` when work starts and `In Progress -> In
-Review` when a human marks the provider PR ready for review. `Closes #<issue>`
+Ordinary Confluence writes are allow-by-default. A cross-team handoff is a
+self-contained Confluence page under an exact reviewed ACTIVE Folder; it never
+uses an opposite-team repository link as its consumer contract. Create is
+`DRAFT` only. Report `READY_FOR_FE` only after the exact page readback; Jira
+remains in its governed lifecycle state independently. An `UNACTIVATED` content
+ID or parent in the governance release inventory returns `DOCS_UNACTIVATED` and
+can change only through a reviewed governance release PR. A transport mismatch
+on a reviewed drifted row returns `MAPPING_CONFLICT` and must not inspect or
+write the connector. Provider status is `To Do -> In Progress` when work starts
+and `In Progress -> In Review` when a human marks the provider PR ready for
+review. `Closes #<issue>`
 normally closes the GitHub Issue. If it remains open, an agent may close it only
 after exact merge/link readback proves the delivered commit and the close write
 is authorized; otherwise report the issue as blocked. After `Closes #<issue>` automatically closes the current primary GitHub Issue,
@@ -334,8 +340,9 @@ Error and reconnect behavior
 Contract version and changelog
 ```
 
-Confluence never copies an authoritative OpenAPI, JSON Schema, or event schema.
-It links the exact Backend repository artifact/version/commit.
+Team-local Backend artifacts retain their own authoritative schema. The
+consumer-facing cross-team handoff page is self-contained and records its exact
+Confluence content ID and version with complete public API/WS detail.
 
 ## Backend Capability Registry Template
 
@@ -595,37 +602,61 @@ current-state index, not a completion document or contract copy.
 | --- | --- | --- | --- | --- |
 ```
 
-## BE → FE Handoff Block
+## BE → FE Handoff Page Template
 
-Copy this block into the BE Jira/GitHub Issue or PR when `Frontend impact != None`:
+Use this complete body for the consumer-facing Confluence page when `Frontend
+impact != None`. Keep GitHub links only in team-local Issue/PR sections.
 
 ```markdown
-## BE → FE handoff
+Handoff schema: 1
+Handoff state: DRAFT | READY_FOR_FE
+Provider Jira: <BB-KEY>
+Consumer Jira: <BF-KEY>
+Confluence content ID: new | <numeric ID>
+Confluence page version: pending | <positive integer>
+Owner account ID: <Atlassian account ID>
+Effective date: <YYYY-MM-DD>
+Supersedes: N/A | <content ID and version>
+Superseded by: N/A | <content ID and version>
+API impact: affected | none
+WebSocket impact: affected | none
+Missing sections: <comma-separated names | None>
 
-- Capability ID:
-- Capability Registry reference:
-- Epic Integration Hub:
-- Paired Backend Epic:
-- Paired Frontend Epic:
-- Backend Jira/GitHub issue and merged PR:
-- Epic `Relates` readback:
-- BE-to-BF `Blocks` readback for every BF item:
-- Capability Registry row readback:
-- Integration Hub Registry-reference readback:
-- Canonical contract artifact/version/commit:
-- Behavior delivered:
-- Authentication/permissions:
-- Error and edge cases:
-- Test environment and sanitized evidence:
-- Breaking/migration impact:
-- Known limitations/unverified items:
-- State: DRAFT | READY_FOR_FE | ACKNOWLEDGED | BLOCKED | SUPERSEDED
-- Ready/acknowledged by and at:
+## Purpose and delivered behavior
+## Affected user flows, assumptions, and non-goals
+## Authentication and authorization
+## Public data types and compatibility
+## State and delivery semantics
+## Errors and edge cases
+## Frontend implementation guidance
+## Sanitized examples and validation evidence
+## Known limitations and unverified items
+## FE acknowledgment
+
+## Affected API inventory
+### API operation: <METHOD> <PUBLIC_PATH>
+<permissions, headers, path/query parameters, request payload, success status
+and payload, stable public errors, pagination, idempotency, retry, cache,
+timestamp semantics, sanitized request/response examples>
+
+## Unaffected API inventory
+## API impact rationale
+<required when API impact is none; explicitly state that no public API operation changes>
+
+## Affected WebSocket inventory
+<public connection URL and authentication, subscribe/unsubscribe, event envelope
+and payloads, ordering, deduplication, replay/resume, reconnect, heartbeat,
+timeout, backpressure, error events, close codes, sanitized examples>
+
+## Unaffected WebSocket inventory
+## WebSocket impact rationale
+<required when WebSocket impact is none; explicitly state that no public WebSocket contract changes>
 ```
 
-`READY_FOR_FE` requires a merged BE PR, published artifact, and working test
-path. FE records `ACKNOWLEDGED` for the exact version. A version change marks
-the old handoff `SUPERSEDED`, updates the changelog, and notifies FE again.
+`READY_FOR_FE` requires a successful `confluence-handoff-verify` readback. FE
+records `ACKNOWLEDGED` for the exact Confluence content ID and version. A
+version change marks the old handoff `SUPERSEDED`, updates the changelog, and
+notifies FE again.
 
 ## Confluence Completion Document Template
 

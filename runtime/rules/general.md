@@ -30,16 +30,35 @@
   created content and parent. Ordinary create/move use
   `confluence-page-parent-write`. Targets not listed as `UNACTIVATED` in the
   governance release are writable by default.
-- Before a Confluence create or update, include handoff trace markers in the
-  body: `Jira: <KEY|URL>`, `GitHub: <URL|N/A>`, and either a
-  `## Handoff — <JiraKey>` section or `Handoff form: child-page` with title
+- Ordinary Confluence create, update, or move uses `confluence-write`. Include
+  its handoff trace markers: `Jira: <KEY|URL>`, `GitHub: <URL|N/A>`, and either
+  a `## Handoff — <JiraKey>` section or `Handoff form: child-page` with title
   `Handoff — <JiraKey> — <slug>` and `Canonical: <URL|content-id>`. Missing
   markers return `HANDOFF_DELTA_REQUIRED`.
-- Before a Confluence create, update, move, or handoff, run
-  `confluence-write` or `confluence-handoff-verify`. A content ID or parent ID
-  listed as `UNACTIVATED` in the pinned release inventory returns
-  `DOCS_UNACTIVATED` (only a reviewed governance release PR can change that
-  list). A transport mismatch on a reviewed drifted row returns
+- A cross-team handoff is a self-contained Confluence page, not a link to an
+  opposite-team repository. Team-local repositories remain private and may
+  retain their own canonical artifacts and GitHub links; the consumer-facing
+  page contains the complete public API and WebSocket contract, omissions,
+  owner, effective date, supersession metadata, and FE acknowledgment path.
+- Before a cross-team Confluence create or update, run
+  `confluence-handoff-write` with the exact body and target evidence:
+  `--confluence-action create|update`, `--target-content-id ID|new`,
+  `--expected-parent-id ACTIVE_FOLDER_ID`, and `--handoff-body-file PATH`.
+  The parent must be one exact reviewed `ACTIVE Folder`; root, page,
+  `UNACTIVATED`, and untracked parents return `FOLDER_CREATION_REQUIRED`.
+  Cross-team Jira intake or acknowledgment text uses `jira-intake-write` or
+  `jira-handoff-write` with the exact body and never an opposite-team GitHub
+  link; use Jira keys and Confluence references only.
+- Create is DRAFT-only. `READY_FOR_FE` is update-only and may be reported only
+  after a successful `confluence-handoff-verify` using
+  `--handoff-body-file PATH`, `--readback-parent-id ID`,
+  `--readback-space-key KEY`, `--readback-title TITLE`,
+  `--readback-version POSITIVE_INTEGER`, and
+  `--readback-owner-account-id ACCOUNT_ID`. A pre-write PASS authorizes only
+  the write. Jira remains in its governed lifecycle state independently.
+- A content ID or parent ID listed as `UNACTIVATED` in the pinned release
+  inventory returns `DOCS_UNACTIVATED` (only a reviewed governance release PR
+  can change that list). A transport mismatch on a reviewed drifted row returns
   `MAPPING_CONFLICT`; ask the user and wait.
 - Confluence hierarchy guidance is optional. Use read-only
   `beroka-governance confluence-discover` and optional

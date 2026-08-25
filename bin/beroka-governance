@@ -76,6 +76,7 @@ usage() {
     '  beroka-governance setup-connectors [--client codex|claude|cursor] [--non-interactive]' \
     '  beroka-governance doctor REPO [--client codex|claude|cursor]' \
     '  beroka-governance preflight REPO --client codex|claude|cursor --operation OPERATION [--non-interactive] [CONFLUENCE-TARGET-OPTIONS]' \
+    '  Handoff operations: confluence-handoff-write | confluence-handoff-verify | jira-handoff-write' \
     '  Confluence target options: --confluence-action create|update|move --target-content-id ID|new --capability-id ID --scope SCOPE --domain DOMAIN --transport API|WebSocket --expected-parent-id ID --registry-content-id ID' \
     '  Cross-team body option: --handoff-body-file PATH' \
     '  Handoff readback options: --readback-parent-id ID --readback-space-key KEY --readback-title TITLE --readback-version POSITIVE_INTEGER --readback-owner-account-id ACCOUNT_ID' \

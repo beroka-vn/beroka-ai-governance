@@ -10,15 +10,22 @@ fail() {
 
 require_text() {
   file=$1 text=$2
-  grep -F "$text" "$ROOT/$file" >/dev/null ||
+  grep -F -- "$text" "$ROOT/$file" >/dev/null ||
     fail "missing [$text] in $file"
 }
 
 reject_text() {
   file=$1 text=$2
-  if grep -F "$text" "$ROOT/$file" >/dev/null; then
+  if grep -F -- "$text" "$ROOT/$file" >/dev/null; then
     fail "forbidden [$text] in $file"
   fi
+}
+
+require_count() {
+  file=$1 text=$2 expected=$3
+  actual=$(grep -F -c -- "$text" "$ROOT/$file" || :)
+  [ "$actual" -eq "$expected" ] ||
+    fail "expected [$text] $expected time(s) in $file, found $actual"
 }
 
 has_repository_governance_mutation() {
@@ -318,6 +325,53 @@ require_text examples/homepage-market-overview-epic-packet.md \
   'MARKET-INDEX-HISTORY'
 require_text examples/homepage-market-overview-epic-packet.md \
   'MARKET-INDEX-STREAM'
+
+# Cross-team handoffs have one universal lifecycle in generated context. Profile
+# and integration rules add ownership only, so they cannot dilute the contract.
+for file in runtime/rules/general.md; do
+  require_text "$file" 'confluence-handoff-write'
+  require_text "$file" '--handoff-body-file PATH'
+  require_text "$file" 'ACTIVE Folder'
+  require_text "$file" 'self-contained Confluence page'
+  require_text "$file" 'DRAFT-only'
+  require_text "$file" 'confluence-handoff-verify'
+  require_text "$file" '--readback-parent-id ID'
+  require_text "$file" 'Jira remains in its governed lifecycle state independently'
+  require_count "$file" 'confluence-handoff-write' 1
+done
+for file in runtime/profiles/backend.md runtime/profiles/frontend.md \
+  runtime/integrations/beroka-be-fe.md; do
+  reject_text "$file" 'confluence-handoff-write'
+done
+for file in runtime/profiles/backend.md runtime/profiles/frontend.md \
+  runtime/integrations/beroka-be-fe.md; do
+  require_text "$file" 'team-local'
+done
+
+reject_text runtime/profiles/backend.md 'Confluence never copies its schema.'
+reject_text runtime/profiles/frontend.md \
+  'they never copy request, response, command, event, or schema payloads.'
+reject_text governance.md 'Confluence does not copy it.'
+reject_text templates/jira-confluence.md \
+  'Copy this block into the BE Jira/GitHub Issue or PR'
+for file in governance.md workflow.md templates/jira-confluence.md; do
+  require_text "$file" 'self-contained Confluence page'
+  require_text "$file" 'Confluence content ID and version'
+  require_text "$file" 'GitHub: N/A'
+done
+for file in templates/ai-agent-assignment.md templates/jira-confluence.md; do
+  require_text "$file" 'Handoff schema: 1'
+  require_text "$file" 'Provider Jira:'
+  require_text "$file" 'Consumer Jira:'
+  require_text "$file" 'API operation: <METHOD> <PUBLIC_PATH>'
+  require_text "$file" 'Affected WebSocket inventory'
+  require_text "$file" 'FE acknowledgment'
+  require_text "$file" 'Superseded by:'
+done
+for file in templates/github-issue.md templates/pull-request.md; do
+  require_text "$file" 'team-local GitHub Issue/PR section'
+done
+require_text bin/beroka-governance 'Handoff operations:'
 require_text examples/homepage-market-overview-epic-packet.md \
   'Backend Capability Registry'
 require_text examples/end-to-end-traceability.md 'PORTFOLIO-SUMMARY'

@@ -80,8 +80,9 @@ agent. Repository-specific instructions and the linked issue take precedence.
   otherwise return `DOC_HIERARCHY_FAILED`.
 - For BE work consumed by FE, use one confirmed Epic Integration Hub linked
   from both Jira projects and exact Backend Capability Registry rows. Keep the
-  canonical OpenAPI/JSON Schema/event schema in the BE repository; never make
-  FE reconstruct it from issue descriptions.
+  team-local canonical OpenAPI/JSON Schema/event-schema artifact in BE. The
+  consumer contract is the self-contained Confluence handoff page; never make
+  FE reconstruct it from issue descriptions or private repository links.
 - Pair project-local BB/BF Epics with `Relates`. Map one Backend Feature to one
   or more BF items using `Blocks` plus one exact immutable Capability ID in the
   canonical Registry row; title similarity is never mapping evidence.
@@ -89,9 +90,11 @@ agent. Repository-specific instructions and the linked issue take precedence.
   and shared Hub. If FE cannot open the owning BE Folder/Hub, return
   `CROSS_SPACE_ACCESS_REQUIRED`; do not duplicate the contract in FE
   Confluence.
-- Do not report a BE → FE handoff as `READY_FOR_FE` until the BE PR is merged,
-  the exact contract artifact/version is published, the Hub is updated, and a
-  usable test path exists. Notify the linked FE issue and record acknowledgement.
+- Do not report a BE → FE handoff as `READY_FOR_FE` until the page has passed
+  post-write readback with its exact Confluence content ID/version, parent,
+  space, title, and owner. Create is `DRAFT` only; Jira stays in its own
+  governed lifecycle state. Notify the linked FE Jira item and record
+  acknowledgement.
 - Never expose credentials, tokens, private payloads, or sensitive topology.
 - Do not perform destructive or production actions without explicit authority.
 - Run relevant validation before claiming completion.
@@ -345,31 +348,45 @@ item solely because a child implementation request was made.
 
 ```text
 BE → FE handoff
-- Capability ID:
-- Epic Integration Hub:
-- Paired Backend Epic:
-- Paired Frontend Epic:
-- Backend Jira/GitHub issue and merged PR:
-- Frontend Jira/GitHub issue(s):
-- Epic `Relates` readback:
-- BE-to-BF `Blocks` readback for every BF item:
-- Integration Hub mapping-row readback:
-- Canonical contract artifact/version/commit:
-- Behavior delivered:
-- Authentication/permissions:
-- Error and edge cases:
-- Test environment and sanitized evidence:
-- Breaking/migration impact:
-- Known limitations/unverified items:
-- State: DRAFT | READY_FOR_FE | ACKNOWLEDGED | BLOCKED | SUPERSEDED
-- Ready/acknowledged by and at:
+Handoff schema: 1
+Handoff state: DRAFT | READY_FOR_FE
+Provider Jira: <BB-KEY>
+Consumer Jira: <BF-KEY>
+GitHub: N/A
+Confluence content ID: new | <numeric ID>
+Confluence page version: pending | <positive integer>
+Owner account ID:
+Effective date:
+Supersedes: N/A | <content ID and version>
+Superseded by: N/A | <content ID and version>
+API impact: affected | none
+WebSocket impact: affected | none
+Missing sections: <comma-separated names | None>
+
+## Purpose and delivered behavior
+## Authentication and authorization
+## Public data types and compatibility
+## State and delivery semantics
+## Errors and edge cases
+## Frontend implementation guidance
+## Sanitized examples and validation evidence
+## Known limitations and unverified items
+## FE acknowledgment
+
+## Affected API inventory
+### API operation: <METHOD> <PUBLIC_PATH>
+<permissions, headers, parameters, request, success/error payloads, pagination,
+idempotency, retry/cache/timestamp semantics, sanitized examples>
+
+## Affected WebSocket inventory
+<connection/authentication, subscribe/unsubscribe, event envelope and payloads,
+ordering, deduplication, replay/resume, reconnect, heartbeat, timeout,
+backpressure, errors, close codes, sanitized examples>
 ```
 
-The BE owner updates the Registry row, referencing Hubs, and linked FE issue
-after merge. The FE owner acknowledges the exact contract version before
-dependent implementation. A contract change after acknowledgement creates a
-new version, marks the old handoff `SUPERSEDED`, and triggers a new
-notification; never silently rewrite an acknowledged contract.
+This consumer-facing page contains Jira and Confluence references only. Keep
+GitHub URLs in team-local Issue/PR sections. The BE owner updates the Registry
+and Hub after merge; the FE owner acknowledges the exact version.
 
 ## Cross-Team Capability Mapping Template
 
