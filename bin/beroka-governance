@@ -46,8 +46,10 @@ CAPABILITY_INVENTORY_FORMAT= CAPABILITY_TOOLSET=UNAVAILABLE
 CAPABILITY_STATE= PREFLIGHT_CAPABILITY=
 SUPPRESS_PASS_RESULT=0
 PERSONAL_STAGE_ROOT=
+CONFLUENCE_BODY_TRUSTED=0
 
 cleanup_personal_stage() {
+  CONFLUENCE_BODY_TRUSTED=0
   cleanup_stage_root=$PERSONAL_STAGE_ROOT
   PERSONAL_STAGE_ROOT=
   [ -z "$cleanup_stage_root" ] || rm -rf "$cleanup_stage_root"
@@ -60,6 +62,15 @@ die() {
   printf '%s\n' "Result: $code" >&2
   if [ "$#" -gt 0 ]; then printf '%s\n' "$*" >&2; fi
   exit 1
+}
+
+require_trusted_confluence_body_gate() {
+  rtcbg_client=$1 rtcbg_action=$2
+  [ "$rtcbg_action" = move ] && return 0
+  [ "$rtcbg_client" = cursor ] &&
+    [ "$CONFLUENCE_BODY_TRUSTED" -eq 1 ] && return 0
+  die CLIENT_BODY_GATE_REQUIRED \
+    'Confluence create/update requires a trusted actual-body client boundary'
 }
 
 pass_result() {
@@ -4908,7 +4919,7 @@ EOF
 }
 
 require_operation_routing() {
-  ror_operation=$1
+  ror_operation=$1 ror_client=${2:-}
   case "$ror_operation" in
     jira-write|jira-handoff-write)
       [ -n "$ROUTE_JIRA_PROJECT_KEY" ] ||
@@ -4947,6 +4958,8 @@ require_operation_routing() {
       if [ -n "$CONFLUENCE_TARGET_ACTION" ]; then
         resolve_confluence_target
       fi
+      require_trusted_confluence_body_gate "$ror_client" \
+        "$CONFLUENCE_TARGET_ACTION"
       ;;
     confluence-handoff-write)
       require_confluence_route
@@ -4960,6 +4973,8 @@ require_operation_routing() {
       require_active_handoff_folder "$(confluence_targets_path)"
       resolve_confluence_target
       require_handoff_target_parent
+      require_trusted_confluence_body_gate "$ror_client" \
+        "$CONFLUENCE_TARGET_ACTION"
       ;;
     confluence-handoff-verify)
       require_confluence_route
@@ -5280,7 +5295,7 @@ cmd_preflight() {
     die HANDOFF_READBACK_REQUIRED \
       'Caller-supplied assertions cannot prove an actual Confluence write and subsequent read'
   fi
-  require_operation_routing "$pf_operation"
+  require_operation_routing "$pf_operation" "$pf_client"
   verify_github_role "$pf_client"
 
   require_client "$pf_client"
@@ -6037,8 +6052,8 @@ cursor_stage_exact_body() {
   case "$cseb_kind:$cseb_count" in confluence:1|jira:[1-9]*) ;; *) return 1 ;; esac
   PERSONAL_STAGE_ROOT=$(umask 077; mktemp -d \
     "${TMPDIR:-/tmp}/beroka-governance-cursor-body.XXXXXX") || return 1
-  trap 'cleanup_personal_stage || :' EXIT
-  trap 'cleanup_personal_stage || :; exit 1' HUP INT TERM
+  trap 'cursor_cleanup_staged_body || :' EXIT
+  trap 'cursor_cleanup_staged_body || :; exit 1' HUP INT TERM
   CURSOR_EXACT_BODY_FILE=$PERSONAL_STAGE_ROOT/body
   printf '%s\n' "$CURSOR_TOOL_INPUT" | {
     if [ "$cseb_kind" = jira ]; then
@@ -6101,8 +6116,8 @@ cursor_cleanup_staged_body() {
 }
 
 cursor_staged_preflight() {
-  trap 'cleanup_personal_stage || :' EXIT
-  trap 'cleanup_personal_stage || :; exit 1' HUP INT TERM
+  trap 'cursor_cleanup_staged_body || :' EXIT
+  trap 'cursor_cleanup_staged_body || :; exit 1' HUP INT TERM
   cmd_preflight "$@"
   csp_status=$?
   cursor_cleanup_staged_body || return 1
@@ -6314,10 +6329,12 @@ cursor_confluence_preflight() {
     if [ -n "$ccp_parent" ]; then
       set -- "$@" --expected-parent-id "$ccp_parent"
     fi
+    CONFLUENCE_BODY_TRUSTED=1
     cursor_staged_preflight "$CURSOR_WORKSPACE" --client cursor \
       --operation confluence-handoff-write --non-interactive "$@" \
       --handoff-body-file "$CURSOR_EXACT_BODY_FILE"
     ccp_status=$?
+    CONFLUENCE_BODY_TRUSTED=0
     return "$ccp_status"
   fi
   if ! cursor_confluence_handoff_ok "$ccp_body" "$ccp_title"; then
@@ -6330,8 +6347,12 @@ cursor_confluence_preflight() {
   if [ -n "$ccp_parent" ]; then
     set -- "$@" --expected-parent-id "$ccp_parent"
   fi
+  CONFLUENCE_BODY_TRUSTED=1
   cmd_preflight "$CURSOR_WORKSPACE" --client cursor \
     --operation confluence-write --non-interactive "$@"
+  ccp_status=$?
+  CONFLUENCE_BODY_TRUSTED=0
+  return "$ccp_status"
 }
 
 cursor_language_label() {

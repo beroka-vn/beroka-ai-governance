@@ -497,11 +497,13 @@ cursor_draft_output=$(hook beforeMCPExecution "$(cursor_handoff_input \
   "$cursor_handoff_dir/draft.md" create new 76808195)")
 assert_not_contains "$cursor_draft_output" HANDOFF_DELTA_REQUIRED
 assert_not_contains "$cursor_draft_output" HANDOFF_BODY_INVALID
+assert_not_contains "$cursor_draft_output" CLIENT_BODY_GATE_REQUIRED
 assert_denied "$cursor_draft_output" GITHUB_AUTH_REQUIRED
 cursor_ready_output=$(hook beforeMCPExecution "$(cursor_handoff_input \
   "$cursor_handoff_dir/ready.md" update 900001 76808195)")
 assert_not_contains "$cursor_ready_output" HANDOFF_DELTA_REQUIRED
 assert_not_contains "$cursor_ready_output" HANDOFF_BODY_INVALID
+assert_not_contains "$cursor_ready_output" CLIENT_BODY_GATE_REQUIRED
 assert_denied "$cursor_ready_output" GITHUB_AUTH_REQUIRED
 assert_no_cursor_body_stage
 
@@ -560,6 +562,7 @@ confluence_update=$(printf '%s\n' "$base_input" | jq -c --arg body "$confluence_
 confluence_update_out=$(hook beforeMCPExecution "$confluence_update")
 assert_not_contains "$confluence_update_out" HANDOFF_DELTA_REQUIRED
 assert_not_contains "$confluence_update_out" DOCS_UNACTIVATED
+assert_not_contains "$confluence_update_out" CLIENT_BODY_GATE_REQUIRED
 # Handoff markers clear the docs gate; harness still lacks gh auth for role check.
 assert_denied "$confluence_update_out" GITHUB_AUTH_REQUIRED
 confluence_private_link=$(printf '%s\n' "$confluence_update" | jq -c \
@@ -625,7 +628,16 @@ assert_no_cursor_body_stage
 confluence_create_out=$(hook beforeMCPExecution "$confluence_create")
 assert_not_contains "$confluence_create_out" HANDOFF_DELTA_REQUIRED
 assert_not_contains "$confluence_create_out" DOCS_UNACTIVATED
+assert_not_contains "$confluence_create_out" CLIENT_BODY_GATE_REQUIRED
 assert_denied "$confluence_create_out" GITHUB_AUTH_REQUIRED
+if direct_cursor_preflight=$($CLI preflight "$known_repo" --client cursor \
+  --operation confluence-write --non-interactive \
+  --confluence-action create --target-content-id new \
+  --expected-parent-id 76808195 2>&1)
+then
+  fail 'direct Cursor Confluence create passed without a trusted body'
+fi
+assert_contains "$direct_cursor_preflight" 'Result: CLIENT_BODY_GATE_REQUIRED'
 confluence_create_no_handoff=$(printf '%s\n' "$confluence_create" | jq -c \
   '.tool_input.body="create without handoff"')
 assert_denied "$(hook beforeMCPExecution "$confluence_create_no_handoff")" \

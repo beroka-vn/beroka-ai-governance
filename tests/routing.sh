@@ -1413,13 +1413,12 @@ assert_contains "$output" 'Result: MAPPING_CONFLICT'
 [ ! -s "$CALLS" ] || fail 'mapping conflict inspected a connector'
 
 set -- $(confluence_args | sed 's/^API$/WebSocket/')
-if ! output=$($CLI preflight "$canonical_backend" --client codex \
+if output=$($CLI preflight "$canonical_backend" --client codex \
   --operation confluence-write --non-interactive "$@" 2>&1)
 then
-  fail 'drifted page failed with matching transport'
+  fail 'direct Confluence update passed without a trusted body'
 fi
-assert_contains "$output" 'Capability: confluence-page-update'
-assert_contains "$output" 'Result: PASS'
+assert_contains "$output" 'Result: CLIENT_BODY_GATE_REQUIRED'
 
 : >"$CALLS"
 if output=$($CLI preflight "$canonical_backend" --client codex \
@@ -1431,22 +1430,26 @@ assert_contains "$output" 'Result: ROUTING_REQUIRED'
 [ ! -s "$CALLS" ] || fail 'missing target inspected a connector'
 
 printf '%s\n' healthy-all >"$XDG_CONFIG_HOME/fake-codex-health"
-output=$($CLI preflight "$canonical_backend" --client codex \
+if output=$($CLI preflight "$canonical_backend" --client codex \
   --operation confluence-write --non-interactive \
   --confluence-action create --target-content-id new \
   --capability-id MARKET-FU-INDEX-API --scope Shared --domain Market \
   --transport API --expected-parent-id 71237633 \
-  --registry-content-id 900003)
-assert_contains "$output" 'Capability: confluence-page-parent-write'
-assert_contains "$output" 'Result: PASS'
+  --registry-content-id 900003 2>&1)
+then
+  fail 'direct Confluence create passed without a trusted body'
+fi
+assert_contains "$output" 'Result: CLIENT_BODY_GATE_REQUIRED'
 
-# Minimal create args remain allow-by-default under a non-UNACTIVATED parent.
-output=$($CLI preflight "$canonical_backend" --client codex \
+# Minimal create args retain local validation but require a trusted body.
+if output=$($CLI preflight "$canonical_backend" --client codex \
   --operation confluence-write --non-interactive \
   --confluence-action create --target-content-id new \
-  --expected-parent-id 71237633)
-assert_contains "$output" 'Capability: confluence-page-parent-write'
-assert_contains "$output" 'Result: PASS'
+  --expected-parent-id 71237633 2>&1)
+then
+  fail 'minimal direct Confluence create passed without a trusted body'
+fi
+assert_contains "$output" 'Result: CLIENT_BODY_GATE_REQUIRED'
 
 # Issue #51: discover → plan → capture → verify on deny-only inventory.
 discover_output=$($CLI confluence-discover "$canonical_backend" \
@@ -1514,76 +1517,6 @@ printf '%b\n' \
 pin_test_release v1.1.20
 
 printf '%s\n' healthy-all >"$XDG_CONFIG_HOME/fake-codex-health"
-output=$($CLI preflight "$canonical_backend" --client codex \
-  --operation confluence-write --non-interactive \
-  --confluence-action update --target-content-id 900001 \
-  --capability-id MARKET-FU-INDEX-API --scope Shared --domain Market \
-  --transport API --expected-parent-id 900002 \
-  --registry-content-id 900003)
-assert_contains "$output" 'Target transport: API'
-assert_contains "$output" 'Capability: confluence-page-update'
-assert_contains "$output" 'Result: PASS'
-
-printf '%s\n' healthy-codex-apps-confluence \
-  >"$XDG_CONFIG_HOME/fake-codex-health"
-output=$($CLI preflight "$canonical_backend" --client codex \
-  --operation confluence-write --non-interactive \
-  --confluence-action update --target-content-id 900001 \
-  --capability-id MARKET-FU-INDEX-API --scope Shared --domain Market \
-  --transport API --expected-parent-id 900002 \
-  --registry-content-id 900003)
-assert_contains "$output" 'Capability state: SUPPORTED'
-assert_contains "$output" 'Runtime inventory: COMPLETE'
-assert_contains "$output" 'Result: PASS'
-output=$($CLI preflight "$canonical_backend" --client codex \
-  --operation confluence-write --non-interactive \
-  --confluence-action create --target-content-id new \
-  --capability-id MARKET-PLANNED-API --scope Shared --domain Market \
-  --transport API --expected-parent-id 900002 \
-  --registry-content-id 900003)
-assert_contains "$output" 'Capability state: SUPPORTED'
-assert_contains "$output" 'Runtime inventory: COMPLETE'
-assert_contains "$output" 'Result: PASS'
-
-for unauthenticated_codex_apps in \
-  codex-apps-confluence-auth-missing \
-  codex-apps-confluence-auth-unknown \
-  codex-apps-confluence-auth-not-logged-in
-do
-  printf '%s\n' "$unauthenticated_codex_apps" \
-    >"$XDG_CONFIG_HOME/fake-codex-health"
-  if output=$($CLI preflight "$canonical_backend" --client codex \
-    --operation confluence-write --non-interactive \
-    --confluence-action create --target-content-id new \
-    --capability-id MARKET-PLANNED-API --scope Shared --domain Market \
-    --transport API --expected-parent-id 900002 \
-    --registry-content-id 900003 2>&1)
-  then
-    fail "$unauthenticated_codex_apps authorized Confluence create"
-  fi
-  assert_contains "$output" 'Capability state: UNSUPPORTED'
-  assert_not_contains "$output" 'Capability state: SUPPORTED'
-  assert_contains "$output" 'Result: CONNECTOR_CAPABILITY_REQUIRED'
-done
-
-printf '%s\n' healthy-codex-apps-confluence-preview \
-  >"$XDG_CONFIG_HOME/fake-codex-health"
-if output=$($CLI preflight "$canonical_backend" --client codex \
-  --operation confluence-write --non-interactive \
-  --confluence-action create --target-content-id new \
-  --capability-id MARKET-PLANNED-API --scope Shared --domain Market \
-  --transport API --expected-parent-id 900002 \
-  --registry-content-id 900003 2>&1)
-then
-  fail 'Confluence preview alias authorized create'
-fi
-assert_contains "$output" 'Capability state: UNSUPPORTED'
-assert_contains "$output" 'Runtime inventory: COMPLETE'
-assert_contains "$output" 'Result: CONNECTOR_CAPABILITY_REQUIRED'
-printf '%s\n' healthy-all >"$XDG_CONFIG_HOME/fake-codex-health"
-
-printf '%s\n' healthy-no-confluence-update \
-  >"$XDG_CONFIG_HOME/fake-codex-health"
 if output=$($CLI preflight "$canonical_backend" --client codex \
   --operation confluence-write --non-interactive \
   --confluence-action update --target-content-id 900001 \
@@ -1591,12 +1524,9 @@ if output=$($CLI preflight "$canonical_backend" --client codex \
   --transport API --expected-parent-id 900002 \
   --registry-content-id 900003 2>&1)
 then
-  fail 'Confluence update passed without update tool'
+  fail 'direct Confluence update passed without a trusted body'
 fi
-assert_contains "$output" 'Capability: confluence-page-update'
-assert_contains "$output" 'Capability state: UNSUPPORTED'
-assert_contains "$output" 'Result: CONNECTOR_CAPABILITY_REQUIRED'
-printf '%s\n' healthy-all >"$XDG_CONFIG_HOME/fake-codex-health"
+assert_contains "$output" 'Result: CLIENT_BODY_GATE_REQUIRED'
 
 : >"$CALLS"
 if output=$($CLI preflight "$canonical_backend" --client codex \
@@ -1611,14 +1541,16 @@ fi
 assert_contains "$output" 'Result: MAPPING_CONFLICT'
 [ ! -s "$CALLS" ] || fail 'legacy parent inspected a connector'
 
-output=$($CLI preflight "$canonical_backend" --client codex \
+if output=$($CLI preflight "$canonical_backend" --client codex \
   --operation confluence-write --non-interactive \
   --confluence-action create --target-content-id new \
   --capability-id MARKET-PLANNED-API --scope Shared --domain Market \
   --transport API --expected-parent-id 900002 \
-  --registry-content-id 900003)
-assert_contains "$output" 'Capability: confluence-page-parent-write'
-assert_contains "$output" 'Result: PASS'
+  --registry-content-id 900003 2>&1)
+then
+  fail 'direct Confluence create passed without a trusted body'
+fi
+assert_contains "$output" 'Result: CLIENT_BODY_GATE_REQUIRED'
 
 output=$($CLI preflight "$canonical_backend" --client codex \
   --operation confluence-write --non-interactive \
@@ -1682,14 +1614,16 @@ then
 fi
 assert_contains "$output" 'Result: DOCS_UNACTIVATED'
 
-output=$($CLI preflight "$canonical_backend" --client codex \
+if output=$($CLI preflight "$canonical_backend" --client codex \
   --operation confluence-write --non-interactive \
   --confluence-action update --target-content-id 900004 \
   --capability-id MARKET-DERIVATIVE-QUOTE-WS --scope Shared --domain Market \
   --transport WebSocket --expected-parent-id 900005 \
-  --registry-content-id 900003)
-assert_contains "$output" 'Target transport: WebSocket'
-assert_contains "$output" 'Result: PASS'
+  --registry-content-id 900003 2>&1)
+then
+  fail 'direct Confluence update passed without a trusted body'
+fi
+assert_contains "$output" 'Result: CLIENT_BODY_GATE_REQUIRED'
 
 handoff_verify_body=$HOME/handoff-verify.md
 sed -e 's/^Confluence page version: 1$/Confluence page version: 3/' \
@@ -1799,6 +1733,34 @@ handoff_client_preflight() {
     --expected-parent-id 900002 --handoff-body-file "$hcp_file"
 }
 
+direct_confluence_preflight() {
+  dcp_client=$1 dcp_operation=$2 dcp_action=$3 dcp_target=$4 dcp_fixture=${5:-}
+  set -- --confluence-action "$dcp_action" --target-content-id "$dcp_target" \
+    --expected-parent-id 900002
+  if [ "$dcp_operation" = confluence-handoff-write ]; then
+    set -- "$@" --handoff-body-file "$handoff_dir/$dcp_fixture.md"
+  fi
+  $CLI preflight "$canonical_backend" --client "$dcp_client" \
+    --operation "$dcp_operation" --non-interactive "$@"
+}
+
+assert_direct_confluence_body_gate() {
+  adcbg_client=$1
+  for adcbg_operation in confluence-write confluence-handoff-write; do
+    for adcbg_case in 'create new draft' 'update 900001 ready-no-impact'; do
+      set -- $adcbg_case
+      : >"$CALLS"
+      if output=$(direct_confluence_preflight "$adcbg_client" \
+        "$adcbg_operation" "$1" "$2" "$3" 2>&1)
+      then
+        fail "$adcbg_client $adcbg_operation $1 passed without a trusted body"
+      fi
+      assert_contains "$output" 'Result: CLIENT_BODY_GATE_REQUIRED'
+      [ ! -s "$CALLS" ] || fail 'untrusted Confluence body gate inspected a connector'
+    done
+  done
+}
+
 handoff_parent_preflight() {
   hpp_parent=$1
   shift
@@ -1835,10 +1797,24 @@ assert_handoff_section_required() {
 printf '%s\n' healthy-all >"$XDG_CONFIG_HOME/fake-codex-health"
 printf '%s\n' healthy >"$XDG_CONFIG_HOME/fake-claude-health"
 printf '%s\n' healthy >"$XDG_CONFIG_HOME/fake-cursor-health"
+for direct_confluence_client in codex claude cursor; do
+  assert_direct_confluence_body_gate "$direct_confluence_client"
+done
+
+for move_client in codex claude; do
+  : >"$CALLS"
+  output=$(direct_confluence_preflight "$move_client" confluence-write move 900001)
+  assert_contains "$output" 'Capability: confluence-page-parent-write'
+  assert_not_contains "$output" 'Result: CLIENT_BODY_GATE_REQUIRED'
+done
+
 for handoff_client in codex claude cursor; do
-  output=$(handoff_client_preflight "$handoff_client" \
-    "$handoff_dir/draft.md" create new)
-  assert_contains "$output" 'Result: PASS'
+  if output=$(handoff_client_preflight "$handoff_client" \
+    "$handoff_dir/draft.md" create new 2>&1)
+  then
+    fail "$handoff_client direct handoff create passed without a trusted body"
+  fi
+  assert_contains "$output" 'Result: CLIENT_BODY_GATE_REQUIRED'
   cp "$handoff_dir/ready-no-impact.md" "$handoff_dir/client-forbidden.md"
   printf '\nRepository: use the provider repository as contract evidence\n' \
     >>"$handoff_dir/client-forbidden.md"
@@ -1872,8 +1848,10 @@ assert_contains "$output" 'Result: FOLDER_CREATION_REQUIRED'
 [ ! -s "$CALLS" ] || fail 'mismatched handoff Folder metadata inspected a connector'
 
 : >"$CALLS"
-output=$(handoff_parent_preflight 900002)
-assert_contains "$output" 'Result: PASS'
+if output=$(handoff_parent_preflight 900002 2>&1); then
+  fail 'direct handoff create passed without a trusted body'
+fi
+assert_contains "$output" 'Result: CLIENT_BODY_GATE_REQUIRED'
 
 cp "$target_file" "$target_file.before-duplicate"
 printf '%b\n' \
@@ -2010,14 +1988,19 @@ assert_contains "$output" 'Result: HANDOFF_BODY_INVALID'
 
 printf '%s\n' FE >"$role_file"
 printf '%s\n' frontend >"$XDG_CONFIG_HOME/fake-github-teams"
-output=$(handoff_preflight "$handoff_dir/ready-api-fe-provider.md" update \
-  910001 910002 API "$canonical_frontend")
-assert_contains "$output" 'Result: PASS'
+if output=$(handoff_preflight "$handoff_dir/ready-api-fe-provider.md" update \
+  910001 910002 API "$canonical_frontend" 2>&1)
+then
+  fail 'direct frontend handoff update passed without a trusted body'
+fi
+assert_contains "$output" 'Result: CLIENT_BODY_GATE_REQUIRED'
 printf '%s\n' BE >"$role_file"
 printf '%s\n' backend >"$XDG_CONFIG_HOME/fake-github-teams"
 
-output=$(handoff_preflight "$handoff_dir/draft.md" create new)
-assert_contains "$output" 'Result: PASS'
+if output=$(handoff_preflight "$handoff_dir/draft.md" create new 2>&1); then
+  fail 'direct handoff create passed without a trusted body'
+fi
+assert_contains "$output" 'Result: CLIENT_BODY_GATE_REQUIRED'
 
 # Folder transport is a body contract, not optional caller guidance.
 : >"$CALLS"
@@ -2245,10 +2228,11 @@ for handoff_template in templates/ai-agent-assignment.md templates/jira-confluen
   if grep -Eq '{{[A-Z_]+}}' "$handoff_dir/prewrite-rendered.sh"; then
     fail 'rendered advertised pre-write command has unresolved tokens'
   fi
-  output=$(sh "$handoff_dir/prewrite-rendered.sh" 2>&1) ||
-    fail "advertised pre-write command did not pass: $handoff_template: $output"
-  assert_contains "$output" 'Result: PASS'
-  [ -s "$CALLS" ] || fail "advertised handoff did not reach connector: $handoff_template"
+  if output=$(sh "$handoff_dir/prewrite-rendered.sh" 2>&1); then
+    fail "advertised direct pre-write command passed: $handoff_template"
+  fi
+  assert_contains "$output" 'Result: CLIENT_BODY_GATE_REQUIRED'
+  [ ! -s "$CALLS" ] || fail "advertised handoff inspected a connector: $handoff_template"
 done
 
 for handoff_fixture in draft ready-api ready-websocket ready-api-websocket \
@@ -2266,21 +2250,25 @@ do
     *) handoff_parent=900002 handoff_transport=API ;;
   esac
   : >"$CALLS"
-  output=$(handoff_preflight "$handoff_dir/$handoff_fixture.md" \
-    "$handoff_action" "$handoff_target" "$handoff_parent" "$handoff_transport")
-  assert_contains "$output" 'Result: PASS'
-  [ -s "$CALLS" ] || fail "positive handoff did not reach connector: $handoff_fixture"
+  if output=$(handoff_preflight "$handoff_dir/$handoff_fixture.md" \
+    "$handoff_action" "$handoff_target" "$handoff_parent" "$handoff_transport" 2>&1)
+  then
+    fail "direct handoff passed without a trusted body: $handoff_fixture"
+  fi
+  assert_contains "$output" 'Result: CLIENT_BODY_GATE_REQUIRED'
+  [ ! -s "$CALLS" ] || fail "direct handoff inspected a connector: $handoff_fixture"
 done
 
 mv "$target_file.deny-only" "$target_file"
 pin_test_release v1.1.21
 
-output=$($CLI preflight "$consumer" --client codex \
+if output=$($CLI preflight "$consumer" --client codex \
   --operation confluence-write --non-interactive \
-  --confluence-action update --target-content-id 123457)
-assert_contains "$output" 'Confluence root content: 123456'
-assert_contains "$output" 'Capability: confluence-page-update'
-assert_contains "$output" 'Result: PASS'
+  --confluence-action update --target-content-id 123457 2>&1)
+then
+  fail 'direct standalone Confluence update passed without a trusted body'
+fi
+assert_contains "$output" 'Result: CLIENT_BODY_GATE_REQUIRED'
 
 PUBLISH_SERIAL=0
 
