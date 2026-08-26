@@ -330,9 +330,10 @@ DOC_TEST_TMP=$(mktemp -d)
 trap 'rm -rf "$DOC_TEST_TMP"' EXIT HUP INT TERM
 
 extract_advertised_handoff_body() {
-  template=$1 output=$2
-  awk '
-    $0 == "Handoff schema: 1" { copy = 1 }
+  template=$1 output=$2 occurrence=${3:-1}
+  awk -v occurrence="$occurrence" '
+    $0 == "Handoff schema: 1" { seen++ }
+    seen == occurrence && $0 == "Handoff schema: 1" { copy = 1 }
     copy && $0 == "```" { exit }
     copy { print }
   ' "$ROOT/$template" >"$output"
@@ -340,8 +341,8 @@ extract_advertised_handoff_body() {
 }
 
 render_advertised_handoff_body() {
-  template=$1 rendered=$2 raw=$DOC_TEST_TMP/raw.md
-  extract_advertised_handoff_body "$template" "$raw"
+  template=$1 rendered=$2 occurrence=${3:-1} raw=$DOC_TEST_TMP/raw.md
+  extract_advertised_handoff_body "$template" "$raw" "$occurrence"
   sed \
     -e 's/{{PROVIDER_JIRA}}/BB-42/g' \
     -e 's/{{CONSUMER_JIRA}}/BF-69/g' \
@@ -403,7 +404,29 @@ for template in templates/ai-agent-assignment.md templates/jira-confluence.md; d
     fail "rendered handoff body in $template lacks Scope"
   grep -F -- 'Domain: Market' "$DOC_TEST_TMP/rendered-$(basename "$template").md" >/dev/null ||
     fail "rendered handoff body in $template lacks Domain"
+  advertised_draft=$DOC_TEST_TMP/draft-$(basename "$template").md
+  render_advertised_handoff_body "$template" "$advertised_draft" 2
+  grep -F -- 'Handoff state: DRAFT' "$advertised_draft" >/dev/null ||
+    fail "rendered DRAFT body in $template lacks DRAFT state"
+  grep -F -- 'Confluence content ID: new' "$advertised_draft" >/dev/null ||
+    fail "rendered DRAFT body in $template lacks new content ID"
+  grep -F -- 'Confluence page version: pending' "$advertised_draft" >/dev/null ||
+    fail "rendered DRAFT body in $template lacks pending version"
+  if grep -F -- 'READY_FOR_FE' "$advertised_draft" >/dev/null; then
+    fail "rendered DRAFT body in $template claims readiness"
+  fi
+  require_text "$template" \
+    'Verification is update-only; never use create/new options with `confluence-handoff-verify`.'
+  reject_text "$template" \
+    'For a DRAFT create, use `--confluence-action create --target-content-id new`.'
 done
+
+awk '
+  /Trusted post-tool proof event: FUTURE_RUNTIME_ONLY/ { proof=NR }
+  /^## 5[.] Frontend Issue/ { execution=NR }
+  END { exit !(proof && execution && proof < execution) }
+' "$ROOT/examples/end-to-end-traceability.md" ||
+  fail 'recipient execution lacks an earlier explicit future trusted proof event'
 
 for file in runtime/rules/general.md governance.md workflow.md \
   templates/agent-entrypoints/AGENTS.md \

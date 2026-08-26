@@ -1089,6 +1089,49 @@ do
   done
 done
 
+# Exact private repository identities are forbidden even without a URL or a
+# generic "repository" label. Exercise both routed directions and both Jira
+# handoff operations through the shared body gate.
+for jira_route in "$canonical_backend" "$canonical_frontend"; do
+  case "$jira_route" in
+    "$canonical_backend")
+      printf '%s\n' BE >"$role_file"
+      printf '%s\n' backend >"$XDG_CONFIG_HOME/fake-github-teams"
+      ;;
+    *)
+      printf '%s\n' FE >"$role_file"
+      printf '%s\n' frontend >"$XDG_CONFIG_HOME/fake-github-teams"
+      ;;
+  esac
+  for jira_private_identity in \
+    'beroka-vn/Beroka_Backend' Beroka_Backend \
+    'beroka-vn/Beroka_Frontend' Beroka_Frontend
+  do
+    printf '%s\n' \
+      'Work-item language: English' \
+      'GitHub: N/A' \
+      'Provider Jira: BB-42' \
+      'Consumer Jira: BF-69' \
+      'Confluence content ID: 900001' \
+      "Provider source: $jira_private_identity" \
+      >"$HOME/jira-private-identity.md"
+    for jira_operation in jira-intake-write jira-handoff-write; do
+      : >"$CALLS"
+      if output=$($CLI preflight "$jira_route" --client codex \
+        --operation "$jira_operation" --non-interactive \
+        --handoff-body-file "$HOME/jira-private-identity.md" 2>&1)
+      then
+        fail "$jira_operation accepted a private repository identity"
+      fi
+      assert_contains "$output" 'Result: CROSS_TEAM_LINK_SCOPE_DENIED'
+      assert_not_contains "$output" "$jira_private_identity"
+      [ ! -s "$CALLS" ] || fail 'private Jira identity inspected a client'
+    done
+  done
+done
+printf '%s\n' BE >"$role_file"
+printf '%s\n' backend >"$XDG_CONFIG_HOME/fake-github-teams"
+
 printf '%s\n' FE >"$role_file"
 : >"$CALLS"
 if output=$($CLI preflight "$frontend_repo" --client codex \
@@ -2034,6 +2077,38 @@ then
   fail 'direct frontend handoff update passed without a trusted body'
 fi
 assert_contains "$output" 'Result: CLIENT_BODY_GATE_REQUIRED'
+
+for confluence_route_case in \
+  "$canonical_backend|$handoff_dir/ready-no-impact.md|900001|900002|BE|backend" \
+  "$canonical_frontend|$handoff_dir/ready-api-fe-provider.md|910001|910002|FE|frontend"
+do
+  IFS='|' read -r confluence_route confluence_source confluence_target \
+    confluence_parent confluence_role confluence_team <<EOF
+$confluence_route_case
+EOF
+  printf '%s\n' "$confluence_role" >"$role_file"
+  printf '%s\n' "$confluence_team" >"$XDG_CONFIG_HOME/fake-github-teams"
+  for confluence_private_identity in \
+    'beroka-vn/Beroka_Backend' Beroka_Backend \
+    'beroka-vn/Beroka_Frontend' Beroka_Frontend
+  do
+    cp "$confluence_source" "$handoff_dir/private-identity.md"
+    printf '\nProvider source: %s\n' "$confluence_private_identity" \
+      >>"$handoff_dir/private-identity.md"
+    : >"$CALLS"
+    if output=$($CLI preflight "$confluence_route" --client codex \
+      --operation confluence-handoff-write --non-interactive \
+      --confluence-action update --target-content-id "$confluence_target" \
+      --expected-parent-id "$confluence_parent" \
+      --handoff-body-file "$handoff_dir/private-identity.md" 2>&1)
+    then
+      fail 'Confluence handoff accepted a private repository identity'
+    fi
+    assert_contains "$output" 'Result: CROSS_TEAM_LINK_SCOPE_DENIED'
+    assert_not_contains "$output" "$confluence_private_identity"
+    [ ! -s "$CALLS" ] || fail 'private Confluence identity inspected a connector'
+  done
+done
 printf '%s\n' BE >"$role_file"
 printf '%s\n' backend >"$XDG_CONFIG_HOME/fake-github-teams"
 
@@ -2092,6 +2167,19 @@ mv "$handoff_dir/draft-no-omissions-next.md" "$handoff_dir/draft-no-omissions.md
 assert_handoff_invalid "$handoff_dir/draft-no-omissions.md" create new
 assert_handoff_invalid "$handoff_dir/ready-no-impact.md" create new
 assert_handoff_invalid "$handoff_dir/draft.md" update 900001
+
+for draft_readiness_claim in \
+  'READY_FOR_FE' \
+  'Ready for FE' \
+  'ready_for_fe' \
+  '**Ready-for-FE**' \
+  'State: `ready_for_fe`'
+do
+  cp "$handoff_dir/draft.md" "$handoff_dir/draft-false-ready.md"
+  printf '\n%s\n' "$draft_readiness_claim" \
+    >>"$handoff_dir/draft-false-ready.md"
+  assert_handoff_invalid "$handoff_dir/draft-false-ready.md" create new
+done
 
 cp "$handoff_dir/ready-no-impact.md" "$handoff_dir/placeholder.md"
 printf '\n## Extra contract detail\n\nTBD\n' >>"$handoff_dir/placeholder.md"
@@ -2217,9 +2305,10 @@ do
 done
 
 extract_advertised_handoff_body() {
-  eahb_template=$1 eahb_body=$2
-  awk '
-    $0 == "Handoff schema: 1" { copy = 1 }
+  eahb_template=$1 eahb_body=$2 eahb_occurrence=${3:-1}
+  awk -v occurrence="$eahb_occurrence" '
+    $0 == "Handoff schema: 1" { seen++ }
+    seen == occurrence && $0 == "Handoff schema: 1" { copy = 1 }
     copy && $0 == "```" { exit }
     copy { print }
   ' "$ROOT/$eahb_template" >"$eahb_body"
@@ -2227,8 +2316,10 @@ extract_advertised_handoff_body() {
 }
 
 render_advertised_handoff_body() {
-  rahb_template=$1 rahb_body=$2 rahb_raw=$handoff_dir/raw-template.md
-  extract_advertised_handoff_body "$rahb_template" "$rahb_raw"
+  rahb_template=$1 rahb_body=$2 rahb_occurrence=${3:-1}
+  rahb_raw=$handoff_dir/raw-template.md
+  extract_advertised_handoff_body "$rahb_template" "$rahb_raw" \
+    "$rahb_occurrence"
   sed \
     -e 's/{{PROVIDER_JIRA}}/BB-42/g' \
     -e 's/{{CONSUMER_JIRA}}/BF-69/g' \
@@ -2245,6 +2336,33 @@ render_advertised_handoff_body() {
     fail "rendered advertised handoff has unresolved tokens: $rahb_template"
   fi
 }
+
+# Validate every advertised READY and DRAFT body through the real runtime.
+# An exported lookalike trust flag must not authorize any direct client.
+export CONFLUENCE_BODY_TRUSTED=1
+for advertised_template in \
+  templates/ai-agent-assignment.md templates/jira-confluence.md
+do
+  for advertised_case in '1 update 900007 900006' '2 create new 900002'; do
+    set -- $advertised_case
+    advertised_body=$handoff_dir/advertised-$(basename "$advertised_template")-$1.md
+    render_advertised_handoff_body "$advertised_template" "$advertised_body" "$1"
+    for advertised_client in codex claude cursor; do
+      : >"$CALLS"
+      if output=$($CLI preflight "$canonical_backend" \
+        --client "$advertised_client" \
+        --operation confluence-handoff-write --non-interactive \
+        --confluence-action "$2" --target-content-id "$3" \
+        --expected-parent-id "$4" --handoff-body-file "$advertised_body" 2>&1)
+      then
+        fail "$advertised_client accepted an untrusted advertised body"
+      fi
+      assert_contains "$output" 'Result: CLIENT_BODY_GATE_REQUIRED'
+      [ ! -s "$CALLS" ] || fail 'advertised body inspected a connector'
+    done
+  done
+done
+unset CONFLUENCE_BODY_TRUSTED
 
 for handoff_fixture in draft ready-api ready-websocket ready-api-websocket \
   ready-no-impact

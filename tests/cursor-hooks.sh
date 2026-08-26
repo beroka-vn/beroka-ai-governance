@@ -502,10 +502,24 @@ sed '/^## Affected WebSocket inventory$/d' "$cursor_handoff_dir/ready-websocket.
   >"$cursor_handoff_dir/missing-websocket.md"
 assert_denied "$(hook beforeMCPExecution "$(cursor_handoff_input \
   "$cursor_handoff_dir/missing-websocket.md" update 900001 76808195)")" HANDOFF_BODY_INVALID
-cp "$cursor_handoff_dir/draft.md" "$cursor_handoff_dir/false-ready.md"
-printf '\nREADY_FOR_FE\n' >>"$cursor_handoff_dir/false-ready.md"
-assert_denied "$(hook beforeMCPExecution "$(cursor_handoff_input \
-  "$cursor_handoff_dir/false-ready.md" create new 76808195)")" HANDOFF_BODY_INVALID
+for cursor_readiness_claim in \
+  READY_FOR_FE 'Ready for FE' ready_for_fe '**Ready-for-FE**'
+do
+  cp "$cursor_handoff_dir/draft.md" "$cursor_handoff_dir/false-ready.md"
+  printf '\n%s\n' "$cursor_readiness_claim" \
+    >>"$cursor_handoff_dir/false-ready.md"
+  assert_denied "$(hook beforeMCPExecution "$(cursor_handoff_input \
+    "$cursor_handoff_dir/false-ready.md" create new 76808195)")" \
+    HANDOFF_BODY_INVALID
+done
+
+cp "$cursor_handoff_dir/ready.md" "$cursor_handoff_dir/private-identity.md"
+printf '\nProvider source: Beroka_Backend\n' \
+  >>"$cursor_handoff_dir/private-identity.md"
+cursor_private_identity_output=$(hook beforeMCPExecution "$(cursor_handoff_input \
+  "$cursor_handoff_dir/private-identity.md" update 900001 76808195)")
+assert_denied "$cursor_private_identity_output" CROSS_TEAM_LINK_SCOPE_DENIED
+assert_not_contains "$cursor_private_identity_output" Beroka_Backend
 
 assert_denied "$(hook beforeMCPExecution "$(cursor_handoff_input \
   "$cursor_handoff_dir/ready-websocket.md" update 900004 76808195)")" \

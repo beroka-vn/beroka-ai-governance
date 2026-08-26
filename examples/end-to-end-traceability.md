@@ -231,6 +231,18 @@ Nam không comment record này vào `BF-87`; Linh chưa ghi `ACKNOWLEDGED` cho t
 khi trusted post-tool evidence chứng minh exact Confluence content ID/version.
 FE không tự tổng hợp contract từ repository, Issue hoặc PR của Backend.
 
+The remaining recipient-execution example is conditional on this explicit
+future trusted proof event; the current release cannot produce it:
+
+```text
+Trusted post-tool proof event: FUTURE_RUNTIME_ONLY
+Write receipt and subsequent read response: exact content 900001, parent 900002, version 3, owner, title, space, and body verified
+Readback: VERIFIED
+State transition: DRAFT -> READY_FOR_FE
+Provider action: comment exact content 900001 version 3 on BF-87
+Consumer action: ACKNOWLEDGED exact content 900001 version 3
+```
+
 ## 5. Frontend Issue `#122`
 
 ```markdown

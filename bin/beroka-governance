@@ -258,7 +258,7 @@ handoff_require_section() {
 reject_cross_team_repository_references() {
   rctrr_file=$1
   if LC_ALL=C grep -Eiq \
-    'github[.]com|git@github|[[:alnum:]_./-]+[.]git([^[:alnum:]_./-]|$)|canonical:[[:space:]]*[^[:space:]]|(^|[^[:alnum:]_])(repository|branch|pull request|pr|commit)([^[:alnum:]_]|$)' \
+    'github[.]com|git@github|[[:alnum:]_./-]+[.]git([^[:alnum:]_./-]|$)|canonical:[[:space:]]*[^[:space:]]|(^|[^[:alnum:]_])((beroka-vn/)?beroka_(backend|frontend)|repository|branch|pull request|pr|commit)([^[:alnum:]_]|$)' \
     "$rctrr_file"
   then
     die CROSS_TEAM_LINK_SCOPE_DENIED \
@@ -471,7 +471,15 @@ validate_handoff_body() {
       [ "$vhb_content" = new ] && [ "$vhb_version" = pending ] &&
         [ "$vhb_missing" != None ] ||
         die HANDOFF_BODY_INVALID 'Draft handoff state conflicts with its target'
-      awk '$0 != "Handoff state: DRAFT" && /READY_FOR_FE/ { exit 1 }' "$vhb_file" ||
+      awk '
+        NR == 2 { next }
+        {
+          readiness=tolower($0)
+          gsub(/[^[:alnum:]]+/, " ", readiness)
+          if (readiness ~ /(^| )ready +for +fe( |$)/ ||
+              readiness ~ /(^| )readyforfe( |$)/) exit 1
+        }
+      ' "$vhb_file" ||
         die HANDOFF_BODY_INVALID 'Draft handoff cannot claim recipient readiness'
       ;;
     READY_FOR_FE:update)

@@ -531,6 +531,38 @@ Invalid subscriptions emit a stable error event.
 All other public WebSocket streams are unchanged.
 ```
 
+For an initial create, use this separate DRAFT body:
+
+```text
+Handoff schema: 1
+Handoff state: DRAFT
+Provider Jira: {{PROVIDER_JIRA}}
+Consumer Jira: {{CONSUMER_JIRA}}
+Scope: {{SCOPE}}
+Domain: {{DOMAIN}}
+Confluence content ID: new
+Confluence page version: pending
+Owner account ID: {{OWNER_ACCOUNT_ID}}
+Effective date: {{EFFECTIVE_DATE}}
+Supersedes: {{SUPERSEDES}}
+Superseded by: {{SUPERSEDED_BY}}
+API impact: none
+WebSocket impact: none
+Missing sections: Purpose and delivered behavior, Authentication and authorization, Public data types and compatibility, State and delivery semantics, Errors and edge cases, Frontend implementation guidance, Sanitized examples and validation evidence, Known limitations and unverified items, FE acknowledgment
+
+## Affected user flows, assumptions, and non-goals
+
+Recipient execution remains out of scope until a later verified update.
+
+## API impact rationale
+
+No public API operation changes.
+
+## WebSocket impact rationale
+
+No public WebSocket contract changes.
+```
+
 This consumer-facing page contains Jira and Confluence references only. Keep
 GitHub URLs in team-local Issue/PR sections. The BE owner updates the Registry
 and Hub after merge; the FE owner acknowledges the exact Confluence content ID/page version.
@@ -541,10 +573,10 @@ create/update boundary in this release. Codex and Claude Confluence create/updat
 `CLIENT_BODY_GATE_REQUIRED`; do not treat a temporary or caller-provided body
 file as proof of the Atlassian request. Jira operations, Confluence moves, and
 capability-only readback retain their existing governed paths. For this READY
-page, use Cursor's configured Atlassian MCP `updateConfluencePage` tool with
-this complete body, `{{CONTENT_ID}}`, and `{{ACTIVE_FOLDER_ID}}`. For a DRAFT
-create, use `createConfluencePage` with this body and the reviewed ACTIVE
-Folder. The in-process Cursor hook stages the actual tool-call body and runs
+update, use Cursor's configured Atlassian MCP `updateConfluencePage` tool with
+the READY body, `{{CONTENT_ID}}`, and `{{ACTIVE_FOLDER_ID}}`. For a DRAFT
+create, use `createConfluencePage` with the separate DRAFT body and the
+reviewed ACTIVE Folder. The in-process Cursor hook stages the actual tool-call body and runs
 `confluence-handoff-write`; a standalone preflight cannot prove the Atlassian
 request.
 
@@ -557,7 +589,7 @@ post-tool write/read results, report unverified and do not report
 beroka-governance preflight {{REPOSITORY}} --client {{CLIENT}} --operation confluence-handoff-verify --non-interactive --confluence-action update --target-content-id {{CONTENT_ID}} --expected-parent-id {{ACTIVE_FOLDER_ID}} --handoff-body-file {{HANDOFF_BODY_FILE}}
 ```
 
-For a DRAFT create, use `--confluence-action create --target-content-id new`.
+Verification is update-only; never use create/new options with `confluence-handoff-verify`.
 
 ## Cross-Team Capability Mapping Template
 
