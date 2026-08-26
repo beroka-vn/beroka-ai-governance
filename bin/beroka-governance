@@ -5590,6 +5590,10 @@ cmd_show() {
   repo=$1 kind=$2 name=${3:-}
   load_active_release
   resolve_repository_context "$repo"
+  if ! repository_is_governed; then
+    print_not_governed
+    return
+  fi
   case "$kind:$name" in
     governance:) file=governance.md ;;
     handbook:) file=handbook.md ;;

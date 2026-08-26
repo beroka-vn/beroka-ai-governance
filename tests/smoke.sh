@@ -208,6 +208,12 @@ unknown_output=$($CLI context "$unknown_repo")
 [ "$(printf '%s' "$unknown_output" | wc -w)" -le 8 ] ||
   fail 'unknown context exceeded eight words'
 
+unknown_show_output=$($CLI show "$unknown_repo" governance)
+[ "$unknown_show_output" = "$(printf '%s\n%s' \
+  'Result: NOT_GOVERNED' \
+  'Repository: beroka-vn/unknown')" ] ||
+  fail 'unknown repository received a governance document'
+
 if output=$($CLI context "$TMP_ROOT/not-a-repository" 2>&1); then
   fail 'context accepted a non-repository path'
 fi
