@@ -411,6 +411,17 @@ handoff_require_websocket() {
 validate_handoff_body() {
   vhb_file=$1 vhb_action=$2 vhb_target=$3
   validate_cross_team_body "$vhb_file"
+  if [ -z "$PERSONAL_STAGE_ROOT" ]; then
+    PERSONAL_STAGE_ROOT=$(umask 077; mktemp -d \
+      "${TMPDIR:-/tmp}/beroka-governance-handoff.XXXXXX") ||
+      die GOVERNANCE_NOT_READY 'Cannot create handoff validation stage'
+    trap 'cleanup_personal_stage || :' EXIT
+    trap 'cleanup_personal_stage || :; exit 1' HUP INT TERM
+  fi
+  vhb_normalized=$PERSONAL_STAGE_ROOT/handoff-lf
+  (umask 077; awk '{ sub(/\r$/, ""); print }' "$vhb_file" >"$vhb_normalized") ||
+    die GOVERNANCE_NOT_READY 'Cannot normalize handoff body'
+  vhb_file=$vhb_normalized
 
   vhb_schema=$(handoff_header_value "$vhb_file" 'Handoff schema') ||
     die HANDOFF_BODY_INVALID 'Handoff body has an invalid header'
@@ -523,7 +534,7 @@ validate_handoff_body() {
         die HANDOFF_BODY_INVALID 'WebSocket no-impact rationale is incomplete'
       ;;
   esac
-  if LC_ALL=C grep -Eiq '(^|[^[:alnum:]])(tbd|todo)([^[:alnum:]]|$)|<[^>]+>|fill later|(api[ _-]?key|client[ _-]?secret|password|access[ _-]?token|refresh[ _-]?token|private[ _-]?key)[[:space:]]*[:=]|authorization:[[:space:]]*(basic|bearer)|(^|[^[:alnum:]])(kafka[ _-]*)?topic[[:space:]]*[:=]|(^|[^[:alnum:]])topology[[:space:]]*[:=]|(^|[^[:alnum:]])adapter[[:space:]]*[:=]|provider[ _-]+(credential|secret|token|adapter|implementation)[[:space:]]*[:=]|internal (topic|topology|adapter|provider)|raw upstream payload|upstream payload' "$vhb_file"; then
+  if LC_ALL=C grep -Eiq '(^|[^[:alnum:]])(tbd|todo)([^[:alnum:]]|$)|<[^>]+>|fill later|(api[ _-]?key|client[ _-]?secret|password|access[ _-]?token|refresh[ _-]?token|private[ _-]?key)[[:space:]"*`_]*[:=]|authorization[[:space:]"*`_]*:[[:space:]"*`_]*(basic|bearer)|(^|[^[:alnum:]])(kafka[ _-]*)?topic[[:space:]"*`_]*[:=]|(^|[^[:alnum:]])topology[[:space:]"*`_]*[:=]|(^|[^[:alnum:]])adapter[[:space:]"*`_]*[:=]|provider[ _-]+(credential|secret|token|adapter|implementation)[[:space:]"*`_]*[:=]|internal (topic|topology|adapter|provider)|raw upstream payload|upstream payload' "$vhb_file"; then
     die HANDOFF_BODY_INVALID 'Handoff body contains placeholders or publication leakage'
   fi
 }

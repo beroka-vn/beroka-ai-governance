@@ -2015,6 +2015,15 @@ awk '
 ' "$handoff_dir/ready-no-impact.md" >"$handoff_dir/reordered.md"
 assert_handoff_invalid "$handoff_dir/reordered.md" update 900001
 
+awk '{ printf "%s\r\n", $0 }' "$handoff_dir/ready-no-impact.md" \
+  >"$handoff_dir/ready-no-impact-crlf.md"
+if output=$(handoff_preflight "$handoff_dir/ready-no-impact-crlf.md" update \
+  900001 2>&1)
+then
+  fail 'CRLF handoff bypassed the trusted client body gate'
+fi
+assert_contains "$output" 'Result: CLIENT_BODY_GATE_REQUIRED'
+
 cp "$handoff_dir/ready-no-impact.md" "$handoff_dir/same-project.md"
 sed 's/^Consumer Jira: BF-69$/Consumer Jira: BB-69/' \
   "$handoff_dir/same-project.md" >"$handoff_dir/same-project-next.md"
@@ -2029,15 +2038,23 @@ do
     missing-scope) sed '/^Scope: Shared$/d' "$handoff_dir/ready-no-impact.md" >"$handoff_header_file" ;;
     missing-domain) sed '/^Domain: Market$/d' "$handoff_dir/ready-no-impact.md" >"$handoff_header_file" ;;
     scope-before-consumer)
-      sed '/^Scope: Shared$/d; /^Provider Jira: BB-42$/a\Scope: Shared' \
+      awk '$0 == "Scope: Shared" { next } { print } \
+        $0 == "Provider Jira: BB-42" { print "Scope: Shared" }' \
         "$handoff_dir/ready-no-impact.md" >"$handoff_header_file"
       ;;
     domain-before-scope)
-      sed '/^Domain: Market$/d; /^Consumer Jira: BF-69$/a\Domain: Market' \
+      awk '$0 == "Domain: Market" { next } { print } \
+        $0 == "Consumer Jira: BF-69" { print "Domain: Market" }' \
         "$handoff_dir/ready-no-impact.md" >"$handoff_header_file"
       ;;
-    duplicate-scope) sed '/^Domain: Market$/a\Scope: Shared' "$handoff_dir/ready-no-impact.md" >"$handoff_header_file" ;;
-    duplicate-domain) sed '/^Domain: Market$/a\Domain: Market' "$handoff_dir/ready-no-impact.md" >"$handoff_header_file" ;;
+    duplicate-scope)
+      awk '{ print } $0 == "Domain: Market" { print "Scope: Shared" }' \
+        "$handoff_dir/ready-no-impact.md" >"$handoff_header_file"
+      ;;
+    duplicate-domain)
+      awk '{ print } $0 == "Domain: Market" { print "Domain: Market" }' \
+        "$handoff_dir/ready-no-impact.md" >"$handoff_header_file"
+      ;;
     scope-mismatch) sed 's/^Scope: Shared$/Scope: Product/' "$handoff_dir/ready-no-impact.md" >"$handoff_header_file" ;;
     domain-mismatch) sed 's/^Domain: Market$/Domain: Broker accounts/' "$handoff_dir/ready-no-impact.md" >"$handoff_header_file" ;;
   esac
@@ -2187,9 +2204,12 @@ assert_handoff_invalid "$handoff_dir/placeholder.md" update 900001
 
 for handoff_leak in \
   'client_secret=plain-reusable-value' \
+  '"client_secret": "plain-reusable-value"' \
   'Password: plain-reusable-value' \
   'Authorization: Basic Zm9vOmJhcg==' \
+  '"Authorization": "Bearer reusable-token"' \
   'Kafka topic: broker.account.internal' \
+  '`topic`: internal.orders' \
   'Topology: account-events -> reconnect-worker' \
   'Adapter: brokerReconnectAdapter' \
   'Provider credential: reusable-provider-token'

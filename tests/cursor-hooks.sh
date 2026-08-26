@@ -468,15 +468,23 @@ do
     missing-scope) sed '/^Scope: Shared$/d' "$cursor_handoff_dir/ready.md" >"$cursor_header_file" ;;
     missing-domain) sed '/^Domain: Market$/d' "$cursor_handoff_dir/ready.md" >"$cursor_header_file" ;;
     scope-before-consumer)
-      sed '/^Scope: Shared$/d; /^Provider Jira: BB-42$/a\Scope: Shared' \
+      awk '$0 == "Scope: Shared" { next } { print } \
+        $0 == "Provider Jira: BB-42" { print "Scope: Shared" }' \
         "$cursor_handoff_dir/ready.md" >"$cursor_header_file"
       ;;
     domain-before-scope)
-      sed '/^Domain: Market$/d; /^Consumer Jira: BF-69$/a\Domain: Market' \
+      awk '$0 == "Domain: Market" { next } { print } \
+        $0 == "Consumer Jira: BF-69" { print "Domain: Market" }' \
         "$cursor_handoff_dir/ready.md" >"$cursor_header_file"
       ;;
-    duplicate-scope) sed '/^Domain: Market$/a\Scope: Shared' "$cursor_handoff_dir/ready.md" >"$cursor_header_file" ;;
-    duplicate-domain) sed '/^Domain: Market$/a\Domain: Market' "$cursor_handoff_dir/ready.md" >"$cursor_header_file" ;;
+    duplicate-scope)
+      awk '{ print } $0 == "Domain: Market" { print "Scope: Shared" }' \
+        "$cursor_handoff_dir/ready.md" >"$cursor_header_file"
+      ;;
+    duplicate-domain)
+      awk '{ print } $0 == "Domain: Market" { print "Domain: Market" }' \
+        "$cursor_handoff_dir/ready.md" >"$cursor_header_file"
+      ;;
     scope-mismatch) sed 's/^Scope: Shared$/Scope: Product/' "$cursor_handoff_dir/ready.md" >"$cursor_header_file" ;;
     domain-mismatch) sed 's/^Domain: Market$/Domain: Broker accounts/' "$cursor_handoff_dir/ready.md" >"$cursor_header_file" ;;
   esac
