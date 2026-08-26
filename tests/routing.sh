@@ -886,10 +886,13 @@ git -C "$unknown_repo" commit -qm 'test: initialize unknown application'
 git -C "$unknown_repo" remote add origin \
   https://github.com/beroka-vn/unknown-repo.git
 unknown_output=$($CLI context "$unknown_repo")
-assert_contains "$unknown_output" 'Routing: ROUTING_REQUIRED'
-assert_contains "$unknown_output" 'Dependency state: NO_DEPENDENCY_DECLARED'
-assert_contains "$unknown_output" 'Cross-repository policy: explicit-only'
-assert_not_contains "$unknown_output" '# BE/FE Work Items'
+[ "$unknown_output" = "$(printf '%s\n%s' \
+  'Result: NOT_GOVERNED' \
+  'Repository: beroka-vn/unknown-repo')" ] ||
+  fail 'unknown repository received governance context'
+assert_not_contains "$unknown_output" '# General Repository Governance'
+assert_not_contains "$unknown_output" 'Profile:'
+assert_not_contains "$unknown_output" 'Routing:'
 
 backend_repo=$TEST_ROOT/backend-repo
 new_repo "$backend_repo"
@@ -898,24 +901,20 @@ git -C "$backend_repo" remote add origin \
 role_file=$XDG_CONFIG_HOME/beroka-ai-governance/github-role
 printf '%s\n' FULL_STACK >"$role_file"
 backend_output=$($CLI context "$backend_repo")
-assert_contains "$backend_output" \
-  'Repository: cuongngo1801-beroka/Beroka_Backend'
-assert_contains "$backend_output" 'Routing: ROUTING_REQUIRED'
-assert_contains "$backend_output" 'Profile: standalone'
-assert_contains "$backend_output" 'Jira project: ROUTING_REQUIRED'
-assert_not_contains "$backend_output" '# BE/FE Work Items'
+[ "$backend_output" = "$(printf '%s\n%s' \
+  'Result: NOT_GOVERNED' \
+  'Repository: cuongngo1801-beroka/Beroka_Backend')" ] ||
+  fail 'uncataloged Backend fork received governance context'
 
 frontend_repo=$TEST_ROOT/frontend-repo
 new_repo "$frontend_repo"
 git -C "$frontend_repo" remote add origin \
   https://github.com/cuongngo1801-beroka/Beroka_Frontend.git
 frontend_output=$($CLI context "$frontend_repo")
-assert_contains "$frontend_output" \
-  'Repository: cuongngo1801-beroka/Beroka_Frontend'
-assert_contains "$frontend_output" 'Routing: ROUTING_REQUIRED'
-assert_contains "$frontend_output" 'Profile: standalone'
-assert_contains "$frontend_output" 'Jira project: ROUTING_REQUIRED'
-assert_not_contains "$frontend_output" '# BE/FE Work Items'
+[ "$frontend_output" = "$(printf '%s\n%s' \
+  'Result: NOT_GOVERNED' \
+  'Repository: cuongngo1801-beroka/Beroka_Frontend')" ] ||
+  fail 'uncataloged Frontend fork received governance context'
 
 canonical_backend=$TEST_ROOT/canonical-backend
 new_repo "$canonical_backend"
@@ -1134,15 +1133,12 @@ printf '%s\n' backend >"$XDG_CONFIG_HOME/fake-github-teams"
 
 printf '%s\n' FE >"$role_file"
 : >"$CALLS"
-if output=$($CLI preflight "$frontend_repo" --client codex \
+output=$($CLI preflight "$frontend_repo" --client codex \
   --operation jira-intake-write --non-interactive \
-  --handoff-body-file "$jira_cross_team_body" 2>&1)
-then
-  fail 'deprecated alias received canonical cross-team intake routing'
-fi
-assert_contains "$output" 'Result: ROUTING_REQUIRED'
+  --handoff-body-file "$jira_cross_team_body")
+assert_contains "$output" 'Result: NOT_GOVERNED'
 [ ! -s "$CALLS" ] ||
-  fail 'missing intake mapping inspected a client'
+  fail 'uncataloged alias inspected a client'
 
 : >"$CALLS"
 if output=$($CLI preflight "$consumer" --client codex \

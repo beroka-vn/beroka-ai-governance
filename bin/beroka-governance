@@ -694,13 +694,20 @@ resolve_repository_context() {
     ROUTING_STATE=ROUTING_ACTIVE
   else
     clear_routing_values
-    ROUTE_PROFILE=standalone
-    ROUTE_INTEGRATION_PROFILE=none
-    ROUTE_CROSS_REPO_POLICY=explicit-only
-    DEPENDENCY_STATE=NO_DEPENDENCY_DECLARED
-    ROUTING_STATE=ROUTING_REQUIRED
+    ROUTING_STATE=NOT_GOVERNED
+    return 0
   fi
   require_role_scope
+}
+
+repository_is_governed() {
+  [ "$ROUTING_STATE" = ROUTING_ACTIVE ]
+}
+
+print_not_governed() {
+  printf '%s\n' \
+    'Result: NOT_GOVERNED' \
+    "Repository: $REPOSITORY_SLUG"
 }
 
 clear_routing_values() {
@@ -5298,6 +5305,10 @@ cmd_preflight() {
 
   load_active_release
   resolve_repository_context "$pf_repo"
+  if ! repository_is_governed; then
+    print_not_governed
+    return
+  fi
   require_enrolled_client "$pf_client"
   verify_client_instruction "$pf_client"
   if [ "$pf_operation" = github-write ]; then
@@ -5523,6 +5534,10 @@ cmd_doctor() {
 cmd_context() {
   load_active_release
   resolve_repository_context "$1"
+  if ! repository_is_governed; then
+    print_not_governed
+    return
+  fi
   cat "$RELEASE_DIR/runtime/entrypoint.md" || die GOVERNANCE_NOT_READY 'Cannot read runtime entrypoint'
   printf '%s\n' \
     "Repository: $REPOSITORY_SLUG" \

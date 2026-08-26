@@ -199,12 +199,14 @@ git -C "$unknown_repo" commit -qm 'test: initialize unknown repository'
 git -C "$unknown_repo" remote add origin \
   https://github.com/beroka-vn/unknown.git
 unknown_output=$($CLI context "$unknown_repo")
-assert_contains "$unknown_output" 'Routing: ROUTING_REQUIRED'
-assert_contains "$unknown_output" 'Profile: standalone'
-assert_contains "$unknown_output" 'Cross-repository policy: explicit-only'
-assert_contains "$unknown_output" '# General Repository Governance'
-assert_contains "$unknown_output" 'External routing-dependent writes: BLOCKED'
-assert_not_contains "$unknown_output" 'registered repository'
+[ "$unknown_output" = "$(printf '%s\n%s' \
+  'Result: NOT_GOVERNED' \
+  'Repository: beroka-vn/unknown')" ] ||
+  fail 'unknown repository received governance context'
+[ "$(printf '%s' "$unknown_output" | wc -c)" -le 160 ] ||
+  fail 'unknown context exceeded 160 bytes'
+[ "$(printf '%s' "$unknown_output" | wc -w)" -le 8 ] ||
+  fail 'unknown context exceeded eight words'
 
 if output=$($CLI context "$TMP_ROOT/not-a-repository" 2>&1); then
   fail 'context accepted a non-repository path'
@@ -361,13 +363,12 @@ assert_contains "$output" \
   'Remediation: beroka-governance bootstrap --client codex'
 printf '%s\n' codex >"$XDG_CONFIG_HOME/beroka-ai-governance/clients"
 
-if output=$(PATH=$fake_bin:$PATH $CLI preflight "$unknown_repo" \
-  --client codex --operation jira-write --non-interactive 2>&1)
-then
-  fail 'unknown repository passed routing-dependent preflight'
-fi
-assert_contains "$output" 'Result: ROUTING_REQUIRED'
-assert_not_contains "$output" 'CONNECTOR_MISSING'
+output=$(PATH=$fake_bin:$PATH $CLI preflight "$unknown_repo" \
+  --client codex --operation jira-write --non-interactive)
+[ "$output" = "$(printf '%s\n%s' \
+  'Result: NOT_GOVERNED' \
+  'Repository: beroka-vn/unknown')" ] ||
+  fail 'unknown repository entered governed preflight'
 
 mkdir -p "$HOME/.codex" "$HOME/.claude"
 codex_suffix_expected=$TMP_ROOT/codex-suffix-expected
