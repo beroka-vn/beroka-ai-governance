@@ -6,6 +6,8 @@ CLI=$ROOT/bin/beroka-governance
 TMP_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/beroka-governance-cursor-hooks.XXXXXX")
 trap 'rm -rf "$TMP_ROOT"' EXIT HUP INT TERM
 export TMPDIR=$TMP_ROOT
+CONNECTOR_CALLS=$TMP_ROOT/connector-calls
+export CONNECTOR_CALLS
 
 export HOME=$TMP_ROOT/home
 export XDG_DATA_HOME=$TMP_ROOT/data
@@ -229,8 +231,8 @@ printf '%s\n' \
   '#!/bin/sh' \
   'case "$*" in' \
   '  --version) printf "cursor-agent 1.0.0\n" ;;' \
-  '  "mcp list") printf "atlassian: Ready\n" ;;' \
-  '  "mcp list-tools atlassian") printf "%s\n" "- createConfluencePage ()" "- getAccessibleAtlassianResources ()" "- getConfluencePage ()" "- updateConfluencePage ()" ;;' \
+  '  "mcp list") printf "%s\n" "$*" >>"$CONNECTOR_CALLS"; printf "atlassian: Ready\n" ;;' \
+  '  "mcp list-tools atlassian") printf "%s\n" "$*" >>"$CONNECTOR_CALLS"; printf "%s\n" "- createConfluencePage ()" "- getAccessibleAtlassianResources ()" "- getConfluencePage ()" "- updateConfluencePage ()" ;;' \
   'esac' \
   >"$HOME/.local/bin/cursor-agent"
 chmod 755 "$HOME/.local/bin/cursor-agent"
@@ -457,6 +459,7 @@ assert_denied "$(hook beforeMCPExecution "$(cursor_handoff_input \
 assert_denied "$(hook beforeMCPExecution "$(cursor_handoff_input \
   "$cursor_handoff_dir/draft.md" create new 65962274)")" FOLDER_CREATION_REQUIRED
 
+: >"$CONNECTOR_CALLS"
 for cursor_header_case in missing-scope missing-domain scope-before-consumer \
   domain-before-scope duplicate-scope duplicate-domain scope-mismatch domain-mismatch
 do
@@ -484,6 +487,7 @@ do
   assert_denied "$(hook beforeMCPExecution "$(cursor_handoff_input \
     "$cursor_header_file" update 900001 76808195)")" "$cursor_header_result"
 done
+[ ! -s "$CONNECTOR_CALLS" ] || fail 'invalid handoff scope/domain inspected a connector'
 
 cp "$cursor_handoff_dir/ready.md" "$cursor_handoff_dir/github.md"
 printf '\nhttps://github.com/example/private\n' >>"$cursor_handoff_dir/github.md"
