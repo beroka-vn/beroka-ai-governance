@@ -186,7 +186,7 @@ handoff_header_value() {
   hhv_file=$1 hhv_label=$2
   awk -v label="$hhv_label" '
     BEGIN {
-      count=split("Handoff schema|Handoff state|Provider Jira|Consumer Jira|Confluence content ID|Confluence page version|Owner account ID|Effective date|Supersedes|Superseded by|API impact|WebSocket impact|Missing sections", headers, "|")
+      count=split("Handoff schema|Handoff state|Provider Jira|Consumer Jira|Scope|Domain|Confluence content ID|Confluence page version|Owner account ID|Effective date|Supersedes|Superseded by|API impact|WebSocket impact|Missing sections", headers, "|")
     }
     NR <= count {
       if (index($0, headers[NR] ": ") != 1) invalid=1
@@ -420,6 +420,10 @@ validate_handoff_body() {
   vhb_provider=$(handoff_header_value "$vhb_file" 'Provider Jira') ||
     die HANDOFF_BODY_INVALID 'Handoff body has an invalid header'
   vhb_consumer=$(handoff_header_value "$vhb_file" 'Consumer Jira') ||
+    die HANDOFF_BODY_INVALID 'Handoff body has an invalid header'
+  vhb_scope=$(handoff_header_value "$vhb_file" Scope) ||
+    die HANDOFF_BODY_INVALID 'Handoff body has an invalid header'
+  vhb_domain=$(handoff_header_value "$vhb_file" Domain) ||
     die HANDOFF_BODY_INVALID 'Handoff body has an invalid header'
   vhb_content=$(handoff_header_value "$vhb_file" 'Confluence content ID') ||
     die HANDOFF_BODY_INVALID 'Handoff body has an invalid header'
@@ -4264,11 +4268,17 @@ EOF
     die_folder_creation_required \
       'Confluence handoffs require an exact reviewed ACTIVE Folder below the routed root'
   require_confluence_triple "$rahf_scope" "$rahf_domain" "$rahf_transport"
+  [ "$rahf_scope" = "$vhb_scope" ] ||
+    die_folder_creation_required \
+      'The handoff body scope does not match the ACTIVE Folder'
+  [ "$rahf_domain" = "$vhb_domain" ] ||
+    die_folder_creation_required \
+      'The handoff body domain does not match the ACTIVE Folder'
   [ -z "$CONFLUENCE_TARGET_SCOPE" ] ||
-    [ "$rahf_scope" = "$CONFLUENCE_TARGET_SCOPE" ] ||
+    [ "$vhb_scope" = "$CONFLUENCE_TARGET_SCOPE" ] ||
     die_folder_creation_required 'The requested handoff scope does not match the ACTIVE Folder'
   [ -z "$CONFLUENCE_TARGET_DOMAIN" ] ||
-    [ "$rahf_domain" = "$CONFLUENCE_TARGET_DOMAIN" ] ||
+    [ "$vhb_domain" = "$CONFLUENCE_TARGET_DOMAIN" ] ||
     die_folder_creation_required 'The requested handoff domain does not match the ACTIVE Folder'
   [ -z "$CONFLUENCE_TARGET_TRANSPORT" ] ||
     [ "$rahf_transport" = "$CONFLUENCE_TARGET_TRANSPORT" ] ||

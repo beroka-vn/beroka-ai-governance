@@ -1725,6 +1725,14 @@ handoff_preflight() {
     --expected-parent-id "$handoff_parent" --handoff-body-file "$handoff_file"
 }
 
+handoff_body_preflight() {
+  hbp_file=$1 hbp_action=$2 hbp_target=$3
+  $CLI preflight "$canonical_backend" --client codex \
+    --operation confluence-handoff-write --non-interactive \
+    --confluence-action "$hbp_action" --target-content-id "$hbp_target" \
+    --expected-parent-id 900002 --handoff-body-file "$hbp_file"
+}
+
 handoff_client_preflight() {
   hcp_client=$1 hcp_file=$2 hcp_action=$3 hcp_target=$4
   $CLI preflight "$canonical_backend" --client "$hcp_client" \
@@ -1969,6 +1977,38 @@ sed 's/^Consumer Jira: BF-69$/Consumer Jira: BB-69/' \
   "$handoff_dir/same-project.md" >"$handoff_dir/same-project-next.md"
 mv "$handoff_dir/same-project-next.md" "$handoff_dir/same-project.md"
 assert_handoff_invalid "$handoff_dir/same-project.md" update 900001
+
+for handoff_header_case in missing-scope missing-domain scope-before-consumer \
+  domain-before-scope duplicate-scope duplicate-domain scope-mismatch domain-mismatch
+do
+  handoff_header_file=$handoff_dir/$handoff_header_case.md
+  case "$handoff_header_case" in
+    missing-scope) sed '/^Scope: Shared$/d' "$handoff_dir/ready-no-impact.md" >"$handoff_header_file" ;;
+    missing-domain) sed '/^Domain: Market$/d' "$handoff_dir/ready-no-impact.md" >"$handoff_header_file" ;;
+    scope-before-consumer)
+      sed '/^Scope: Shared$/d; /^Provider Jira: BB-42$/a\Scope: Shared' \
+        "$handoff_dir/ready-no-impact.md" >"$handoff_header_file"
+      ;;
+    domain-before-scope)
+      sed '/^Domain: Market$/d; /^Consumer Jira: BF-69$/a\Domain: Market' \
+        "$handoff_dir/ready-no-impact.md" >"$handoff_header_file"
+      ;;
+    duplicate-scope) sed '/^Domain: Market$/a\Scope: Shared' "$handoff_dir/ready-no-impact.md" >"$handoff_header_file" ;;
+    duplicate-domain) sed '/^Domain: Market$/a\Domain: Market' "$handoff_dir/ready-no-impact.md" >"$handoff_header_file" ;;
+    scope-mismatch) sed 's/^Scope: Shared$/Scope: Product/' "$handoff_dir/ready-no-impact.md" >"$handoff_header_file" ;;
+    domain-mismatch) sed 's/^Domain: Market$/Domain: Broker accounts/' "$handoff_dir/ready-no-impact.md" >"$handoff_header_file" ;;
+  esac
+  : >"$CALLS"
+  if output=$(handoff_body_preflight "$handoff_header_file" update 900001 2>&1)
+  then
+    fail "handoff accepted invalid scope/domain header: $handoff_header_case"
+  fi
+  case "$handoff_header_case" in
+    scope-mismatch|domain-mismatch) assert_contains "$output" 'Result: FOLDER_CREATION_REQUIRED' ;;
+    *) assert_contains "$output" 'Result: HANDOFF_BODY_INVALID' ;;
+  esac
+  [ ! -s "$CALLS" ] || fail 'invalid handoff scope/domain inspected a connector'
+done
 
 # Provider direction is bound to the routed team; FE -> BE uses the inverse
 # provider/consumer pair and remains a supported symmetric flow.
@@ -2231,7 +2271,7 @@ for handoff_template in templates/ai-agent-assignment.md templates/jira-confluen
   if output=$(sh "$handoff_dir/prewrite-rendered.sh" 2>&1); then
     fail "advertised direct pre-write command passed: $handoff_template"
   fi
-  assert_contains "$output" 'Result: CLIENT_BODY_GATE_REQUIRED'
+  assert_contains "$output" 'Result: HANDOFF_BODY_INVALID'
   [ ! -s "$CALLS" ] || fail "advertised handoff inspected a connector: $handoff_template"
 done
 

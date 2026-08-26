@@ -2,6 +2,8 @@ Handoff schema: 1
 Handoff state: DRAFT
 Provider Jira: BB-42
 Consumer Jira: BF-69
+Scope: Shared
+Domain: Market
 Confluence content ID: new
 Confluence page version: pending
 Owner account ID: account-123

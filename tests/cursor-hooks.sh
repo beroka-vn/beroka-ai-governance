@@ -37,10 +37,16 @@ mkdir -p "$source_repo/bin"
 cp -R "$ROOT/runtime" "$source_repo/runtime"
 cp -R "$ROOT/templates" "$source_repo/templates"
 cp "$ROOT/bin/beroka-governance" "$source_repo/bin/beroka-governance"
+# The Cursor fixture uses this real ACTIVE Folder ID with Shared/Market data.
+sed 's/Derivatives — Market — API\tDerivatives\tMarket\tAPI\t65962274/Shared — Market — API\tShared\tMarket\tAPI\t65962274/' \
+  "$source_repo/runtime/integrations/beroka-be-fe.confluence-targets" \
+  >"$source_repo/runtime/integrations/beroka-be-fe.confluence-targets.next"
+mv "$source_repo/runtime/integrations/beroka-be-fe.confluence-targets.next" \
+  "$source_repo/runtime/integrations/beroka-be-fe.confluence-targets"
 # Positive Cursor update fixtures need reviewed target ancestry; production
 # inventory intentionally has no synthetic page 900001.
 printf '%b\n' \
-  'beroka-vn/Beroka_Backend\tpage\tACTIVE\t900001\tTest handoff page\tDerivatives\tMarket\tAPI\t76808195\tMARKET-TEST-HANDOFF-API\t76808196' \
+  'beroka-vn/Beroka_Backend\tpage\tACTIVE\t900001\tTest handoff page\tShared\tMarket\tAPI\t76808195\tMARKET-TEST-HANDOFF-API\t76808196' \
   >>"$source_repo/runtime/integrations/beroka-be-fe.confluence-targets"
 for file in governance.md handbook.md workflow.md; do cp "$ROOT/$file" "$source_repo/$file"; done
 printf '%s\n' v1.1.0 >"$source_repo/VERSION"
@@ -450,6 +456,34 @@ assert_denied "$(hook beforeMCPExecution "$(cursor_handoff_input \
   "$cursor_handoff_dir/partial.md" create new 76808195)")" HANDOFF_BODY_INVALID
 assert_denied "$(hook beforeMCPExecution "$(cursor_handoff_input \
   "$cursor_handoff_dir/draft.md" create new 65962274)")" FOLDER_CREATION_REQUIRED
+
+for cursor_header_case in missing-scope missing-domain scope-before-consumer \
+  domain-before-scope duplicate-scope duplicate-domain scope-mismatch domain-mismatch
+do
+  cursor_header_file=$cursor_handoff_dir/$cursor_header_case.md
+  case "$cursor_header_case" in
+    missing-scope) sed '/^Scope: Shared$/d' "$cursor_handoff_dir/ready.md" >"$cursor_header_file" ;;
+    missing-domain) sed '/^Domain: Market$/d' "$cursor_handoff_dir/ready.md" >"$cursor_header_file" ;;
+    scope-before-consumer)
+      sed '/^Scope: Shared$/d; /^Provider Jira: BB-42$/a\Scope: Shared' \
+        "$cursor_handoff_dir/ready.md" >"$cursor_header_file"
+      ;;
+    domain-before-scope)
+      sed '/^Domain: Market$/d; /^Consumer Jira: BF-69$/a\Domain: Market' \
+        "$cursor_handoff_dir/ready.md" >"$cursor_header_file"
+      ;;
+    duplicate-scope) sed '/^Domain: Market$/a\Scope: Shared' "$cursor_handoff_dir/ready.md" >"$cursor_header_file" ;;
+    duplicate-domain) sed '/^Domain: Market$/a\Domain: Market' "$cursor_handoff_dir/ready.md" >"$cursor_header_file" ;;
+    scope-mismatch) sed 's/^Scope: Shared$/Scope: Product/' "$cursor_handoff_dir/ready.md" >"$cursor_header_file" ;;
+    domain-mismatch) sed 's/^Domain: Market$/Domain: Broker accounts/' "$cursor_handoff_dir/ready.md" >"$cursor_header_file" ;;
+  esac
+  case "$cursor_header_case" in
+    scope-mismatch|domain-mismatch) cursor_header_result=FOLDER_CREATION_REQUIRED ;;
+    *) cursor_header_result=HANDOFF_BODY_INVALID ;;
+  esac
+  assert_denied "$(hook beforeMCPExecution "$(cursor_handoff_input \
+    "$cursor_header_file" update 900001 76808195)")" "$cursor_header_result"
+done
 
 cp "$cursor_handoff_dir/ready.md" "$cursor_handoff_dir/github.md"
 printf '\nhttps://github.com/example/private\n' >>"$cursor_handoff_dir/github.md"
