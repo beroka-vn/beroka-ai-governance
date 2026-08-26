@@ -682,6 +682,7 @@ catalog_record_for_slug() {
 }
 
 resolve_repository_context() {
+  rrc_role=${2:-require-role}
   REPO=$(canonical_repo "$1")
   resolve_canonical_remote "$REPO"
   REPOSITORY_SLUG=$(normalize_github_url "$CANONICAL_REMOTE_URL") ||
@@ -697,7 +698,7 @@ resolve_repository_context() {
     ROUTING_STATE=NOT_GOVERNED
     return 0
   fi
-  require_role_scope
+  [ "$rrc_role" = defer-role ] || require_role_scope
 }
 
 repository_is_governed() {
@@ -5300,15 +5301,15 @@ cmd_preflight() {
   then
     [ "$pf_operation" = confluence-handoff-verify ] || { usage >&2; exit 2; }
   fi
-  [ "$pf_operation" != cross-repo-write ] ||
-    require_operation_routing "$pf_operation"
-
   load_active_release
-  resolve_repository_context "$pf_repo"
+  resolve_repository_context "$pf_repo" defer-role
   if ! repository_is_governed; then
     print_not_governed
     return
   fi
+  [ "$pf_operation" != cross-repo-write ] ||
+    require_operation_routing "$pf_operation"
+  require_role_scope
   require_enrolled_client "$pf_client"
   verify_client_instruction "$pf_client"
   if [ "$pf_operation" = github-write ]; then

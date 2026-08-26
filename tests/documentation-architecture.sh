@@ -156,6 +156,11 @@ require_text runtime/rules/general.md 'Confluence content ID'
 require_text runtime/rules/general.md 'CREATION_STATUS_UNKNOWN'
 require_text runtime/rules/general.md 'Create once, then read back the returned key'
 require_text runtime/rules/general.md 'never retry automatically'
+require_text runtime/rules/general.md 'one-time login URL'
+require_text runtime/rules/general.md \
+  'Never synthesize, parse, persist, copy, or place that URL or credentials'
+require_text runtime/rules/general.md \
+  'rerun a fresh operation-specific preflight'
 require_text runtime/entrypoint.md 'sole routing source'
 require_text runtime/entrypoint.md 'authorized governance-repository task'
 require_text runtime/entrypoint.md \

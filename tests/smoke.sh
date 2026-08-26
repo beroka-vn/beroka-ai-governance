@@ -363,12 +363,14 @@ assert_contains "$output" \
   'Remediation: beroka-governance bootstrap --client codex'
 printf '%s\n' codex >"$XDG_CONFIG_HOME/beroka-ai-governance/clients"
 
-output=$(PATH=$fake_bin:$PATH $CLI preflight "$unknown_repo" \
-  --client codex --operation jira-write --non-interactive)
-[ "$output" = "$(printf '%s\n%s' \
-  'Result: NOT_GOVERNED' \
-  'Repository: beroka-vn/unknown')" ] ||
-  fail 'unknown repository entered governed preflight'
+for unknown_operation in jira-write cross-repo-write; do
+  output=$(PATH=$fake_bin:$PATH $CLI preflight "$unknown_repo" \
+    --client codex --operation "$unknown_operation" --non-interactive)
+  [ "$output" = "$(printf '%s\n%s' \
+    'Result: NOT_GOVERNED' \
+    'Repository: beroka-vn/unknown')" ] ||
+    fail "unknown repository entered $unknown_operation governance"
+done
 
 mkdir -p "$HOME/.codex" "$HOME/.claude"
 codex_suffix_expected=$TMP_ROOT/codex-suffix-expected
