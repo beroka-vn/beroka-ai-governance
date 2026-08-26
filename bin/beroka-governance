@@ -5638,6 +5638,21 @@ cursor_probe_workspace_profile() {
   )
 }
 
+cursor_classify_governance() {
+  CURSOR_GOVERNANCE_STATE=NOT_GOVERNED
+  while IFS= read -r ccg_top; do
+    [ -n "$ccg_top" ] || continue
+    ccg_probe=$(cursor_probe_workspace_profile "$ccg_top") || return 1
+    ccg_state=${ccg_probe##*	}
+    [ "$ccg_state" != ROUTING_ACTIVE ] || {
+      CURSOR_GOVERNANCE_STATE=ROUTING_ACTIVE
+      return 0
+    }
+  done <<CURSOR_GOVERNANCE_EOF
+$CURSOR_WORKSPACES
+CURSOR_GOVERNANCE_EOF
+}
+
 cursor_resolve_workspaces() {
   CURSOR_WORKSPACE=
   CURSOR_WORKSPACE_MODE=single
@@ -5662,8 +5677,12 @@ $(printf '%s\n' "$CURSOR_REQUEST" | jq -r '.workspace_roots[]')
 CURSOR_ROOTS_EOF
   CURSOR_WORKSPACES=$(printf '%s\n' "$CURSOR_WORKSPACES" | sed '/^$/d')
   [ "$crr_count" -ge 1 ] || return 1
+  CURSOR_WORKSPACE=$(printf '%s\n' "$CURSOR_WORKSPACES" | sed -n '1p')
+  cursor_classify_governance || return 1
+  if [ "$CURSOR_GOVERNANCE_STATE" = NOT_GOVERNED ]; then
+    return 0
+  fi
   if [ "$crr_count" -eq 1 ]; then
-    CURSOR_WORKSPACE=$CURSOR_WORKSPACES
     CURSOR_WORKSPACE_MODE=single
     return 0
   fi
@@ -5969,6 +5988,13 @@ cursor_context() {
 cmd_cursor_session_start() {
   cursor_read_request || die GOVERNANCE_CONTEXT_REQUIRED \
     'Cursor hook input requires one Git workspace or a FULL_STACK Backend+Frontend pair.'
+  if [ "$CURSOR_GOVERNANCE_STATE" = NOT_GOVERNED ]; then
+    cursor_context_output=$(cmd_context "$CURSOR_WORKSPACE") ||
+      die GOVERNANCE_CONTEXT_REQUIRED
+    jq -nc --arg context "$cursor_context_output" \
+      '{env:{BEROKA_GOVERNANCE_CONTEXT:"NOT_GOVERNED"},additional_context:$context}'
+    return
+  fi
   if [ "$CURSOR_WORKSPACE_MODE" = be-fe ]; then
     cursor_backend_context=$(cmd_context "$CURSOR_BACKEND_WORKSPACE") ||
       die GOVERNANCE_CONTEXT_REQUIRED
@@ -5997,6 +6023,10 @@ cmd_cursor_before_submit_prompt() {
       'Cursor hook input requires one Git workspace or a FULL_STACK Backend+Frontend pair.'
     return
   }
+  if [ "$CURSOR_GOVERNANCE_STATE" = NOT_GOVERNED ]; then
+    printf '%s\n' '{}'
+    return
+  fi
   cursor_context
   cursor_prompt=$(printf '%s\n' "$CURSOR_REQUEST" | jq -er '.prompt // "" | if type == "string" then . else error("prompt") end') || {
     cursor_block_prompt WORK_ITEM_LANGUAGE_REQUIRED 'Prompt must be text.'
@@ -6018,6 +6048,10 @@ cmd_cursor_before_submit_prompt() {
 
 cmd_cursor_pre_compact() {
   cursor_read_request || die GOVERNANCE_CONTEXT_REQUIRED 'Cursor hook input requires one Git workspace'
+  if [ "$CURSOR_GOVERNANCE_STATE" = NOT_GOVERNED ]; then
+    printf '%s\n' '{}'
+    return
+  fi
   cursor_context
   cursor_receipt_matches 0 ||
     die GOVERNANCE_CONTEXT_REQUIRED 'Run cursor-hook sessionStart first'
@@ -6505,6 +6539,10 @@ cmd_cursor_before_mcp_execution() {
       'Provide one recognized Git workspace or a FULL_STACK Backend+Frontend pair and start a new governance session.'
     return
   fi
+  if [ "$CURSOR_GOVERNANCE_STATE" = NOT_GOVERNED ]; then
+    cursor_allow
+    return
+  fi
   cursor_tool_provider || {
     cursor_deny WORK_ITEM_TEMPLATE_REQUIRED 'Provide structured tool input for the governed write.'
     return
@@ -6711,6 +6749,12 @@ cmd_cursor_before_shell_execution() {
     cursor_deny GOVERNANCE_CONTEXT_REQUIRED 'Provide a shell command.'
     return
   }
+  if cursor_parse_request_fields && cursor_resolve_workspaces &&
+     [ "$CURSOR_GOVERNANCE_STATE" = NOT_GOVERNED ]
+  then
+    cursor_allow
+    return
+  fi
   case " $cursor_command " in
     *gh\ issue\ create\ *|*gh\ pr\ create\ *)
       cursor_shell_state=0
