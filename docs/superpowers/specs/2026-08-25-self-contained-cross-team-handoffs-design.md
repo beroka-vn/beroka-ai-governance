@@ -22,7 +22,10 @@ only legacy Jira/GitHub/Canonical markers. This permits a false
 - Validate the actual proposed page body before create or update.
 - Keep `DRAFT` useful without allowing it to claim recipient readiness.
 - Require full validation and readback before reporting `READY_FOR_FE`.
-- Apply equivalent validation through Codex, Claude, and Cursor paths.
+- Apply equivalent fail-closed protection through Codex, Claude, and Cursor
+  paths.
+- Fail closed when a client cannot expose the actual Confluence write body to
+  governance at the tool-call boundary.
 - Preserve existing routing, role, OAuth, connector, assignment, and exact-ID
   stop conditions.
 
@@ -34,14 +37,16 @@ only legacy Jira/GitHub/Canonical markers. This permits a false
 - Automatically modifying incident page `85360641`.
 - Building a webhook, daemon, renderer, general Markdown parser, or schema
   registry service.
+- Building an Atlassian MCP proxy for clients without a trusted post-tool
+  boundary.
 
 ## Chosen Approach
 
 Add an explicit `confluence-handoff-write` operation beside ordinary
 `confluence-write`. The new operation receives the actual proposed Markdown
-body with `--handoff-body-file PATH` and validates it before connector
-inspection. This avoids tightening unrelated Confluence writes and avoids a
-sidecar JSON manifest that could disagree with the page sent to Atlassian.
+body from a trusted client boundary, stages it as `--handoff-body-file PATH`,
+and validates it before connector inspection. This avoids a sidecar JSON
+manifest that could disagree with the page sent to Atlassian.
 
 The body begins with a small machine-readable header and then uses required
 Markdown sections. The header supplies exact routing and state facts; the
@@ -49,6 +54,13 @@ sections carry the complete human-readable contract. The validator checks
 structure, non-empty content, forbidden repository references, impact-specific
 contract sections, and placeholders. It does not attempt to prove the business
 correctness of a documented payload.
+
+Governance may permit a create or update only when it receives the actual body
+from the client tool-call boundary. Cursor supplies that body through its hook.
+Codex and Claude do not currently expose an equivalent trusted boundary, so
+their Confluence create/update operations fail closed instead of trusting a
+caller-provided file that could differ from the Atlassian request. Moves remain
+target-only operations and do not publish body content.
 
 ## Command Contract
 
@@ -95,6 +107,8 @@ Handoff schema: 1
 Handoff state: DRAFT | READY_FOR_FE
 Provider Jira: BB-42
 Consumer Jira: BF-69
+Scope: Product
+Domain: Broker accounts
 Confluence content ID: new | 85360641
 Confluence page version: pending | positive integer
 Owner account ID: Atlassian account ID
@@ -108,7 +122,9 @@ Missing sections: comma-separated names | None
 
 Provider and consumer keys must be opposite `BB`/`BF` projects, the provider
 project must equal the routed team's Jira project, and each key must occur
-exactly once in the header. Cross-team content may contain Jira keys,
+exactly once in the header. `Scope` and `Domain` are non-placeholder routing
+values and must match the selected `ACTIVE` Folder exactly. Cross-team content
+may contain Jira keys,
 Atlassian Jira URLs, Confluence content IDs, and Atlassian Confluence URLs. It
 rejects GitHub URLs, Git remotes, repository/branch/commit instructions, and
 the legacy `Canonical:` repository marker. Team-local Jira records may retain
@@ -180,8 +196,11 @@ and leakage gate, not a substitute for human contract review.
 - requires `Missing sections: None`;
 - requires every common and impact-specific section;
 - is update-only and requires a numeric content ID plus positive page version;
-- requires a pre-write PASS, successful Atlassian write, and a subsequent
-  `confluence-handoff-verify` PASS before readiness is reported.
+- requires a pre-write PASS, successful Atlassian write, and trusted post-tool
+  verification of the write receipt plus subsequent read response before
+  readiness is reported. The current release has no such verifier, so it must
+  report the state as unverified even when the capability-only
+  `confluence-handoff-verify` preflight passes.
 
 ## Parent Folder Enforcement
 
@@ -193,7 +212,7 @@ for the routed repository in
 - state `ACTIVE`;
 - the exact numeric content ID;
 - parent equal to the catalog Confluence root;
-- matching scope, domain, and transport derived from the exact Folder row;
+- scope and domain exactly matching the body header;
 - transport `API`, `WebSocket`, or `API+WebSocket` matching the body's impact;
 - for an update, a tracked target whose recorded parent is this exact Folder.
 
@@ -204,13 +223,20 @@ the requested scope/domain/transport when known and asks for a user-created or
 user-confirmed exact Folder ID. The agent never creates or activates a Folder
 silently.
 
-Ordinary `confluence-write` retains its current allow-by-default behavior so
-this issue does not change unrelated documentation writes.
+Cursor retains ordinary allow-by-default `confluence-write` behavior because
+its hook sees and classifies the actual create/update body. Codex and Claude
+must reject Confluence create/update preflights with
+`CLIENT_BODY_GATE_REQUIRED` until a trusted tool-call boundary is installed;
+they may still perform target-only moves through the ordinary operation. This
+intentional fail-closed restriction prevents either client from selecting an
+ordinary operation for cross-team content that governance cannot inspect.
 
 ## Client Enforcement
 
-- Codex and Claude instructions require the explicit handoff operation with a
-  temporary file containing the exact body passed to Atlassian.
+- Codex and Claude reject both ordinary and handoff Confluence create/update
+  writes because governance cannot prove that a caller-provided file is the
+  actual Atlassian body. Instructions route these writes to Cursor or require a
+  future trusted client boundary; they never suggest bypassing the gate.
 - Cursor classifies a Confluence create/update as cross-team when any textual
   input contains the new schema, opposite BB/BF Jira evidence, a legacy
   handoff with a private provider GitHub link, or readiness evidence. It
@@ -240,6 +266,8 @@ and target fixture.
   repository-dependent reference.
 - `HANDOFF_READBACK_REQUIRED`: post-write identity, parent, space, title,
   version, owner, or exact body evidence is incomplete or mismatched.
+- `CLIENT_BODY_GATE_REQUIRED`: the selected client cannot provide the actual
+  Confluence create/update body at a trusted tool-call boundary.
 
 All failures occur before the dependent connector/write action and use
 privacy-safe diagnostics without echoing body content, repository identities,
@@ -252,6 +280,7 @@ Focused shell fixtures cover:
 - incident page `85360641` as a root-parent, GitHub-linked, summary-only false
   readiness negative case;
 - homepage, page, legacy, untracked, ambiguous, and wrong-domain parents;
+- exact body scope/domain mismatch against an otherwise valid `ACTIVE` Folder;
 - DRAFT with declared omissions and DRAFT false-readiness attempts;
 - READY API-only, WebSocket-only, combined, and explicit-no-impact positives;
 - every required API and WebSocket subsection as a one-at-a-time negative;
@@ -260,9 +289,11 @@ Focused shell fixtures cover:
 - secret/internal-detail leakage patterns;
 - rejection of caller-supplied readback assertions and capability-only verify
   output that never claims `VERIFIED`;
-- equivalent Codex, Claude, and Cursor outcomes;
-- preservation of ordinary allow-by-default Confluence writes and all existing
-  capability, OAuth, role, routing, and inventory failures.
+- Cursor actual-body enforcement plus fail-closed Codex/Claude create/update
+  outcomes for both ordinary and handoff operations;
+- preservation of Cursor ordinary allow-by-default Confluence writes,
+  Codex/Claude target-only moves, and all existing capability, OAuth, role,
+  routing, and inventory failures.
 
 The full shell suite, syntax checks, documentation architecture checks, and
 `git diff --check` must pass. Live Jira/Confluence mutation and incident-page
@@ -278,3 +309,6 @@ receipt plus subsequent read response. Until a trusted post-tool hook binds
 those responses, report readback as unverified even when manual inspection
 confirms the page is self-contained and contains no GitHub URL. Publishing the
 release and changing live Jira/Confluence still require separate authorization.
+A later reviewed change may restore Codex/Claude create/update support by
+adding a trusted actual-body MCP boundary; caller-provided files alone are not
+sufficient.
