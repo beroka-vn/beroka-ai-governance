@@ -611,6 +611,8 @@ Handoff schema: 1
 Handoff state: READY_FOR_FE
 Provider Jira: {{PROVIDER_JIRA}}
 Consumer Jira: {{CONSUMER_JIRA}}
+Scope: {{SCOPE}}
+Domain: {{DOMAIN}}
 Confluence content ID: {{CONTENT_ID}}
 Confluence page version: {{PAGE_VERSION}}
 Owner account ID: {{OWNER_ACCOUNT_ID}}
@@ -799,10 +801,15 @@ version change marks the old handoff `SUPERSEDED`, updates the changelog, and
 notifies FE again.
 
 Resolve every `{{TOKEN}}` from exact user or readback evidence before preflight;
-never send an unresolved token. For this READY page, run:
+never send an unresolved token. Cursor is the only trusted Confluence
+create/update boundary in this release. Codex and Claude Confluence create/update require a trusted actual-body boundary and must stop with
+`CLIENT_BODY_GATE_REQUIRED`; do not treat a temporary or caller-provided body
+file as proof of the Atlassian request. Jira operations, Confluence moves, and
+capability-only readback retain their existing governed paths. For this READY
+page, Cursor runs:
 
 ```sh
-beroka-governance preflight {{REPOSITORY}} --client {{CLIENT}} --operation confluence-handoff-write --non-interactive --confluence-action update --target-content-id {{CONTENT_ID}} --expected-parent-id {{ACTIVE_FOLDER_ID}} --handoff-body-file {{HANDOFF_BODY_FILE}}
+beroka-governance preflight {{REPOSITORY}} --client cursor --operation confluence-handoff-write --non-interactive --confluence-action update --target-content-id {{CONTENT_ID}} --expected-parent-id {{ACTIVE_FOLDER_ID}} --handoff-body-file {{HANDOFF_BODY_FILE}}
 ```
 
 Before the read, prove connector capability:

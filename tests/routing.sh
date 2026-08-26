@@ -2232,6 +2232,8 @@ render_advertised_handoff_body() {
   sed \
     -e 's/{{PROVIDER_JIRA}}/BB-42/g' \
     -e 's/{{CONSUMER_JIRA}}/BF-69/g' \
+    -e 's/{{SCOPE}}/Shared/g' \
+    -e 's/{{DOMAIN}}/Market/g' \
     -e 's/{{CONTENT_ID}}/900007/g' \
     -e 's/{{PAGE_VERSION}}/1/g' \
     -e 's/{{OWNER_ACCOUNT_ID}}/account-123/g' \
@@ -2271,7 +2273,7 @@ for handoff_template in templates/ai-agent-assignment.md templates/jira-confluen
   if output=$(sh "$handoff_dir/prewrite-rendered.sh" 2>&1); then
     fail "advertised direct pre-write command passed: $handoff_template"
   fi
-  assert_contains "$output" 'Result: HANDOFF_BODY_INVALID'
+  assert_contains "$output" 'Result: CLIENT_BODY_GATE_REQUIRED'
   [ ! -s "$CALLS" ] || fail "advertised handoff inspected a connector: $handoff_template"
 done
 

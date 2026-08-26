@@ -365,10 +365,15 @@ updates. Cross-team Jira or handoff text containing opposite-team private
 GitHub links returns `CROSS_TEAM_LINK_SCOPE_DENIED`; use the exact accessible
 Confluence page instead.
 
-Ordinary Confluence create, update, and move use `confluence-write`; they do
-not publish cross-team readiness. Every cross-team handoff uses the dedicated
-`confluence-handoff-write` preflight with its exact body and reviewed ACTIVE
-Folder, then a fresh `confluence-handoff-verify` preflight with the exact body.
+Cursor is the only trusted Confluence create/update boundary in this release.
+Codex and Claude Confluence create/update require a trusted actual-body boundary and must stop with `CLIENT_BODY_GATE_REQUIRED`; do not treat a temporary or
+caller-provided body file as proof of the Atlassian request. Jira operations,
+Confluence moves, and capability-only readback retain their existing governed
+paths. Cursor ordinary Confluence create, update, and move use
+`confluence-write`; they do not publish cross-team readiness. Every cross-team
+handoff uses the dedicated Cursor `confluence-handoff-write` preflight with its
+exact body and reviewed ACTIVE Folder, then a fresh
+`confluence-handoff-verify` preflight with the exact body.
 That second preflight proves read capability only, never a completed write/read;
 without trusted post-tool evidence, report the handoff unverified and do not
 report `READY_FOR_FE`. Consumer-facing content uses the provider/consumer Jira pair

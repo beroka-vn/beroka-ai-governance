@@ -256,12 +256,17 @@ references exact Registry rows. Durable Frontend pages use
 versions without copying payloads. Create pages only when content and an owner
 exist.
 
-Ordinary page writes remain allow-by-default unless the target is `UNACTIVATED`
-in the governance release (`DOCS_UNACTIVATED`). Cross-team handoffs require an
-exact reviewed ACTIVE Folder and the self-contained Confluence page; never use
-an opposite-team repository link as the consumer contract. Before a handoff,
-run `beroka-governance preflight REPO --client CLIENT --operation confluence-handoff-write --non-interactive --confluence-action create|update --target-content-id new|ID --expected-parent-id ACTIVE_FOLDER_ID --handoff-body-file FILE`. Create is
-`DRAFT` only. Run a fresh
+Ordinary Cursor page writes remain allow-by-default unless the target is
+`UNACTIVATED` in the governance release (`DOCS_UNACTIVATED`). Cursor is the
+only trusted Confluence create/update boundary in this release. Codex and Claude Confluence create/update require a trusted actual-body boundary and must stop
+with `CLIENT_BODY_GATE_REQUIRED`; do not treat a temporary or caller-provided
+body file as proof of the Atlassian request. Jira operations, Confluence moves,
+and capability-only readback retain their existing governed paths. Cross-team
+handoffs require an exact reviewed ACTIVE Folder and the self-contained
+Confluence page; never use an opposite-team repository link as the consumer
+contract. Before a handoff, Cursor runs
+`beroka-governance preflight REPO --client cursor --operation confluence-handoff-write --non-interactive --confluence-action create|update --target-content-id new|ID --expected-parent-id ACTIVE_FOLDER_ID --handoff-body-file FILE`.
+Create is `DRAFT` only. Run a fresh
 `beroka-governance preflight REPO --client CLIENT --operation confluence-handoff-verify --non-interactive --confluence-action update --target-content-id ID --expected-parent-id ID --handoff-body-file FILE`
 to prove read capability only. Its `Readback: CAPABILITY_ONLY` result is not
 post-write proof; without a trusted client post-tool write/read result, report

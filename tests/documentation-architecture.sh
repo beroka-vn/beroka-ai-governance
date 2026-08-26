@@ -340,33 +340,75 @@ extract_advertised_handoff_body() {
 }
 
 render_advertised_handoff_body() {
-  template=$1 output=$2 raw=$DOC_TEST_TMP/raw.md
+  template=$1 rendered=$2 raw=$DOC_TEST_TMP/raw.md
   extract_advertised_handoff_body "$template" "$raw"
   sed \
     -e 's/{{PROVIDER_JIRA}}/BB-42/g' \
     -e 's/{{CONSUMER_JIRA}}/BF-69/g' \
+    -e 's/{{SCOPE}}/Shared/g' \
+    -e 's/{{DOMAIN}}/Market/g' \
     -e 's/{{CONTENT_ID}}/900001/g' \
     -e 's/{{PAGE_VERSION}}/1/g' \
     -e 's/{{OWNER_ACCOUNT_ID}}/account-123/g' \
     -e 's/{{EFFECTIVE_DATE}}/2026-08-25/g' \
     -e 's/{{SUPERSEDES}}/N\/A/g' \
     -e 's/{{SUPERSEDED_BY}}/N\/A/g' \
-    "$raw" >"$output"
-  if grep -Eq '{{[A-Z_]+}}' "$output"; then
+    "$raw" >"$rendered"
+  if grep -Eq '{{[A-Z_]+}}' "$rendered"; then
     fail "rendered handoff body in $template has unresolved tokens"
   fi
+}
+
+has_untrusted_body_file_guidance() {
+  awk '
+    BEGIN { RS = "" }
+    {
+      body = tolower($0)
+      if (body ~ /(codex|claude)/ &&
+          body ~ /(temporary|caller-provided)[[:space:]]+body[[:space:]]+file/ &&
+          body ~ /(proof|prove)/ && body ~ /atlassian/ &&
+          body !~ /(do not|must not|never)/) {
+        found = 1
+      }
+    }
+    END { exit(found ? 0 : 1) }
+  ' "$ROOT/$1"
 }
 
 for template in templates/ai-agent-assignment.md templates/jira-confluence.md; do
   advertised_body=$DOC_TEST_TMP/$(basename "$template").md
   extract_advertised_handoff_body "$template" "$advertised_body"
   for token in PROVIDER_JIRA CONSUMER_JIRA CONTENT_ID PAGE_VERSION \
-    OWNER_ACCOUNT_ID EFFECTIVE_DATE SUPERSEDES SUPERSEDED_BY
+    OWNER_ACCOUNT_ID EFFECTIVE_DATE SUPERSEDES SUPERSEDED_BY SCOPE DOMAIN
   do
     require_text "$template" "{{$token}}"
   done
   require_text "$template" 'Frontend acknowledgment is pending. Respond on {{CONSUMER_JIRA}} with Confluence content ID {{CONTENT_ID}} version {{PAGE_VERSION}}.'
   render_advertised_handoff_body "$template" "$DOC_TEST_TMP/rendered-$(basename "$template").md"
+  grep -F -- 'Scope: Shared' "$DOC_TEST_TMP/rendered-$(basename "$template").md" >/dev/null ||
+    fail "rendered handoff body in $template lacks Scope"
+  grep -F -- 'Domain: Market' "$DOC_TEST_TMP/rendered-$(basename "$template").md" >/dev/null ||
+    fail "rendered handoff body in $template lacks Domain"
+done
+
+for file in runtime/rules/general.md governance.md workflow.md \
+  templates/agent-entrypoints/AGENTS.md \
+  templates/agent-entrypoints/CLAUDE.md \
+  templates/agent-entrypoints/CURSOR-USER-RULE.txt \
+  templates/ai-agent-assignment.md templates/jira-confluence.md; do
+  require_text "$file" \
+    'Codex and Claude Confluence create/update require a trusted actual-body boundary'
+done
+require_text templates/agent-entrypoints/CURSOR-USER-RULE.txt \
+  'confluence-handoff-write'
+for file in runtime/rules/general.md governance.md workflow.md \
+  templates/agent-entrypoints/AGENTS.md \
+  templates/agent-entrypoints/CLAUDE.md \
+  templates/agent-entrypoints/CURSOR-USER-RULE.txt \
+  templates/ai-agent-assignment.md templates/jira-confluence.md; do
+  if has_untrusted_body_file_guidance "$file"; then
+    fail "untrusted temporary body-file guidance in $file"
+  fi
 done
 
 reject_text governance.md '`confluence-write` or `confluence-handoff-verify`'
@@ -377,7 +419,7 @@ for file in runtime/rules/general.md workflow.md templates/jira-confluence.md \
   templates/agent-entrypoints/AGENTS.md \
   templates/agent-entrypoints/CLAUDE.md \
   templates/agent-entrypoints/CURSOR-USER-RULE.txt; do
-  require_text "$file" '--operation confluence-handoff-write'
+  require_text "$file" '--client cursor --operation confluence-handoff-write'
   require_text "$file" '--operation confluence-handoff-verify'
   require_text "$file" \
     '--confluence-action create|update --target-content-id new|ID --expected-parent-id ACTIVE_FOLDER_ID --handoff-body-file FILE'
@@ -387,10 +429,10 @@ for file in runtime/rules/general.md workflow.md templates/jira-confluence.md \
   require_text "$file" 'read capability only'
 done
 require_text templates/jira-confluence.md \
-  'beroka-governance preflight {{REPOSITORY}} --client {{CLIENT}} --operation confluence-handoff-write --non-interactive --confluence-action update --target-content-id {{CONTENT_ID}} --expected-parent-id {{ACTIVE_FOLDER_ID}} --handoff-body-file {{HANDOFF_BODY_FILE}}'
+  'beroka-governance preflight {{REPOSITORY}} --client cursor --operation confluence-handoff-write --non-interactive --confluence-action update --target-content-id {{CONTENT_ID}} --expected-parent-id {{ACTIVE_FOLDER_ID}} --handoff-body-file {{HANDOFF_BODY_FILE}}'
 for file in templates/ai-agent-assignment.md templates/jira-confluence.md; do
   require_text "$file" \
-    'beroka-governance preflight {{REPOSITORY}} --client {{CLIENT}} --operation confluence-handoff-write --non-interactive --confluence-action update --target-content-id {{CONTENT_ID}} --expected-parent-id {{ACTIVE_FOLDER_ID}} --handoff-body-file {{HANDOFF_BODY_FILE}}'
+    'beroka-governance preflight {{REPOSITORY}} --client cursor --operation confluence-handoff-write --non-interactive --confluence-action update --target-content-id {{CONTENT_ID}} --expected-parent-id {{ACTIVE_FOLDER_ID}} --handoff-body-file {{HANDOFF_BODY_FILE}}'
   require_text "$file" \
     '--operation confluence-handoff-verify --non-interactive --confluence-action update --target-content-id {{CONTENT_ID}} --expected-parent-id {{ACTIVE_FOLDER_ID}} --handoff-body-file {{HANDOFF_BODY_FILE}}'
   reject_text "$file" '--readback-parent-id'

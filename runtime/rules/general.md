@@ -30,16 +30,20 @@
   created content and parent. Ordinary create/move use
   `confluence-page-parent-write`. Targets not listed as `UNACTIVATED` in the
   governance release are writable by default.
-- Ordinary Confluence create, update, or move uses `confluence-write` and
-  cannot publish cross-team readiness. Missing its existing Jira/GitHub
-  handoff delta markers returns `HANDOFF_DELTA_REQUIRED`.
+- Cursor is the only trusted Confluence create/update boundary in this release.
+  Codex and Claude Confluence create/update require a trusted actual-body boundary and must stop with `CLIENT_BODY_GATE_REQUIRED`; do not treat a temporary or
+  caller-provided body file as proof of the Atlassian request. Jira operations,
+  Confluence moves, and capability-only readback retain their existing governed
+  paths. Cursor ordinary Confluence create, update, or move uses
+  `confluence-write` and cannot publish cross-team readiness. Missing its
+  existing Jira/GitHub handoff delta markers returns `HANDOFF_DELTA_REQUIRED`.
 - A cross-team handoff is a self-contained Confluence page, not a link to an
   opposite-team repository. Team-local repositories remain private and may
   retain their own canonical artifacts and GitHub links; the consumer-facing
   page contains the complete public API and WebSocket contract, omissions,
   owner, effective date, supersession metadata, and FE acknowledgment path.
-- Before a cross-team Confluence create or update, run
-  `beroka-governance preflight REPO --client CLIENT --operation confluence-handoff-write --non-interactive --confluence-action create|update --target-content-id new|ID --expected-parent-id ACTIVE_FOLDER_ID --handoff-body-file FILE`.
+- Before a cross-team Confluence create or update, Cursor runs
+  `beroka-governance preflight REPO --client cursor --operation confluence-handoff-write --non-interactive --confluence-action create|update --target-content-id new|ID --expected-parent-id ACTIVE_FOLDER_ID --handoff-body-file FILE`.
   The parent must be one exact reviewed `ACTIVE Folder`; root, page,
   `UNACTIVATED`, and untracked parents return `FOLDER_CREATION_REQUIRED`.
   Cross-team Jira intake or acknowledgment text uses `jira-intake-write` or
