@@ -360,7 +360,7 @@ render_advertised_handoff_body() {
 }
 
 has_untrusted_body_file_guidance() {
-  printf '%s\n' "$1" | awk '
+  awk '
     {
       text = tolower($0)
       sentences = split(text, sentence, /[.!?][[:space:]]*/)
@@ -375,6 +375,18 @@ has_untrusted_body_file_guidance() {
     }
     END { exit(found ? 0 : 1) }
   '
+}
+
+has_untrusted_body_file_guidance_text() {
+  printf '%s\n' "$1" | has_untrusted_body_file_guidance
+}
+
+has_untrusted_body_file_guidance_file() {
+  case $1 in
+    /*) guidance_file=$1 ;;
+    *) guidance_file=$ROOT/$1 ;;
+  esac
+  has_untrusted_body_file_guidance <"$guidance_file"
 }
 
 for template in templates/ai-agent-assignment.md templates/jira-confluence.md; do
@@ -403,22 +415,29 @@ for file in runtime/rules/general.md governance.md workflow.md \
 done
 require_text templates/agent-entrypoints/CURSOR-USER-RULE.txt \
   'confluence-handoff-write'
-if ! has_untrusted_body_file_guidance \
+if ! has_untrusted_body_file_guidance_text \
   'Codex may use a caller-provided body file as proof of the Atlassian request. Never expose credentials.'
 then
   fail 'affirmative caller-provided body-file guidance was accepted'
 fi
-if has_untrusted_body_file_guidance \
+if has_untrusted_body_file_guidance_text \
   'Codex must not use a caller-provided body file as proof of the Atlassian request.'
 then
   fail 'negative caller-provided body-file guidance was rejected'
+fi
+file_guidance_fixture=$DOC_TEST_TMP/untrusted-body-file-guidance.md
+printf '%s\n' \
+  'Codex may use a caller-provided body file as proof of the Atlassian request. Never expose credentials.' \
+  >"$file_guidance_fixture"
+if ! has_untrusted_body_file_guidance_file "$file_guidance_fixture"; then
+  fail 'affirmative caller-provided body-file file guidance was accepted'
 fi
 for file in runtime/rules/general.md governance.md workflow.md \
   templates/agent-entrypoints/AGENTS.md \
   templates/agent-entrypoints/CLAUDE.md \
   templates/agent-entrypoints/CURSOR-USER-RULE.txt \
   templates/ai-agent-assignment.md templates/jira-confluence.md; do
-  if has_untrusted_body_file_guidance "$file"; then
+  if has_untrusted_body_file_guidance_file "$file"; then
     fail "untrusted temporary body-file guidance in $file"
   fi
 done
