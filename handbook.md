@@ -82,7 +82,15 @@ parent is `UNACTIVATED` in the pinned governance release inventory
 with `Canonical:`) or
 return `HANDOFF_DELTA_REQUIRED`. `confluence-discover` and optional
 `confluence-bootstrap-*` remain hierarchy guidance only, not write gates.
-Repository unknown vẫn source-only và không thừa kế routing BE/FE.
+An unknown repository returns `NOT_GOVERNED`, loads no governance rules, and
+passes through Cursor hooks without inheriting BE/FE routing.
+
+Repository registration is a reviewed governance-repository change: add the
+exact canonical GitHub slug at
+`runtime/repositories/<owner>/<repository>.conf`, validate its profile and
+routing, merge it through review, and publish a new immutable release. Users
+then upgrade their user-scoped installation. The retired local `register`
+command and application-repository files are not registration paths.
 
 Cursor Individual không có supported CLI để ghi User Rules. Với `cursor`, copy
 User Rule được in ra vào **Cursor Settings > Rules** một lần, rồi xác nhận khi
@@ -171,7 +179,7 @@ bash -e -o pipefail -c '
 
 ## Context, routing, và preflight
 
-Trong fresh session, chạy `beroka-governance context "$PWD"` trước planning, implementation, hoặc external action. Chạy lại context khi IDE workspace hoặc current Git repository thay đổi, task thêm repository khác, hoặc plan chuyển thành shared/full-stack; shared plan cần exact targets, context riêng cho từng target, và một primary tracking repository. Chạy operation-specific preflight ngay trước mỗi external write. Unknown repository có thể source-only nhưng external routing write trả `ROUTING_REQUIRED`.
+Trong fresh session, chạy `beroka-governance context "$PWD"` trước planning, implementation, hoặc external action. Chạy lại context khi IDE workspace hoặc current Git repository thay đổi, task thêm repository khác, hoặc plan chuyển thành shared/full-stack; shared plan cần exact targets, context riêng cho từng target, và một primary tracking repository. Chạy operation-specific preflight ngay trước mỗi external write. Unknown repository trả compact `NOT_GOVERNED`, không load governance rules, và nằm ngoài governance enforcement.
 
 Active release tìm exact record trong Central repository catalog theo canonical origin. Repository-local metadata không override catalog. Catalog change là governance-repository task được authorize rõ ràng, không phải application repository task.
 

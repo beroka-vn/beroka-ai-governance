@@ -55,50 +55,6 @@ assert_separate_managed_block() {
     fail "instruction markers are not separately delimited in $asmb_file"
 }
 
-normalize_instruction() {
-  awk 'NF {$1=$1; printf "%s ", $0}'
-}
-
-instruction_contract() {
-  awk '
-    $0 == "Technical artifacts default to English; chat language does not select artifact language." {
-      contract=1
-    }
-    contract { print }
-    contract && /returns `Result: PASS`\.$/ {
-      complete=1
-      exit
-    }
-    END { exit !complete }
-  '
-}
-
-expected_atlassian_auth_contract() {
-  eaac_command=$1
-  cat <<EOF
-Technical artifacts default to English; chat language does not select artifact language. Use another language only when the user explicitly supplies \`Work-item language: <language>\` for the current generation.
-
-If a non-interactive preflight returns \`ATLASSIAN_AUTH_REQUIRED\`, stop the dependent external write. In an interactive terminal or PTY, run \`$eaac_command\` and stream the opaque producer output unchanged so the user receives its one-time login URL. Never synthesize, parse, persist, copy, or place that URL or credentials in an issue, commit, or durable log. Wait for the producer command to complete. Then rerun a fresh operation-specific preflight and continue only when it returns \`Result: PASS\`.
-EOF
-}
-
-assert_atlassian_auth_handoff() {
-  aah_file=$1 aah_command=$2
-  aah_managed=$(awk -v start="$START_MARKER" -v end="$END_MARKER" '
-    $0 == start { managed=1; next }
-    $0 == end { exit }
-    managed { print }
-  ' "$aah_file")
-  aah_contract=$(printf '%s\n' "$aah_managed" |
-    instruction_contract) ||
-    fail "missing coherent Atlassian auth contract in $aah_file"
-  aah_actual=$(printf '%s\n' "$aah_contract" | normalize_instruction)
-  aah_expected=$(expected_atlassian_auth_contract "$aah_command" |
-    normalize_instruction)
-  [ "$aah_actual" = "$aah_expected" ] ||
-    fail "wrong Atlassian auth contract in $aah_file"
-}
-
 assert_cursor_hook() {
   ach_file=$1 ach_event=$2 ach_command=$3 ach_fail_closed=$4 ach_matcher=${5:-}
   ach_count=$(jq --arg event "$ach_event" --arg command "$ach_command" \
@@ -266,6 +222,17 @@ cp "$CLI" "$source_repo/bin/beroka-governance"
 chmod 755 "$source_repo/bin/beroka-governance"
 cp -R "$ROOT/runtime/." "$source_repo/runtime/"
 cp -R "$ROOT/templates/." "$source_repo/templates/"
+mkdir -p "$source_repo/runtime/repositories/beroka-vn"
+cat >"$source_repo/runtime/repositories/beroka-vn/bootstrap-application.conf" <<'EOF'
+SCHEMA_VERSION=1
+PROFILE=standalone
+JIRA_PROJECT_KEY=APP
+CONFLUENCE_SPACE_KEY=APP
+CONFLUENCE_ROOT_CONTENT_ID=123456
+CONFLUENCE_ROOT_CONTENT_TYPE=page
+INTEGRATION_PROFILE=none
+CROSS_REPO_POLICY=explicit-only
+EOF
 for release_file in \
   PACKAGE-DESIGN.md README.md governance.md handbook.md workflow.md
 do
@@ -302,7 +269,7 @@ v1_1_commit=$(git -C "$source_repo" rev-parse v1.1.0^{commit})
 
 printf '%s\n' v1.2.0 >"$source_repo/VERSION"
 for entrypoint in AGENTS.md CLAUDE.md; do
-  sed 's/verified Beroka governance/verified v1.2 Beroka governance/' \
+  sed 's/## Beroka AI Governance/## Beroka AI Governance v1.2/' \
     "$source_repo/templates/agent-entrypoints/$entrypoint" \
     >"$source_repo/templates/agent-entrypoints/$entrypoint.next"
   mv "$source_repo/templates/agent-entrypoints/$entrypoint.next" \
@@ -514,9 +481,8 @@ assert_contains "$(cat "$HOME/.codex/AGENTS.md")" \
 assert_contains "$(cat "$HOME/.codex/AGENTS.md")" \
   '<!-- BEROKA-GOVERNANCE:START -->'
 assert_separate_managed_block "$HOME/.codex/AGENTS.md"
-assert_atlassian_auth_handoff \
-  "$HOME/.codex/AGENTS.md" \
-  'codex mcp login atlassian'
+assert_contains "$(cat "$HOME/.codex/AGENTS.md")" 'Result: NOT_GOVERNED'
+assert_not_contains "$(cat "$HOME/.codex/AGENTS.md")" 'mcp login atlassian'
 [ "$(cat "$XDG_CONFIG_HOME/beroka-ai-governance/clients")" = codex ] ||
   fail 'bootstrap omitted Codex enrollment'
 assert_not_contains "$output" 'Repository pull request:'
@@ -704,9 +670,8 @@ assert_contains "$(cat "$HOME/.claude/CLAUDE.md")" \
 assert_contains "$(cat "$HOME/.claude/CLAUDE.md")" \
   '<!-- BEROKA-GOVERNANCE:START -->'
 assert_separate_managed_block "$HOME/.claude/CLAUDE.md"
-assert_atlassian_auth_handoff \
-  "$HOME/.claude/CLAUDE.md" \
-  'claude mcp login atlassian --no-browser'
+assert_contains "$(cat "$HOME/.claude/CLAUDE.md")" 'Result: NOT_GOVERNED'
+assert_not_contains "$(cat "$HOME/.claude/CLAUDE.md")" 'mcp login atlassian'
 [ "$(cat "$XDG_CONFIG_HOME/beroka-ai-governance/clients")" = codex,claude ] ||
   fail 'bootstrap omitted Claude enrollment'
 assert_contains "$(cat "$CALLS")" 'claude mcp'
@@ -1030,9 +995,9 @@ assert_contains "$output" 'Version: v1.2.0'
 assert_contains "$(cat "$CALLS")" 'codex app-server --stdio'
 assert_not_contains "$(cat "$CALLS")" 'claude '
 assert_contains "$(cat "$HOME/.codex/AGENTS.override.md")" \
-  'verified v1.2 Beroka governance'
+  'Beroka AI Governance v1.2'
 assert_contains "$(cat "$HOME/.claude/CLAUDE.md")" \
-  'verified v1.2 Beroka governance'
+  'Beroka AI Governance v1.2'
 doctor_output=$($CLI doctor "$repo" --client codex)
 assert_contains "$doctor_output" 'Instruction: INSTALLED'
 doctor_output=$($CLI doctor "$repo" --client claude)
@@ -1090,16 +1055,9 @@ cursor_rule_output=$(printf '%s\n' "$cursor_output" |
     /^User Rule added in Cursor Settings > Rules?/ { exit }
     rule { print }
   ')
-cursor_rule_contract=$(printf '%s\n' "$cursor_rule_output" |
-  instruction_contract) ||
-  fail 'emitted Cursor User Rule lacks a coherent auth contract'
-cursor_rule_actual=$(printf '%s\n' "$cursor_rule_contract" |
-  normalize_instruction)
-cursor_rule_expected=$(expected_atlassian_auth_contract \
-  'cursor-agent mcp login atlassian' |
-  normalize_instruction)
-[ "$cursor_rule_actual" = "$cursor_rule_expected" ] ||
-  fail 'emitted Cursor User Rule has the wrong auth contract'
+assert_contains "$cursor_rule_output" 'Result: NOT_GOVERNED'
+assert_contains "$cursor_rule_output" 'beroka-governance context "$PWD"'
+assert_not_contains "$cursor_rule_output" 'mcp login atlassian'
 
 $CLI uninstall --force >/dev/null
 cmp -s "$codex_personal_expected" "$HOME/.codex/AGENTS.md" ||

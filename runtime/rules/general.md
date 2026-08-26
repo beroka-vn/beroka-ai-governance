@@ -1,6 +1,9 @@
 # General Repository Governance
 
 - Work only in the current repository, issue, branch, and file scope.
+- Technical artifacts default to English; chat language does not select artifact language.
+  Use another language only when the user explicitly supplies
+  `Work-item language: <language>` for the current generation.
 - Read existing linked records before asking for information or creating work.
 - Do not guess a Jira project, Confluence location, repository, dependency,
   counterpart, parent, assignee, permission, or integration mapping.

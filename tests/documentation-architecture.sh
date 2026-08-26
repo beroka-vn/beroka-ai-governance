@@ -90,12 +90,15 @@ require_text workflow.md 'Registry row'
 for file in templates/agent-entrypoints/AGENTS.md \
   templates/agent-entrypoints/CLAUDE.md \
   templates/agent-entrypoints/CURSOR-USER-RULE.txt; do
-  require_text "$file" 'allow-by-default'
-  require_text "$file" 'DOCS_UNACTIVATED'
-  require_text "$file" 'ASSIGNEE_CONFIRMATION_REQUIRED'
-  require_text "$file" 'opposite-team private GitHub links'
-  require_text "$file" 'self-contained Jira-and-Confluence-only'
-  require_text "$file" 'confluence-handoff-verify'
+  [ "$(wc -c <"$file" | tr -d ' ')" -le 1024 ] ||
+    fail "$file exceeds the 1024-byte sentinel ceiling"
+  [ "$(wc -w <"$file" | tr -d ' ')" -le 140 ] ||
+    fail "$file exceeds the 140-word sentinel ceiling"
+  require_text "$file" 'Result: NOT_GOVERNED'
+  require_text "$file" 'beroka-governance context "$PWD"'
+  reject_text "$file" 'createJiraIssue'
+  reject_text "$file" 'confluence-handoff-write'
+  reject_text "$file" 'mcp login atlassian'
 done
 for file in runtime/rules/general.md governance.md workflow.md \
   templates/jira-confluence.md; do
@@ -158,11 +161,11 @@ require_text runtime/entrypoint.md 'authorized governance-repository task'
 require_text runtime/entrypoint.md \
   'IDE workspace or current Git repository changes'
 require_text templates/agent-entrypoints/CURSOR-USER-RULE.txt \
-  'IDE workspace or current Git repository changes'
+  'current Git repository or workspace changes'
 require_text templates/agent-entrypoints/AGENTS.md \
-  'IDE workspace or current Git repository changes'
+  'current Git repository or workspace changes'
 require_text templates/agent-entrypoints/CLAUDE.md \
-  'IDE workspace or current Git repository changes'
+  'current Git repository or workspace changes'
 reject_text runtime/entrypoint.md 'default-branch routing'
 reject_text runtime/entrypoint.md 'Pending local routing'
 reject_text runtime/rules/general.md 'registered repository'
@@ -270,12 +273,10 @@ for example in \
 do
   require_text templates/jira-confluence.md "$example"
 done
-require_text templates/agent-entrypoints/CURSOR-USER-RULE.txt \
+require_text runtime/rules/general.md \
   'Technical artifacts default to English; chat language does not select artifact language.'
-require_text templates/agent-entrypoints/CURSOR-USER-RULE.txt \
+require_text runtime/rules/general.md \
   'Work-item language: <language>'
-require_text templates/agent-entrypoints/CURSOR-USER-RULE.txt \
-  'configured MCP tools and never direct `gh` write commands'
 require_text governance.md 'native Issue Type'
 require_text workflow.md 'standalone reason'
 reject_text runtime/integrations/beroka-be-fe.repositories \
@@ -429,15 +430,10 @@ awk '
   fail 'recipient execution lacks an earlier explicit future trusted proof event'
 
 for file in runtime/rules/general.md governance.md workflow.md \
-  templates/agent-entrypoints/AGENTS.md \
-  templates/agent-entrypoints/CLAUDE.md \
-  templates/agent-entrypoints/CURSOR-USER-RULE.txt \
   templates/ai-agent-assignment.md templates/jira-confluence.md; do
   require_text "$file" \
     'Codex and Claude Confluence create/update require a trusted actual-body boundary'
 done
-require_text templates/agent-entrypoints/CURSOR-USER-RULE.txt \
-  'confluence-handoff-write'
 if ! has_untrusted_body_file_guidance_text \
   'Codex may use a caller-provided body file as proof of the Atlassian request. Never expose credentials.'
 then
@@ -469,10 +465,7 @@ reject_text governance.md '`confluence-write` or `confluence-handoff-verify`'
 reject_text governance.md 'include `Jira:`, `GitHub:`, and a handoff delta'
 reject_text examples/end-to-end-traceability.md 'Repository artifact'
 reject_text examples/end-to-end-traceability.md 'Canonical contract artifact/version/commit'
-for file in runtime/rules/general.md workflow.md templates/jira-confluence.md \
-  templates/agent-entrypoints/AGENTS.md \
-  templates/agent-entrypoints/CLAUDE.md \
-  templates/agent-entrypoints/CURSOR-USER-RULE.txt; do
+for file in runtime/rules/general.md workflow.md templates/jira-confluence.md; do
   require_text "$file" 'in-process Cursor hook'
   reject_text "$file" '--client cursor --operation confluence-handoff-write'
   require_text "$file" '--operation confluence-handoff-verify'
