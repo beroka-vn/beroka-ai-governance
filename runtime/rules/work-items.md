@@ -16,7 +16,8 @@
   a target from the IDE workspace or repository name.
 - Cross-team intake is symmetric for Frontend → Backend and Backend → Frontend.
   Use `jira-intake-write` from the requesting repository only when preflight
-  returns its exact opposite-team repository and Jira project.
+  returns the exact receiving profile and Jira project. The private receiving
+  repository identity remains internal to governance routing.
 - The requester/reporter remains distinct from the executor/assignee. Intake
   starts with Sprint unset and no receiving-project parent selected. An exact
   receiving-team account may be assigned only after the user or receiving team
@@ -54,9 +55,10 @@
   `PASS`.
 - FE owns updates to BF items and BE owns updates to BB items. Cross-team
   `Task`, `Bug`, and `Feature` intake is allowed; opposite-project `Epic`
-  creation requires receiving-team confirmation. Before a Confluence handoff,
-  resolve the exact target and run `confluence-handoff-verify`; unknown targets
-  return `ROUTING_REQUIRED` and wait.
+  creation requires receiving-team confirmation. Cross-team Jira descriptions,
+  comments, and acknowledgments use `jira-intake-write` or `jira-handoff-write`
+  with Jira keys and exact Confluence references only; team-local GitHub links
+  remain local to their owning team.
 - Provider status follows `To Do -> In Progress` when accepted work starts and
   `In Progress -> In Review` when a human marks the provider PR ready for
   review.

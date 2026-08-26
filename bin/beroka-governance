@@ -31,6 +31,10 @@ CONFLUENCE_TARGET_ACTION= CONFLUENCE_TARGET_CONTENT_ID=
 CONFLUENCE_TARGET_CAPABILITY_ID= CONFLUENCE_TARGET_SCOPE=
 CONFLUENCE_TARGET_DOMAIN= CONFLUENCE_TARGET_TRANSPORT=
 CONFLUENCE_TARGET_PARENT_ID= CONFLUENCE_TARGET_REGISTRY_CONTENT_ID=
+CONFLUENCE_HANDOFF_BODY_FILE=
+CONFLUENCE_READBACK_PARENT_ID= CONFLUENCE_READBACK_SPACE_KEY=
+CONFLUENCE_READBACK_TITLE= CONFLUENCE_READBACK_VERSION=
+CONFLUENCE_READBACK_OWNER_ACCOUNT_ID=
 GITHUB_ROLE=
 GITHUB_FRONTEND_MEMBER=0 GITHUB_BACKEND_MEMBER=0
 CONNECTOR_PROBE_CLIENT= CONNECTOR_PROBE_OUTPUT= CONNECTOR_PROBE_STATUS=
@@ -42,8 +46,10 @@ CAPABILITY_INVENTORY_FORMAT= CAPABILITY_TOOLSET=UNAVAILABLE
 CAPABILITY_STATE= PREFLIGHT_CAPABILITY=
 SUPPRESS_PASS_RESULT=0
 PERSONAL_STAGE_ROOT=
+CONFLUENCE_BODY_TRUSTED=0
 
 cleanup_personal_stage() {
+  CONFLUENCE_BODY_TRUSTED=0
   cleanup_stage_root=$PERSONAL_STAGE_ROOT
   PERSONAL_STAGE_ROOT=
   [ -z "$cleanup_stage_root" ] || rm -rf "$cleanup_stage_root"
@@ -56,6 +62,15 @@ die() {
   printf '%s\n' "Result: $code" >&2
   if [ "$#" -gt 0 ]; then printf '%s\n' "$*" >&2; fi
   exit 1
+}
+
+require_trusted_confluence_body_gate() {
+  rtcbg_client=$1 rtcbg_action=$2
+  [ "$rtcbg_action" = move ] && return 0
+  [ "$rtcbg_client" = cursor ] &&
+    [ "$CONFLUENCE_BODY_TRUSTED" -eq 1 ] && return 0
+  die CLIENT_BODY_GATE_REQUIRED \
+    'Confluence create/update requires a trusted actual-body client boundary'
 }
 
 pass_result() {
@@ -72,11 +87,14 @@ usage() {
     '  beroka-governance setup-connectors [--client codex|claude|cursor] [--non-interactive]' \
     '  beroka-governance doctor REPO [--client codex|claude|cursor]' \
     '  beroka-governance preflight REPO --client codex|claude|cursor --operation OPERATION [--non-interactive] [CONFLUENCE-TARGET-OPTIONS]' \
-    '  Confluence target options: --confluence-action create|update|move --target-content-id ID|new --capability-id ID --scope SCOPE --domain DOMAIN --transport API|WebSocket --expected-parent-id ID --registry-content-id ID' \
+    '  Handoff operations: confluence-handoff-write | confluence-handoff-verify | jira-handoff-write' \
+    '  Confluence target options: --confluence-action create|update|move --target-content-id ID|new --capability-id ID --scope SCOPE --domain DOMAIN --transport API|WebSocket|API+WebSocket --expected-parent-id ID --registry-content-id ID' \
+    '  Cross-team body option: --handoff-body-file PATH' \
+    '  Legacy caller readback assertion options are rejected with HANDOFF_READBACK_REQUIRED' \
     '  beroka-governance context REPO' \
-    '  beroka-governance confluence-discover REPO [--scope SCOPE --domain DOMAIN --transport API|WebSocket]' \
-    '  beroka-governance confluence-bootstrap-plan REPO --scope SCOPE --domain DOMAIN --transport API|WebSocket' \
-    '  beroka-governance confluence-bootstrap-capture REPO --folder-id ID --registry-id ID --scope SCOPE --domain DOMAIN --transport API|WebSocket' \
+    '  beroka-governance confluence-discover REPO [--scope SCOPE --domain DOMAIN --transport API|WebSocket|API+WebSocket]' \
+    '  beroka-governance confluence-bootstrap-plan REPO --scope SCOPE --domain DOMAIN --transport API|WebSocket|API+WebSocket' \
+    '  beroka-governance confluence-bootstrap-capture REPO --folder-id ID --registry-id ID --scope SCOPE --domain DOMAIN --transport API|WebSocket|API+WebSocket' \
     '  beroka-governance confluence-bootstrap-verify REPO --folder-id ID --registry-id ID --folder-parent-id ID --registry-parent-id ID [--folder-title TITLE] [--registry-title TITLE]' \
     '  beroka-governance cursor-hook sessionStart|beforeSubmitPrompt|preCompact|beforeMCPExecution|beforeShellExecution' \
     '  beroka-governance show REPO governance|handbook|workflow' \
@@ -136,6 +154,389 @@ assert_safe_user_path() {
     "$physical_home"|"$physical_home"/*|"$physical_tmp"|"$physical_tmp"/*) ;;
     *) die GOVERNANCE_NOT_READY "$label path is outside HOME and TMPDIR: $candidate" ;;
   esac
+}
+
+handoff_body_is_safe() {
+  hbs_file=$1
+  [ -n "$hbs_file" ] && [ "${hbs_file#/}" != "$hbs_file" ] || return 1
+  [ -f "$hbs_file" ] && [ ! -L "$hbs_file" ] && [ -s "$hbs_file" ] || return 1
+  hbs_tmp=${TMPDIR:-/tmp}
+  hbs_home=$(CDPATH= cd -- "$HOME" && pwd -P) || return 1
+  hbs_tmp_physical=$(CDPATH= cd -- "$hbs_tmp" && pwd -P) || return 1
+  case "$hbs_file" in
+    "$HOME"/*) hbs_current=$HOME; hbs_rest=${hbs_file#"$HOME"/} ;;
+    "$hbs_tmp"/*) hbs_current=$hbs_tmp; hbs_rest=${hbs_file#"$hbs_tmp"/} ;;
+    *) return 1 ;;
+  esac
+  while [ -n "$hbs_rest" ]; do
+    hbs_component=${hbs_rest%%/*}
+    if [ "$hbs_component" = "$hbs_rest" ]; then hbs_rest=; else hbs_rest=${hbs_rest#*/}; fi
+    case "$hbs_component" in ''|.|..) return 1 ;; esac
+    hbs_current=$hbs_current/$hbs_component
+    [ ! -L "$hbs_current" ] || return 1
+  done
+  hbs_parent=$(CDPATH= cd -- "$(dirname -- "$hbs_file")" && pwd -P) || return 1
+  case "$hbs_parent" in
+    "$hbs_home"|"$hbs_home"/*|"$hbs_tmp_physical"|"$hbs_tmp_physical"/*) ;;
+    *) return 1 ;;
+  esac
+}
+
+handoff_header_value() {
+  hhv_file=$1 hhv_label=$2
+  awk -v label="$hhv_label" '
+    BEGIN {
+      count=split("Handoff schema|Handoff state|Provider Jira|Consumer Jira|Scope|Domain|Confluence content ID|Confluence page version|Owner account ID|Effective date|Supersedes|Superseded by|API impact|WebSocket impact|Missing sections", headers, "|")
+    }
+    NR <= count {
+      if (index($0, headers[NR] ": ") != 1) invalid=1
+      else values[headers[NR]]=substr($0, length(headers[NR]) + 3)
+      next
+    }
+    {
+      for (i = 1; i <= count; i++)
+        if (index($0, headers[i] ": ") == 1) invalid=1
+    }
+    END {
+      if (NR < count || invalid || values[label] == "") exit 1
+      print values[label]
+    }
+  ' "$hhv_file"
+}
+
+handoff_section_is_complete() {
+  hsic_file=$1 hsic_heading=$2
+  awk -v heading="$hsic_heading" '
+    $0 == heading { matches++; active=1; next }
+    active && /^#/ { active=0 }
+    active && $0 !~ /^[[:space:]]*$/ { content=1 }
+    END { exit !(matches == 1 && content) }
+  ' "$hsic_file"
+}
+
+handoff_section_exists() {
+  hse_file=$1 hse_heading=$2
+  awk -v heading="$hse_heading" '$0 == heading { matches++ } END { exit matches != 1 }' "$hse_file"
+}
+
+handoff_missing_section_listed() {
+  hmsl_missing=$1 hmsl_section=$2
+  printf '%s\n' "$hmsl_missing" | awk -v section="$hmsl_section" '
+    {
+      count=split($0, values, ",")
+      for (i = 1; i <= count; i++) {
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", values[i])
+        if (values[i] == section) found=1
+      }
+    }
+    END { exit !found }
+  '
+}
+
+handoff_section_contains() {
+  hsc_file=$1 hsc_heading=$2 hsc_text=$3
+  awk -v heading="$hsc_heading" -v text="$hsc_text" '
+    $0 == heading { matches++; active=1; next }
+    active && /^#/ { active=0 }
+    active && index($0, text) { found=1 }
+    END { exit !(matches == 1 && found) }
+  ' "$hsc_file"
+}
+
+handoff_require_section() {
+  hrs_file=$1 hrs_section=$2 hrs_state=$3 hrs_missing=$4
+  handoff_section_is_complete "$hrs_file" "## $hrs_section" && return 0
+  if [ "$hrs_state" = DRAFT ] &&
+     ! handoff_section_exists "$hrs_file" "## $hrs_section" &&
+     handoff_missing_section_listed "$hrs_missing" "$hrs_section"
+  then
+    return 0
+  fi
+  die HANDOFF_BODY_INVALID 'Handoff body has an incomplete required section'
+}
+
+reject_cross_team_repository_references() {
+  rctrr_file=$1
+  if LC_ALL=C grep -Eiq \
+    'github[.]com|git@github|[[:alnum:]_./-]+[.]git([^[:alnum:]_./-]|$)|canonical:[[:space:]]*[^[:space:]]|(^|[^[:alnum:]_])((beroka-vn/)?beroka_(backend|frontend)|repository|branch|pull request|pr|commit)([^[:alnum:]_]|$)' \
+    "$rctrr_file"
+  then
+    die CROSS_TEAM_LINK_SCOPE_DENIED \
+      'Cross-team handoff content cannot depend on repository references'
+  fi
+}
+
+validate_cross_team_body() {
+  vctb_file=$1
+  handoff_body_is_safe "$vctb_file" ||
+    die HANDOFF_BODY_REQUIRED 'A non-empty regular cross-team body file inside HOME or TMPDIR is required'
+  reject_cross_team_repository_references "$vctb_file"
+}
+
+handoff_validate_api_operations() {
+  hvao_file=$1
+  awk '
+    function complete(    i) {
+      if (!operation) return 0
+      for (i = 1; i <= required_count; i++)
+        if (!seen[required[i]] || !content[required[i]]) return 0
+      return 1
+    }
+    function finish_operation() {
+      if (operation && !complete()) invalid=1
+      operation=0; current=""
+    }
+    BEGIN {
+      split("Permissions|Headers|Path parameters|Query parameters|Request payload|Success status and payload|Stable public errors|Pagination|Idempotency|Retry|Cache|Timestamp semantics|Sanitized request/response examples", required, "|")
+      required_count=13
+    }
+    $0 == "## Affected API inventory" {
+      finish_operation(); inventory_section=1; next
+    }
+    inventory_section && /^## / { inventory_section=0 }
+    inventory_section && $0 !~ /^[[:space:]]*$/ {
+      if ($0 !~ /^[A-Z]+ \/[^[:space:]]+$/) invalid=1
+      inventory[$0]++; inventory_count++
+      next
+    }
+    /^## API operation: [A-Z]+ \/[^[:space:]]+$/ {
+      finish_operation()
+      operation=1; operations++
+      key=substr($0, length("## API operation: ") + 1)
+      contracts[key]++
+      delete seen; delete content; current=""
+      next
+    }
+    /^## / {
+      finish_operation()
+      next
+    }
+    operation && /^### / {
+      current=substr($0, 5)
+      for (i = 1; i <= required_count; i++)
+        if (current == required[i]) seen[current]++
+      next
+    }
+    operation && current != "" && $0 !~ /^[[:space:]]*$/ { content[current]=1 }
+    END {
+      finish_operation()
+      if (inventory_count < 1 || operations != inventory_count) invalid=1
+      for (key in inventory)
+        if (inventory[key] != 1 || contracts[key] != 1) invalid=1
+      for (key in contracts)
+        if (contracts[key] != 1 || inventory[key] != 1) invalid=1
+      exit invalid
+    }
+  ' "$hvao_file"
+}
+
+handoff_require_api() {
+  hra_file=$1 hra_state=$2 hra_missing=$3
+  handoff_require_section "$hra_file" 'Affected API inventory' "$hra_state" "$hra_missing"
+  if ! handoff_validate_api_operations "$hra_file"; then
+    [ "$hra_state" = DRAFT ] &&
+      handoff_missing_section_listed "$hra_missing" 'API operation' ||
+      die HANDOFF_BODY_INVALID 'Handoff body has an incomplete API operation'
+  fi
+  handoff_require_section "$hra_file" 'Unaffected API inventory' "$hra_state" "$hra_missing"
+}
+
+handoff_validate_websocket_contracts() {
+  hvwc_file=$1
+  awk '
+    function complete(    i) {
+      if (!contract) return 0
+      for (i = 1; i <= required_count; i++)
+        if (!seen[required[i]] || !content[required[i]]) return 0
+      return 1
+    }
+    function finish_contract() {
+      if (contract && !complete()) invalid=1
+      contract=0; current=""
+    }
+    BEGIN {
+      split("Public connection URL and authentication|Subscribe and unsubscribe requests|Event envelope and affected message payloads|Ordering|Deduplication|Replay/resume|Reconnect|Heartbeat|Timeout|Backpressure|Error events|Close codes|Sanitized message examples", required, "|")
+      required_count=13
+    }
+    $0 == "## Affected WebSocket inventory" {
+      finish_contract(); inventory_section=1; next
+    }
+    inventory_section && /^## / { inventory_section=0 }
+    inventory_section && $0 !~ /^[[:space:]]*$/ {
+      if ($0 !~ /^wss:\/\/[^[:space:]]+$/) invalid=1
+      inventory[$0]++; inventory_count++
+      next
+    }
+    /^## WebSocket contract: wss:\/\/[^[:space:]]+$/ {
+      finish_contract()
+      contract=1; contracts_count++
+      key=substr($0, length("## WebSocket contract: ") + 1)
+      contracts[key]++
+      delete seen; delete content; current=""
+      next
+    }
+    /^## / { finish_contract(); next }
+    contract && /^### / {
+      current=substr($0, 5)
+      for (i = 1; i <= required_count; i++)
+        if (current == required[i]) seen[current]++
+      next
+    }
+    contract && current != "" && $0 !~ /^[[:space:]]*$/ { content[current]=1 }
+    END {
+      finish_contract()
+      if (inventory_count < 1 || contracts_count != inventory_count) invalid=1
+      for (key in inventory)
+        if (inventory[key] != 1 || contracts[key] != 1) invalid=1
+      for (key in contracts)
+        if (contracts[key] != 1 || inventory[key] != 1) invalid=1
+      exit invalid
+    }
+  ' "$hvwc_file"
+}
+
+handoff_require_websocket() {
+  hrw_file=$1 hrw_state=$2 hrw_missing=$3
+  handoff_require_section "$hrw_file" 'Affected WebSocket inventory' \
+    "$hrw_state" "$hrw_missing"
+  if ! handoff_validate_websocket_contracts "$hrw_file"; then
+    [ "$hrw_state" = DRAFT ] &&
+      handoff_missing_section_listed "$hrw_missing" 'WebSocket contract' ||
+      die HANDOFF_BODY_INVALID 'Handoff body has an incomplete WebSocket contract'
+  fi
+  handoff_require_section "$hrw_file" 'Unaffected WebSocket inventory' \
+    "$hrw_state" "$hrw_missing"
+}
+
+validate_handoff_body() {
+  vhb_file=$1 vhb_action=$2 vhb_target=$3
+  validate_cross_team_body "$vhb_file"
+  if [ -z "$PERSONAL_STAGE_ROOT" ]; then
+    PERSONAL_STAGE_ROOT=$(umask 077; mktemp -d \
+      "${TMPDIR:-/tmp}/beroka-governance-handoff.XXXXXX") ||
+      die GOVERNANCE_NOT_READY 'Cannot create handoff validation stage'
+    trap 'cleanup_personal_stage || :' EXIT
+    trap 'cleanup_personal_stage || :; exit 1' HUP INT TERM
+  fi
+  vhb_normalized=$PERSONAL_STAGE_ROOT/handoff-lf
+  (umask 077; awk '{ sub(/\r$/, ""); print }' "$vhb_file" >"$vhb_normalized") ||
+    die GOVERNANCE_NOT_READY 'Cannot normalize handoff body'
+  vhb_file=$vhb_normalized
+
+  vhb_schema=$(handoff_header_value "$vhb_file" 'Handoff schema') ||
+    die HANDOFF_BODY_INVALID 'Handoff body has an invalid header'
+  [ "$vhb_schema" = 1 ] || die HANDOFF_BODY_INVALID 'Handoff body has an invalid header'
+  vhb_state=$(handoff_header_value "$vhb_file" 'Handoff state') ||
+    die HANDOFF_BODY_INVALID 'Handoff body has an invalid header'
+  vhb_provider=$(handoff_header_value "$vhb_file" 'Provider Jira') ||
+    die HANDOFF_BODY_INVALID 'Handoff body has an invalid header'
+  vhb_consumer=$(handoff_header_value "$vhb_file" 'Consumer Jira') ||
+    die HANDOFF_BODY_INVALID 'Handoff body has an invalid header'
+  vhb_scope=$(handoff_header_value "$vhb_file" Scope) ||
+    die HANDOFF_BODY_INVALID 'Handoff body has an invalid header'
+  vhb_domain=$(handoff_header_value "$vhb_file" Domain) ||
+    die HANDOFF_BODY_INVALID 'Handoff body has an invalid header'
+  vhb_content=$(handoff_header_value "$vhb_file" 'Confluence content ID') ||
+    die HANDOFF_BODY_INVALID 'Handoff body has an invalid header'
+  vhb_version=$(handoff_header_value "$vhb_file" 'Confluence page version') ||
+    die HANDOFF_BODY_INVALID 'Handoff body has an invalid header'
+  vhb_owner=$(handoff_header_value "$vhb_file" 'Owner account ID') ||
+    die HANDOFF_BODY_INVALID 'Handoff body has an invalid header'
+  vhb_date=$(handoff_header_value "$vhb_file" 'Effective date') ||
+    die HANDOFF_BODY_INVALID 'Handoff body has an invalid header'
+  vhb_supersedes=$(handoff_header_value "$vhb_file" Supersedes) ||
+    die HANDOFF_BODY_INVALID 'Handoff body has an invalid header'
+  vhb_superseded=$(handoff_header_value "$vhb_file" 'Superseded by') ||
+    die HANDOFF_BODY_INVALID 'Handoff body has an invalid header'
+  vhb_api=$(handoff_header_value "$vhb_file" 'API impact') ||
+    die HANDOFF_BODY_INVALID 'Handoff body has an invalid header'
+  vhb_websocket=$(handoff_header_value "$vhb_file" 'WebSocket impact') ||
+    die HANDOFF_BODY_INVALID 'Handoff body has an invalid header'
+  vhb_missing=$(handoff_header_value "$vhb_file" 'Missing sections') ||
+    die HANDOFF_BODY_INVALID 'Handoff body has an invalid header'
+
+  case "$vhb_state" in DRAFT|READY_FOR_FE) ;; *) die HANDOFF_BODY_INVALID 'Handoff body has an invalid state' ;; esac
+  case "$vhb_provider:$vhb_consumer" in
+    BB-[1-9]*:BF-[1-9]*|BF-[1-9]*:BB-[1-9]*) ;;
+    *) die HANDOFF_BODY_INVALID 'Handoff body must name opposite Jira projects' ;;
+  esac
+  printf '%s\n' "$vhb_provider" | grep -Eq '^(BB|BF)-[1-9][0-9]*$' ||
+    die HANDOFF_BODY_INVALID 'Handoff body has an invalid Jira header'
+  printf '%s\n' "$vhb_consumer" | grep -Eq '^(BB|BF)-[1-9][0-9]*$' ||
+    die HANDOFF_BODY_INVALID 'Handoff body has an invalid Jira header'
+  [ "${vhb_provider%%-*}" = "$ROUTE_JIRA_PROJECT_KEY" ] ||
+    die HANDOFF_BODY_INVALID 'Handoff provider Jira does not match the routed team'
+  [ -n "$vhb_owner" ] &&
+    printf '%s\n' "$vhb_date" | grep -Eq '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' ||
+    die HANDOFF_BODY_INVALID 'Handoff body has an invalid header'
+  for vhb_revision in "$vhb_supersedes" "$vhb_superseded"; do
+    [ "$vhb_revision" = N/A ] ||
+      printf '%s\n' "$vhb_revision" | grep -Eq '^[1-9][0-9]* [1-9][0-9]*$' ||
+      die HANDOFF_BODY_INVALID 'Handoff body has an invalid header'
+  done
+  case "$vhb_api" in affected|none) ;; *) die HANDOFF_BODY_INVALID 'Handoff body has an invalid impact' ;; esac
+  case "$vhb_websocket" in affected|none) ;; *) die HANDOFF_BODY_INVALID 'Handoff body has an invalid impact' ;; esac
+
+  case "$vhb_state:$vhb_action" in
+    DRAFT:create)
+      [ "$vhb_content" = new ] && [ "$vhb_version" = pending ] &&
+        [ "$vhb_missing" != None ] ||
+        die HANDOFF_BODY_INVALID 'Draft handoff state conflicts with its target'
+      awk '
+        NR == 2 { next }
+        {
+          readiness=tolower($0)
+          gsub(/[^[:alnum:]]+/, " ", readiness)
+          if (readiness ~ /(^| )ready +for +fe( |$)/ ||
+              readiness ~ /(^| )readyforfe( |$)/) exit 1
+        }
+      ' "$vhb_file" ||
+        die HANDOFF_BODY_INVALID 'Draft handoff cannot claim recipient readiness'
+      ;;
+    READY_FOR_FE:update)
+      [ "$vhb_content" = "$vhb_target" ] && [ "$vhb_missing" = None ] &&
+        printf '%s\n' "$vhb_content" | grep -Eq '^[1-9][0-9]*$' &&
+        printf '%s\n' "$vhb_version" | grep -Eq '^[1-9][0-9]*$' ||
+        die HANDOFF_BODY_INVALID 'Ready handoff state conflicts with its target'
+      ;;
+    *) die HANDOFF_BODY_INVALID 'Handoff state conflicts with its action' ;;
+  esac
+
+  for vhb_section in \
+    'Purpose and delivered behavior' \
+    'Affected user flows, assumptions, and non-goals' \
+    'Authentication and authorization' \
+    'Public data types and compatibility' \
+    'State and delivery semantics' \
+    'Errors and edge cases' \
+    'Frontend implementation guidance' \
+    'Sanitized examples and validation evidence' \
+    'Known limitations and unverified items' \
+    'FE acknowledgment'
+  do
+    handoff_require_section "$vhb_file" "$vhb_section" "$vhb_state" "$vhb_missing"
+  done
+  case "$vhb_api" in
+    affected) handoff_require_api "$vhb_file" "$vhb_state" "$vhb_missing" ;;
+    none)
+      handoff_require_section "$vhb_file" 'API impact rationale' "$vhb_state" "$vhb_missing"
+      handoff_section_contains "$vhb_file" '## API impact rationale' \
+        'No public API operation changes' ||
+        die HANDOFF_BODY_INVALID 'API no-impact rationale is incomplete'
+      ;;
+  esac
+  case "$vhb_websocket" in
+    affected) handoff_require_websocket "$vhb_file" "$vhb_state" "$vhb_missing" ;;
+    none)
+      handoff_require_section "$vhb_file" 'WebSocket impact rationale' "$vhb_state" "$vhb_missing"
+      handoff_section_contains "$vhb_file" '## WebSocket impact rationale' \
+        'No public WebSocket contract changes' ||
+        die HANDOFF_BODY_INVALID 'WebSocket no-impact rationale is incomplete'
+      ;;
+  esac
+  if LC_ALL=C grep -Eiq '(^|[^[:alnum:]])(tbd|todo)([^[:alnum:]]|$)|<[^>]+>|fill later|(api[ _-]?key|client[ _-]?secret|password|access[ _-]?token|refresh[ _-]?token|private[ _-]?key)[[:space:]"*`_]*[:=]|authorization[[:space:]"*`_]*:[[:space:]"*`_]*(basic|bearer)|(^|[^[:alnum:]])(kafka[ _-]*)?topic[[:space:]"*`_]*[:=]|(^|[^[:alnum:]])topology[[:space:]"*`_]*[:=]|(^|[^[:alnum:]])adapter[[:space:]"*`_]*[:=]|provider[ _-]+(credential|secret|token|adapter|implementation)[[:space:]"*`_]*[:=]|internal (topic|topology|adapter|provider)|raw upstream payload|upstream payload' "$vhb_file"; then
+    die HANDOFF_BODY_INVALID 'Handoff body contains placeholders or publication leakage'
+  fi
 }
 
 assert_install_paths() {
@@ -773,7 +1174,7 @@ validate_confluence_target_inventory() {
       $4 !~ /^([1-9][0-9]*|-)$/ || $5 == "" ||
       $6 !~ /^(Shared|Derivatives|Underlying|-)$/ ||
       $7 !~ /^(Market|User|-)$/ ||
-      $8 !~ /^(API|WebSocket)$/ ||
+      $8 !~ /^(API|WebSocket|API\+WebSocket)$/ ||
       $9 !~ /^([1-9][0-9]*|-)$/ ||
       $10 !~ /^([A-Z][A-Z0-9]*(-[A-Z0-9]+)*|-)$/ ||
       $11 !~ /^([1-9][0-9]*|-)$/ { invalid=1 }
@@ -3852,6 +4253,80 @@ confluence_targets_path() {
   printf '%s\n' "$RELEASE_DIR/runtime/integrations/beroka-be-fe.confluence-targets"
 }
 
+require_active_handoff_folder() {
+  rahf_file=$1
+  [ -n "$CONFLUENCE_TARGET_PARENT_ID" ] ||
+    die_folder_creation_required \
+      'Confluence handoffs require an exact reviewed ACTIVE Folder parent'
+  [ "$CONFLUENCE_TARGET_PARENT_ID" != "$ROUTE_CONFLUENCE_ROOT_CONTENT_ID" ] ||
+    die_folder_creation_required \
+      'The routed Confluence root cannot be the parent of a handoff page'
+  rahf_record=$(
+    awk -F '\t' \
+      -v repository="$REPOSITORY_SLUG" \
+      -v parent="$CONFLUENCE_TARGET_PARENT_ID" '
+        /^#/ || /^[[:space:]]*$/ { next }
+        $1 == repository && $4 == parent { matches++; record=$0 }
+        END {
+          if (matches != 1) exit 1
+          print record
+        }
+      ' "$rahf_file"
+  ) || die_folder_creation_required \
+    'Confluence handoffs require one exact reviewed ACTIVE Folder parent'
+  validate_confluence_target_inventory "$rahf_file" \
+    "$RELEASE_DIR/runtime/repositories" ||
+    die ROUTING_REQUIRED 'Reviewed Confluence target inventory is unavailable'
+  IFS="$(printf '\t')" read -r rahf_repository rahf_type rahf_state \
+    rahf_content rahf_title rahf_scope rahf_domain rahf_transport rahf_parent \
+    rahf_capability rahf_registry <<EOF
+$rahf_record
+EOF
+  [ "$rahf_type" = folder ] && [ "$rahf_state" = ACTIVE ] &&
+    [ "$rahf_parent" = "$ROUTE_CONFLUENCE_ROOT_CONTENT_ID" ] ||
+    die_folder_creation_required \
+      'Confluence handoffs require an exact reviewed ACTIVE Folder below the routed root'
+  require_confluence_triple "$rahf_scope" "$rahf_domain" "$rahf_transport"
+  [ "$rahf_scope" = "$vhb_scope" ] ||
+    die_folder_creation_required \
+      'The handoff body scope does not match the ACTIVE Folder'
+  [ "$rahf_domain" = "$vhb_domain" ] ||
+    die_folder_creation_required \
+      'The handoff body domain does not match the ACTIVE Folder'
+  [ -z "$CONFLUENCE_TARGET_SCOPE" ] ||
+    [ "$vhb_scope" = "$CONFLUENCE_TARGET_SCOPE" ] ||
+    die_folder_creation_required 'The requested handoff scope does not match the ACTIVE Folder'
+  [ -z "$CONFLUENCE_TARGET_DOMAIN" ] ||
+    [ "$vhb_domain" = "$CONFLUENCE_TARGET_DOMAIN" ] ||
+    die_folder_creation_required 'The requested handoff domain does not match the ACTIVE Folder'
+  [ -z "$CONFLUENCE_TARGET_TRANSPORT" ] ||
+    [ "$rahf_transport" = "$CONFLUENCE_TARGET_TRANSPORT" ] ||
+    die_folder_creation_required 'The requested handoff transport does not match the ACTIVE Folder'
+  case "$vhb_api:$vhb_websocket" in
+    affected:none) rahf_required_transport=API ;;
+    none:affected) rahf_required_transport=WebSocket ;;
+    affected:affected) rahf_required_transport=API+WebSocket ;;
+    none:none) rahf_required_transport=$rahf_transport ;;
+    *) die HANDOFF_BODY_INVALID 'Handoff body has an invalid impact' ;;
+  esac
+  [ "$rahf_transport" = "$rahf_required_transport" ] ||
+    die_folder_creation_required \
+      'The ACTIVE Folder transport does not match the handoff contract impact'
+  CONFLUENCE_TARGET_SCOPE=$rahf_scope
+  CONFLUENCE_TARGET_DOMAIN=$rahf_domain
+  CONFLUENCE_TARGET_TRANSPORT=$rahf_transport
+}
+
+require_handoff_target_parent() {
+  [ "$CONFLUENCE_TARGET_ACTION" != update ] || {
+    [ "$rct_state" != UNTRACKED ] &&
+      [ "$rct_parent" != - ] &&
+      [ "$rct_parent" = "$CONFLUENCE_TARGET_PARENT_ID" ]
+  } ||
+    die MAPPING_CONFLICT \
+      'Handoff target parent conflicts with the reviewed target ancestry'
+}
+
 die_folder_creation_required() {
   dfc_message=$1
   dfc_repo=${REPO:-$REPOSITORY_SLUG}
@@ -3902,8 +4377,8 @@ require_confluence_triple() {
     *) die ROUTING_REQUIRED 'A reviewed Confluence domain is required' ;;
   esac
   case "$3" in
-    API|WebSocket) ;;
-    *) die ROUTING_REQUIRED 'API or WebSocket transport is required' ;;
+    API|WebSocket|API+WebSocket) ;;
+    *) die ROUTING_REQUIRED 'API, WebSocket, or API+WebSocket transport is required' ;;
   esac
 }
 
@@ -4061,7 +4536,7 @@ cmd_confluence_discover() {
       "Optional hierarchy guidance: beroka-governance confluence-bootstrap-plan $REPO --scope $ccd_scope --domain $ccd_domain --transport $ccd_transport"
   else
     printf '%s\n' \
-      "Optional hierarchy guidance: beroka-governance confluence-bootstrap-plan $REPO --scope SCOPE --domain DOMAIN --transport API|WebSocket"
+      "Optional hierarchy guidance: beroka-governance confluence-bootstrap-plan $REPO --scope SCOPE --domain DOMAIN --transport API|WebSocket|API+WebSocket"
   fi
   printf '%s\n' \
     'Phase: hierarchy bootstrap is optional guidance, not a write gate' \
@@ -4473,11 +4948,18 @@ EOF
 }
 
 require_operation_routing() {
-  ror_operation=$1
+  ror_operation=$1 ror_client=${2:-}
   case "$ror_operation" in
-    jira-write)
+    jira-write|jira-handoff-write)
       [ -n "$ROUTE_JIRA_PROJECT_KEY" ] ||
-        die ROUTING_REQUIRED 'JIRA_PROJECT_KEY is required for jira-write'
+        die ROUTING_REQUIRED "JIRA_PROJECT_KEY is required for $ror_operation"
+      if [ "$ror_operation" = jira-handoff-write ]; then
+        [ "$ROUTE_INTEGRATION_PROFILE" = beroka-be-fe ] &&
+          [ "$ROUTE_CROSS_REPO_POLICY" = profile-controlled ] ||
+          die ROUTING_REQUIRED \
+            'Cross-team Jira handoff updates require an exact integration target'
+        validate_cross_team_body "$CONFLUENCE_HANDOFF_BODY_FILE"
+      fi
       PREFLIGHT_CAPABILITY=jira-issue-write
       ;;
     jira-board-verify)
@@ -4489,6 +4971,7 @@ require_operation_routing() {
       ;;
     jira-intake-write)
       resolve_intake_route
+      validate_cross_team_body "$CONFLUENCE_HANDOFF_BODY_FILE"
       PREFLIGHT_CAPABILITY=jira-issue-write
       ;;
     confluence-write)
@@ -4504,6 +4987,23 @@ require_operation_routing() {
       if [ -n "$CONFLUENCE_TARGET_ACTION" ]; then
         resolve_confluence_target
       fi
+      require_trusted_confluence_body_gate "$ror_client" \
+        "$CONFLUENCE_TARGET_ACTION"
+      ;;
+    confluence-handoff-write)
+      require_confluence_route
+      case "$CONFLUENCE_TARGET_ACTION" in
+        create) PREFLIGHT_CAPABILITY=confluence-page-parent-write ;;
+        update) PREFLIGHT_CAPABILITY=confluence-page-update ;;
+        *) die ROUTING_REQUIRED 'Confluence handoff write requires create or update' ;;
+      esac
+      validate_handoff_body "$CONFLUENCE_HANDOFF_BODY_FILE" \
+        "$CONFLUENCE_TARGET_ACTION" "$CONFLUENCE_TARGET_CONTENT_ID"
+      require_active_handoff_folder "$(confluence_targets_path)"
+      resolve_confluence_target
+      require_handoff_target_parent
+      require_trusted_confluence_body_gate "$ror_client" \
+        "$CONFLUENCE_TARGET_ACTION"
       ;;
     confluence-handoff-verify)
       require_confluence_route
@@ -4512,11 +5012,19 @@ require_operation_routing() {
         die ROUTING_REQUIRED \
           'Confluence handoff verification requires an exact integration target'
       case "$CONFLUENCE_TARGET_ACTION:$CONFLUENCE_TARGET_CONTENT_ID" in
-        update:[1-9]*) ;;
-        *) die ROUTING_REQUIRED \
-          'Confluence handoff verification requires an existing target page' ;;
+        update:[1-9]*)
+          printf '%s\n' "$CONFLUENCE_TARGET_CONTENT_ID" | grep -Eq '^[1-9][0-9]*$' ||
+            die HANDOFF_READBACK_REQUIRED \
+              'Handoff readback requires an exact numeric target content ID'
+          ;;
+        *) die HANDOFF_READBACK_REQUIRED \
+          'Handoff readback requires an existing target page' ;;
       esac
+      validate_handoff_body "$CONFLUENCE_HANDOFF_BODY_FILE" \
+        "$CONFLUENCE_TARGET_ACTION" "$CONFLUENCE_TARGET_CONTENT_ID"
+      require_active_handoff_folder "$(confluence_targets_path)"
       resolve_confluence_target
+      require_handoff_target_parent
       [ "$rct_state" = ACTIVE ] ||
         die ROUTING_REQUIRED \
           'Confluence handoff verification requires an ACTIVE target page'
@@ -4585,13 +5093,12 @@ print_preflight_result() {
     "Cross-repository policy: $ROUTE_CROSS_REPO_POLICY" \
     "Operation: $ppr_operation"
   case "$ppr_operation" in
-    jira-write)
+    jira-write|jira-handoff-write)
       printf '%s\n' "Jira project: $ROUTE_JIRA_PROJECT_KEY"
       ;;
     jira-intake-write)
       printf '%s\n' \
-        "Intake source repository: $REPOSITORY_SLUG" \
-        "Intake target repository: $INTAKE_TARGET_REPOSITORY" \
+        "Intake target profile: $INTAKE_TARGET_PROFILE" \
         "Intake Jira project: $INTAKE_TARGET_JIRA_PROJECT"
       ;;
     jira-board-verify)
@@ -4599,7 +5106,7 @@ print_preflight_result() {
         "Jira project: $ROUTE_JIRA_PROJECT_KEY" \
         "Jira board: $ROUTE_JIRA_BOARD_ID"
       ;;
-    confluence-write|confluence-handoff-verify)
+    confluence-write|confluence-handoff-write|confluence-handoff-verify)
       printf '%s\n' \
         "Confluence space: $ROUTE_CONFLUENCE_SPACE_KEY" \
         "Confluence root content: $ROUTE_CONFLUENCE_ROOT_CONTENT_ID" \
@@ -4612,6 +5119,9 @@ print_preflight_result() {
         "Target transport: $CONFLUENCE_TARGET_TRANSPORT" \
         "Expected parent ID: $CONFLUENCE_TARGET_PARENT_ID" \
         "Registry content ID: $CONFLUENCE_TARGET_REGISTRY_CONTENT_ID"
+      if [ "$ppr_operation" = confluence-handoff-verify ]; then
+        printf '%s\n' 'Readback: CAPABILITY_ONLY'
+      fi
       ;;
   esac
   printf '%s\n' \
@@ -4629,10 +5139,17 @@ cmd_preflight() {
   pf_has_confluence_target=0
   pf_seen_action=0 pf_seen_content=0 pf_seen_capability=0 pf_seen_scope=0
   pf_seen_domain=0 pf_seen_transport=0 pf_seen_parent=0 pf_seen_registry=0
+  pf_seen_handoff_body=0
+  pf_seen_readback_parent=0 pf_seen_readback_space=0 pf_seen_readback_title=0
+  pf_seen_readback_version=0 pf_seen_readback_owner=0
   CONFLUENCE_TARGET_ACTION= CONFLUENCE_TARGET_CONTENT_ID=
   CONFLUENCE_TARGET_CAPABILITY_ID= CONFLUENCE_TARGET_SCOPE=
   CONFLUENCE_TARGET_DOMAIN= CONFLUENCE_TARGET_TRANSPORT=
   CONFLUENCE_TARGET_PARENT_ID= CONFLUENCE_TARGET_REGISTRY_CONTENT_ID=
+  CONFLUENCE_HANDOFF_BODY_FILE=
+  CONFLUENCE_READBACK_PARENT_ID= CONFLUENCE_READBACK_SPACE_KEY=
+  CONFLUENCE_READBACK_TITLE= CONFLUENCE_READBACK_VERSION=
+  CONFLUENCE_READBACK_OWNER_ACCOUNT_ID=
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --client)
@@ -4654,6 +5171,48 @@ cmd_preflight() {
         [ "$pf_non_interactive" -eq 0 ] || { usage >&2; exit 2; }
         pf_non_interactive=1
         shift
+        ;;
+      --handoff-body-file)
+        [ "$pf_seen_handoff_body" -eq 0 ] && [ "$#" -ge 2 ] ||
+          { usage >&2; exit 2; }
+        case "$2" in --*) usage >&2; exit 2 ;; esac
+        pf_seen_handoff_body=1
+        CONFLUENCE_HANDOFF_BODY_FILE=$2
+        shift 2
+        ;;
+      --readback-parent-id|--readback-space-key|--readback-title|\
+      --readback-version|--readback-owner-account-id)
+        pf_readback_option=$1
+        [ "$#" -ge 2 ] || { usage >&2; exit 2; }
+        case "$2" in --*) usage >&2; exit 2 ;; esac
+        case "$pf_readback_option" in
+          --readback-parent-id)
+            [ "$pf_seen_readback_parent" -eq 0 ] || { usage >&2; exit 2; }
+            pf_seen_readback_parent=1
+            CONFLUENCE_READBACK_PARENT_ID=$2
+            ;;
+          --readback-space-key)
+            [ "$pf_seen_readback_space" -eq 0 ] || { usage >&2; exit 2; }
+            pf_seen_readback_space=1
+            CONFLUENCE_READBACK_SPACE_KEY=$2
+            ;;
+          --readback-title)
+            [ "$pf_seen_readback_title" -eq 0 ] || { usage >&2; exit 2; }
+            pf_seen_readback_title=1
+            CONFLUENCE_READBACK_TITLE=$2
+            ;;
+          --readback-version)
+            [ "$pf_seen_readback_version" -eq 0 ] || { usage >&2; exit 2; }
+            pf_seen_readback_version=1
+            CONFLUENCE_READBACK_VERSION=$2
+            ;;
+          --readback-owner-account-id)
+            [ "$pf_seen_readback_owner" -eq 0 ] || { usage >&2; exit 2; }
+            pf_seen_readback_owner=1
+            CONFLUENCE_READBACK_OWNER_ACCOUNT_ID=$2
+            ;;
+        esac
+        shift 2
         ;;
       --confluence-action|--target-content-id|--capability-id|--scope|\
       --domain|--transport|--expected-parent-id|--registry-content-id)
@@ -4716,12 +5275,24 @@ cmd_preflight() {
   [ -n "$pf_client" ] && [ -n "$pf_operation" ] ||
     { usage >&2; exit 2; }
   case "$pf_operation" in
-    confluence-write|confluence-handoff-verify) ;;
+    confluence-write|confluence-handoff-write|confluence-handoff-verify) ;;
     *)
       [ "$pf_has_confluence_target" -eq 0 ] ||
         { usage >&2; exit 2; }
       ;;
   esac
+  if [ "$pf_seen_handoff_body" -eq 1 ]; then
+    case "$pf_operation" in
+      jira-intake-write|jira-handoff-write|confluence-handoff-write|confluence-handoff-verify) ;;
+      *) usage >&2; exit 2 ;;
+    esac
+  fi
+  if [ "$pf_seen_readback_parent" -eq 1 ] || [ "$pf_seen_readback_space" -eq 1 ] ||
+     [ "$pf_seen_readback_title" -eq 1 ] || [ "$pf_seen_readback_version" -eq 1 ] ||
+     [ "$pf_seen_readback_owner" -eq 1 ]
+  then
+    [ "$pf_operation" = confluence-handoff-verify ] || { usage >&2; exit 2; }
+  fi
   [ "$pf_operation" != cross-repo-write ] ||
     require_operation_routing "$pf_operation"
 
@@ -4742,7 +5313,18 @@ cmd_preflight() {
     ROUTING_REQUIRED) die ROUTING_REQUIRED ;;
     *) die ROUTING_INVALID ;;
   esac
-  require_operation_routing "$pf_operation"
+  if [ "$pf_operation" = confluence-handoff-verify ] && {
+       [ "$pf_seen_readback_parent" -eq 1 ] ||
+       [ "$pf_seen_readback_space" -eq 1 ] ||
+       [ "$pf_seen_readback_title" -eq 1 ] ||
+       [ "$pf_seen_readback_version" -eq 1 ] ||
+       [ "$pf_seen_readback_owner" -eq 1 ]
+     }
+  then
+    die HANDOFF_READBACK_REQUIRED \
+      'Caller-supplied assertions cannot prove an actual Confluence write and subsequent read'
+  fi
+  require_operation_routing "$pf_operation" "$pf_client"
   verify_github_role "$pf_client"
 
   require_client "$pf_client"
@@ -5473,11 +6055,6 @@ cursor_cross_team_private_link() {
   esac
 }
 
-cursor_any_private_repo_link() {
-  cursor_private_repo_link beroka-vn/beroka_backend ||
-    cursor_private_repo_link beroka-vn/beroka_frontend
-}
-
 cursor_has_nonempty_field() {
   printf '%s\n' "$CURSOR_TOOL_INPUT" | jq -e --arg field "$1" \
     '.. | objects | .[$field]? | strings | select(length > 0)' >/dev/null 2>&1
@@ -5486,6 +6063,94 @@ cursor_has_nonempty_field() {
 cursor_has_value() {
   printf '%s\n' "$CURSOR_TOOL_INPUT" | jq -e --arg field "$1" \
     '.. | objects | .[$field]? | select(. != null and . != "")' >/dev/null 2>&1
+}
+
+cursor_stage_exact_body() {
+  cseb_kind=$1
+  case "$cseb_kind" in
+    confluence)
+      cseb_query='[.. | objects | (.body?, .content?) | select(type == "string" and length > 0)] | unique'
+      ;;
+    jira)
+      cseb_query='[.. | strings | select(length > 0)]'
+      ;;
+    *) return 1 ;;
+  esac
+  cseb_count=$(printf '%s\n' "$CURSOR_TOOL_INPUT" | jq -r "$cseb_query | length") ||
+    return 1
+  case "$cseb_kind:$cseb_count" in confluence:1|jira:[1-9]*) ;; *) return 1 ;; esac
+  PERSONAL_STAGE_ROOT=$(umask 077; mktemp -d \
+    "${TMPDIR:-/tmp}/beroka-governance-cursor-body.XXXXXX") || return 1
+  trap 'cursor_cleanup_staged_body || :' EXIT
+  trap 'cursor_cleanup_staged_body || :; exit 1' HUP INT TERM
+  CURSOR_EXACT_BODY_FILE=$PERSONAL_STAGE_ROOT/body
+  printf '%s\n' "$CURSOR_TOOL_INPUT" | {
+    if [ "$cseb_kind" = jira ]; then
+      jq -jr "$cseb_query | .[] | ., \"\\n\""
+    else
+      jq -jr "$cseb_query | .[0]"
+    fi
+  } >"$CURSOR_EXACT_BODY_FILE" || {
+      cursor_cleanup_staged_body || :
+      return 1
+    }
+  [ -s "$CURSOR_EXACT_BODY_FILE" ] || {
+    cursor_cleanup_staged_body || :
+    return 1
+  }
+}
+
+cursor_handoff_intent() {
+  LC_ALL=C awk '
+    function strip_markdown_prefixes(line) {
+      sub(/^[[:space:]]+/, "", line)
+      while (line ~ /^(#+|>|[-+*]|[0-9]+[.)])[[:space:]]+/) {
+        sub(/^(#+|>|[-+*]|[0-9]+[.)])[[:space:]]+/, "", line)
+        sub(/^[[:space:]]+/, "", line)
+      }
+      return line
+    }
+    {
+      line = strip_markdown_prefixes(tolower($0))
+      if (line ~ /^(handoff schema|handoff state|provider jira|consumer jira|confluence content id|confluence page version|owner account id|effective date|supersedes|superseded by|api impact|websocket impact|missing sections|fe acknowledgment)[[:space:]]*(:|$)/) {
+        header = 1
+      }
+      if (line ~ /^handoff[[:space:]]+[—-]/ ||
+          line ~ /^handoff form[[:space:]]*:/) legacy=1
+      if (line ~ /ready_for_fe|ready[[:space:]_-]+for[[:space:]_-]+fe/) readiness=1
+      if (line ~ /(^|[^[:alnum:]])bb-[1-9][0-9]*([^[:alnum:]]|$)/) backend=1
+      if (line ~ /(^|[^[:alnum:]])bf-[1-9][0-9]*([^[:alnum:]]|$)/) frontend=1
+      if (line ~ /github[.]com|git@github/) repository=1
+      if (line ~ /acknowledg|reviewed|accepted/) acknowledgment=1
+      if (line ~ /confluence|atlassian[.]net\/wiki|content[[:space:]]+id|page[[:space:]]+[1-9][0-9]*/) confluence=1
+    }
+    END {
+      found = header || readiness || (backend && frontend) ||
+        (legacy && repository) || (acknowledgment && confluence)
+      exit(found ? 0 : 1)
+    }
+  '
+}
+
+cursor_jira_handoff_shaped() {
+  printf '%s\n' "$CURSOR_TOOL_INPUT" |
+    jq -r '.. | strings | select(length > 0)' 2>/dev/null |
+    cursor_handoff_intent
+}
+
+cursor_cleanup_staged_body() {
+  [ -n "$PERSONAL_STAGE_ROOT" ] || return 0
+  cleanup_personal_stage || return 1
+  trap - EXIT HUP INT TERM
+}
+
+cursor_staged_preflight() {
+  trap 'cursor_cleanup_staged_body || :' EXIT
+  trap 'cursor_cleanup_staged_body || :; exit 1' HUP INT TERM
+  cmd_preflight "$@"
+  csp_status=$?
+  cursor_cleanup_staged_body || return 1
+  return "$csp_status"
 }
 
 # Atlassian MCP createJiraIssue uses issueTypeName / assignee_account_id /
@@ -5563,6 +6228,14 @@ cursor_jira_operation() {
   cjo_project=$(cursor_extract_single_jira_project "$CURSOR_TOOL_INPUT") || cjo_project=
   [ -n "$cjo_project" ] || return 2
   if [ "$cjo_project" = "$ROUTE_JIRA_PROJECT_KEY" ]; then
+    case "$CURSOR_TOOL_TEXT" in
+      *update*|*edit*|*comment*)
+        if cursor_jira_handoff_shaped; then
+          printf '%s\n' jira-handoff-write
+          return
+        fi
+        ;;
+    esac
     printf '%s\n' jira-write
     return
   fi
@@ -5673,6 +6346,26 @@ cursor_confluence_preflight() {
     [.. | objects | .title? | select(type == "string")] | unique |
     if length == 0 then "" elif length == 1 then .[0] else error("title") end
   ' 2>/dev/null) || ccp_title=
+  if printf '%s\n' "$ccp_body" | cursor_handoff_intent
+  then
+    cursor_stage_exact_body confluence || {
+      printf '%s\n' \
+        'Result: HANDOFF_BODY_REQUIRED' \
+        'Provide exactly one non-empty Confluence body.'
+      return 1
+    }
+    set -- --confluence-action "$ccp_action" --target-content-id "$ccp_target"
+    if [ -n "$ccp_parent" ]; then
+      set -- "$@" --expected-parent-id "$ccp_parent"
+    fi
+    CONFLUENCE_BODY_TRUSTED=1
+    cursor_staged_preflight "$CURSOR_WORKSPACE" --client cursor \
+      --operation confluence-handoff-write --non-interactive "$@" \
+      --handoff-body-file "$CURSOR_EXACT_BODY_FILE"
+    ccp_status=$?
+    CONFLUENCE_BODY_TRUSTED=0
+    return "$ccp_status"
+  fi
   if ! cursor_confluence_handoff_ok "$ccp_body" "$ccp_title"; then
     printf '%s\n' \
       'Result: HANDOFF_DELTA_REQUIRED' \
@@ -5683,8 +6376,12 @@ cursor_confluence_preflight() {
   if [ -n "$ccp_parent" ]; then
     set -- "$@" --expected-parent-id "$ccp_parent"
   fi
+  CONFLUENCE_BODY_TRUSTED=1
   cmd_preflight "$CURSOR_WORKSPACE" --client cursor \
     --operation confluence-write --non-interactive "$@"
+  ccp_status=$?
+  CONFLUENCE_BODY_TRUSTED=0
+  return "$ccp_status"
 }
 
 cursor_language_label() {
@@ -5860,34 +6557,61 @@ cmd_cursor_before_mcp_execution() {
       esac
       ;;
   esac
-  if [ "$cursor_operation" = jira-intake-write ] &&
-     cursor_any_private_repo_link
-  then
-    cursor_deny CROSS_TEAM_LINK_SCOPE_DENIED \
-      'Use an accessible exact Confluence page for cross-team documentation.'
-    return
-  fi
+  case "$cursor_operation" in
+    jira-intake-write|jira-handoff-write)
+      cursor_stage_exact_body jira || {
+        cursor_deny HANDOFF_BODY_REQUIRED \
+          'Provide exactly one non-empty Jira description, comment, or body.'
+        return
+      }
+      if ! (reject_cross_team_repository_references \
+        "$CURSOR_EXACT_BODY_FILE") >/dev/null 2>&1
+      then
+        cursor_cleanup_staged_body || :
+        cursor_deny CROSS_TEAM_LINK_SCOPE_DENIED \
+          'Use an accessible exact Confluence page for cross-team documentation.'
+        return
+      fi
+      ;;
+  esac
   cursor_template_state=0
   cursor_validate_template || cursor_template_state=$?
   case "$cursor_template_state" in
     0) ;;
     2)
+      cursor_cleanup_staged_body || :
       cursor_deny LABEL_CONFIGURATION_REQUIRED \
         "Use one configured type label, one area label, and one priority label.${CURSOR_TEMPLATE_MISSING:+ Missing: $CURSOR_TEMPLATE_MISSING}"
       return
       ;;
     3)
+      cursor_cleanup_staged_body || :
       cursor_deny WORK_ITEM_LANGUAGE_REQUIRED \
         'Put "Work-item language: English" (or Vietnamese) in the Jira description/body, then retry createJiraIssue.'
       return
       ;;
     *)
+      cursor_cleanup_staged_body || :
       cursor_deny WORK_ITEM_TEMPLATE_REQUIRED \
         "Retry createJiraIssue with Atlassian MCP fields only: projectKey, issueTypeName, parent, assignee_account_id, additional_fields.priority={name}, and description containing Work-item language plus GitHub URL or GitHub: N/A.${CURSOR_TEMPLATE_MISSING:+ Missing: $CURSOR_TEMPLATE_MISSING}"
       return
       ;;
   esac
-  if cursor_preflight=$(cmd_preflight "$CURSOR_WORKSPACE" --client cursor --operation "$cursor_operation" --non-interactive 2>&1) &&
+  set --
+  case "$cursor_operation" in
+    jira-intake-write|jira-handoff-write)
+      set -- --handoff-body-file "$CURSOR_EXACT_BODY_FILE"
+      ;;
+  esac
+  cursor_preflight_state=0
+  cursor_preflight=$(cursor_staged_preflight "$CURSOR_WORKSPACE" --client cursor \
+    --operation "$cursor_operation" --non-interactive "$@" 2>&1) ||
+    cursor_preflight_state=$?
+  cursor_cleanup_staged_body || {
+    cursor_deny GOVERNANCE_NOT_READY 'Cannot clean up staged cross-team body.'
+    return
+  }
+  if [ "$cursor_preflight_state" -eq 0 ] &&
      printf '%s\n' "$cursor_preflight" | grep -F 'Result: PASS' >/dev/null; then
     cursor_allow
   else

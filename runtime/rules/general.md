@@ -30,16 +30,38 @@
   created content and parent. Ordinary create/move use
   `confluence-page-parent-write`. Targets not listed as `UNACTIVATED` in the
   governance release are writable by default.
-- Before a Confluence create or update, include handoff trace markers in the
-  body: `Jira: <KEY|URL>`, `GitHub: <URL|N/A>`, and either a
-  `## Handoff — <JiraKey>` section or `Handoff form: child-page` with title
-  `Handoff — <JiraKey> — <slug>` and `Canonical: <URL|content-id>`. Missing
-  markers return `HANDOFF_DELTA_REQUIRED`.
-- Before a Confluence create, update, move, or handoff, run
-  `confluence-write` or `confluence-handoff-verify`. A content ID or parent ID
-  listed as `UNACTIVATED` in the pinned release inventory returns
-  `DOCS_UNACTIVATED` (only a reviewed governance release PR can change that
-  list). A transport mismatch on a reviewed drifted row returns
+- Cursor is the only trusted Confluence create/update boundary in this release.
+  Codex and Claude Confluence create/update require a trusted actual-body boundary and must stop with `CLIENT_BODY_GATE_REQUIRED`; do not treat a temporary or
+  caller-provided body file as proof of the Atlassian request. Jira operations,
+  Confluence moves, and capability-only readback retain their existing governed
+  paths. Cursor ordinary Confluence create, update, or move uses
+  `confluence-write` and cannot publish cross-team readiness. Missing its
+  existing Jira/GitHub handoff delta markers returns `HANDOFF_DELTA_REQUIRED`.
+- A cross-team handoff is a self-contained Confluence page, not a link to an
+  opposite-team repository. Team-local repositories remain private and may
+  retain their own canonical artifacts and GitHub links; the consumer-facing
+  page contains the complete public API and WebSocket contract, omissions,
+  owner, effective date, supersession metadata, and FE acknowledgment path.
+- Before a cross-team Confluence create or update, use Cursor's configured
+  Atlassian MCP `createConfluencePage` or `updateConfluencePage` tool with the
+  exact body and reviewed ACTIVE Folder. Its in-process Cursor hook stages the
+  actual tool-call body and runs `confluence-handoff-write`; a standalone
+  preflight cannot prove the Atlassian request.
+  The parent must be one exact reviewed `ACTIVE Folder`; root, page,
+  `UNACTIVATED`, and untracked parents return `FOLDER_CREATION_REQUIRED`.
+  Cross-team Jira intake or acknowledgment text uses `jira-intake-write` or
+  `jira-handoff-write` with the exact body and never an opposite-team GitHub
+  link; use Jira keys and Confluence references only.
+- Create is DRAFT-only. `READY_FOR_FE` is update-only. A fresh
+  `beroka-governance preflight REPO --client CLIENT --operation confluence-handoff-verify --non-interactive --confluence-action update --target-content-id ID --expected-parent-id ID --handoff-body-file FILE`
+  proves read capability only and prints `Readback: CAPABILITY_ONLY`; it never
+  proves that a write or subsequent read occurred. Until a trusted client
+  post-tool path supplies both results directly, report readback as unverified
+  and do not report `READY_FOR_FE`. Caller-supplied readback assertions return
+  `HANDOFF_READBACK_REQUIRED`. Jira remains in its governed lifecycle state independently.
+- A content ID or parent ID listed as `UNACTIVATED` in the pinned release
+  inventory returns `DOCS_UNACTIVATED` (only a reviewed governance release PR
+  can change that list). A transport mismatch on a reviewed drifted row returns
   `MAPPING_CONFLICT`; ask the user and wait.
 - Confluence hierarchy guidance is optional. Use read-only
   `beroka-governance confluence-discover` and optional

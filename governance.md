@@ -75,7 +75,7 @@ scope, acceptance criteria, repository, or validation already recorded.
 - [ ] For FE work that depends on BE, the Backend Capability Registry row, Hub,
       linked BE item, and handoff state exist; dependent work is Ready only
       after `READY_FOR_FE` and the FE owner has `ACKNOWLEDGED` the exact
-      contract version.
+      Confluence content ID and page version.
 
 If a required item is missing, the issue is not Ready. Ask the responsible
 owner instead of inventing an assumption that changes scope or priority.
@@ -99,20 +99,23 @@ owner instead of inventing an assumption that changes scope or priority.
 
 Use a hybrid model:
 
-- The Backend repository owns the canonical machine-readable OpenAPI, JSON
-  Schema, or event schema. Confluence does not copy it.
+- The Backend repository owns team-local canonical machine-readable OpenAPI,
+  JSON Schema, or event-schema artifacts. A consumer-facing cross-team handoff
+  is instead a self-contained Confluence page with the complete public contract.
 - `Backend Capability Registry` is the canonical cross-Epic mapping of one
-  Capability ID to scope, domain, transport, repository
-  artifact/version/commit, Confluence content ID, base Capability ID, and
-  owner.
+  Capability ID to scope, domain, transport, Confluence content ID/version,
+  base Capability ID, and owner. Team-local artifact details stay in the
+  owning repository.
 - Each cross-team Epic has exactly one `Epic Integration Hub` as the readable
   current-state index, linked from both `BB` and `BF`. It references Registry
   rows and owns only Epic-specific Jira relationships, consumers, handoff
   states, and acknowledgements.
-- Each BE issue/PR contains only a short delta, contract version, test path,
+- Each BE issue/PR contains only a short delta, Confluence content ID/page
+  version, test path,
   limitations, and linked FE item.
-- FE consumes the artifact linked by the Registry and never reconstructs a
-  contract from multiple issue descriptions.
+- FE consumes the self-contained Confluence page by exact content ID and
+  version; it never needs an opposite-team GitHub repository or reconstructs a
+  contract from issue descriptions.
 
 BB and BF use separate project-local Epics linked with `Relates`; never use a
 shared implementation item or cross-project parent. Exactly one semantic capability, one transport, one Registry row, and one canonical Confluence
@@ -135,18 +138,25 @@ Ownership:
 
 - BE Issue Owner publishes the contract, updates the Registry row and
   referencing Hub changelogs, and sends the handoff.
-- FE Issue Owner acknowledges the exact version and owns UI integration/usage
-  notes without changing the BE contract definition.
+- FE Issue Owner acknowledges the exact Confluence content ID/page version and
+  owns UI integration/usage notes without changing the BE contract definition.
 - Manager/Coordinator owns Hub placement and resolves conflicting mapping or
   readiness claims.
 
 | State | Meaning |
 | --- | --- |
 | `DRAFT` | Contract is under discussion and is not a finalized dependency |
-| `READY_FOR_FE` | BE PR is merged, artifact is published, and a test path works |
-| `ACKNOWLEDGED` | FE owner confirms receipt of the exact contract version |
+| `READY_FOR_FE` | The self-contained page passes post-write readback and a test path works |
+| `ACKNOWLEDGED` | FE owner confirms the exact Confluence content ID/page version |
 | `BLOCKED` | Contract, environment, permission, or required evidence is missing |
 | `SUPERSEDED` | A newer version replaces this handoff |
+
+For every cross-team handoff, pair provider and consumer Jira keys with the
+Confluence content ID and version; use `GitHub: N/A` in consumer-facing Jira
+text. The handoff page includes complete API/WS sections when affected,
+declared omissions, owner, effective date, supersession metadata, and the FE
+acknowledgment path. Create only `DRAFT`; report `READY_FOR_FE` only after the
+exact page, parent, space, title, owner, and version read back successfully.
 
 A BE issue may close after its outcome and required handoff are complete; it
 does not wait for FE implementation. An Epic is Done only after required BE and
@@ -156,7 +166,7 @@ rewrite an acknowledged version.
 
 BE work with no FE impact records `Frontend impact: None — <reason>` and needs
 no handoff. Multiple FE items or Epics reuse the Registry row and exact
-artifact version.
+Confluence content ID/page version.
 
 ## Canonical capability documentation
 
@@ -191,16 +201,16 @@ group; its pages use distinct IDs such as `MARKET-INDEX-SNAPSHOT`,
 `MARKET-INDEX-HISTORY`, and `MARKET-INDEX-STREAM`. WebSocket pages distinguish
 `Client → Server Commands` from `Server → Client Events`.
 
-Confluence uses `Payload references, sanitized examples, and documented delta`.
-It never copies an authoritative OpenAPI, JSON Schema, or event schema. Contract
-version belongs to the exact repository artifact; document revision belongs to
-the Confluence page.
+Confluence uses `Payload references, sanitized examples, and documented delta`
+within complete public contract sections. Team-local authoritative artifacts
+retain their own version; the consumer-facing handoff page has its own
+Confluence content ID and version.
 
 Durable FE pages use `<Module> — Capability Index`, such as
 `HomePage — Capability Index`, `Portfolio — Capability Index`, or
-`Quote — Capability Index`. They link exact Registry rows, Backend content IDs,
-and artifact versions without copying payloads. UI layout, route, component, or
-page-title changes update the FE index only.
+`Quote — Capability Index`. They link exact Registry rows and Confluence
+content IDs/page versions without copying payloads. UI layout, route,
+component, or page-title changes update the FE index only.
 
 ## Review, approval, and merge authority
 
@@ -308,7 +318,7 @@ When the child has a BE dependency or its BF Epic is paired, require:
 - exact BB Feature/Story/Task/Bug counterpart when it exists;
 - dependency direction and `Blocks` or `Relates` link type;
 - immutable Capability ID, Registry row, and Hub reference;
-- contract version and handoff state when FE consumes a BE contract.
+- Confluence content ID/page version and handoff state when FE consumes a BE contract.
 
 If a required BB record cannot be resolved, show candidates and wait for one of
 four decisions: Frontend-only, pair an existing BB record, record `Pending` with
@@ -325,9 +335,10 @@ same-capability children use `Relates`.
 
 Frontend → Backend and Backend → Frontend use the same constrained lifecycle.
 The requester runs a fresh `jira-intake-write` preflight from their own exact
-repository. Only the canonical opposite-team repository and Jira project
-returned by preflight may receive the intake; ordinary `jira-write`, repository
-role checks, and `cross-repo-write` remain unchanged.
+repository. Only the receiving profile and Jira project returned by preflight
+may receive the intake; governance does not disclose the opposite private
+repository identity. Ordinary `jira-write`, repository role checks, and
+`cross-repo-write` remain unchanged.
 
 The requester/reporter creates only the intake record. Leave Sprint and the
 receiving-project parent unset. An exact receiving-team account may be assigned
@@ -354,17 +365,26 @@ updates. Cross-team Jira or handoff text containing opposite-team private
 GitHub links returns `CROSS_TEAM_LINK_SCOPE_DENIED`; use the exact accessible
 Confluence page instead.
 
-Before a Confluence create, update, move, or handoff, run
-`confluence-write` or `confluence-handoff-verify`. Targets not listed as
-`UNACTIVATED` in the governance release are writable by default. An
-`UNACTIVATED` content ID or parent returns `DOCS_UNACTIVATED` and can change
-only through a reviewed governance release PR. Create/update bodies must
-include `Jira:`, `GitHub:`, and a handoff delta (`## Handoff — <JiraKey>`
-section or child page with `Handoff form: child-page` and
-`Canonical: <URL|content-id>`); missing markers return
-`HANDOFF_DELTA_REQUIRED`. A transport mismatch on a reviewed drifted row
-returns `MAPPING_CONFLICT`, and the agent asks the user and waits. Hierarchy
-bootstrap remains optional guidance, not a write gate.
+Cursor is the only trusted Confluence create/update boundary in this release.
+Codex and Claude Confluence create/update require a trusted actual-body boundary and must stop with `CLIENT_BODY_GATE_REQUIRED`; do not treat a temporary or
+caller-provided body file as proof of the Atlassian request. Jira operations,
+Confluence moves, and capability-only readback retain their existing governed
+paths. Cursor ordinary Confluence create, update, and move use
+`confluence-write`; they do not publish cross-team readiness. Every cross-team
+handoff uses Cursor's configured Atlassian MCP `createConfluencePage` or
+`updateConfluencePage` tool with its exact body and reviewed ACTIVE Folder. Its
+in-process Cursor hook runs `confluence-handoff-write`; a standalone preflight
+cannot prove the Atlassian request. Run a fresh `confluence-handoff-verify`
+preflight with the exact body.
+That second preflight proves read capability only, never a completed write/read;
+without trusted post-tool evidence, report the handoff unverified and do not
+report `READY_FOR_FE`. Consumer-facing content uses the provider/consumer Jira pair
+and Confluence content ID/version only—never a GitHub, repository, branch, or
+commit reference. An `UNACTIVATED` content ID or parent returns
+`DOCS_UNACTIVATED` and can change only through a reviewed governance release
+PR. A transport mismatch on a reviewed drifted row returns `MAPPING_CONFLICT`,
+and the agent asks the user and waits. Hierarchy bootstrap remains optional
+guidance, not a write gate.
 
 Provider status remains `To Do -> In Progress` when the receiving assignee
 starts accepted, ready work and `In Progress -> In Review` when a human marks

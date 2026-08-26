@@ -108,25 +108,30 @@ cross-team Jira or handoff text return `CROSS_TEAM_LINK_SCOPE_DENIED`; use the
 exact accessible Confluence page.
 
 ```text
-CONFLUENCE TARGET
-- Action: create | update | move
-- Confluence content ID: <numeric ID | new>
-- Expected parent ID: <numeric ID | omit when not nesting>
-- Jira: <KEY|URL>
-- GitHub: <URL|N/A>
-- Handoff delta: ## Handoff — <JiraKey> section OR Handoff form: child-page
-  with Canonical: <URL|content-id>
-- Preflight: confluence-write | confluence-handoff-verify
-- Result: PASS | DOCS_UNACTIVATED | HANDOFF_DELTA_REQUIRED | ROUTING_REQUIRED | MAPPING_CONFLICT
+CROSS-TEAM CONFLUENCE HANDOFF
+- Provider Jira: <BB-KEY>
+- Consumer Jira: <BF-KEY>
+- GitHub: N/A
+- Confluence content ID and version: new/pending | <numeric ID>/<positive integer>
+- Expected parent ID: <exact reviewed ACTIVE Folder ID>
+- Pre-write arguments: --confluence-action create|update --target-content-id new|ID --expected-parent-id ACTIVE_FOLDER_ID --handoff-body-file FILE
+- Read capability: confluence-handoff-verify --confluence-action update --target-content-id ID --expected-parent-id ID --handoff-body-file FILE
+- Post-write proof: trusted client post-tool write result plus subsequent read result; caller assertions are not evidence
+- Result: PASS | FOLDER_CREATION_REQUIRED | HANDOFF_BODY_INVALID |
+  CROSS_TEAM_LINK_SCOPE_DENIED | HANDOFF_READBACK_REQUIRED
 ```
 
-Ordinary Confluence writes are allow-by-default. An `UNACTIVATED` content ID or
-parent in the governance release inventory returns `DOCS_UNACTIVATED` and can
-change only through a reviewed governance release PR. Missing handoff markers
-return `HANDOFF_DELTA_REQUIRED`. A transport mismatch on a reviewed drifted row
-returns `MAPPING_CONFLICT` and must not inspect or write the connector. Provider
-status is `To Do -> In Progress` when work starts and `In Progress -> In
-Review` when a human marks the provider PR ready for review. `Closes #<issue>`
+Ordinary Confluence writes are allow-by-default. A cross-team handoff is a
+self-contained Confluence page under an exact reviewed ACTIVE Folder; it never
+uses an opposite-team repository link as its consumer contract. Create is
+`DRAFT` only. Report `READY_FOR_FE` only after the exact page readback; Jira
+remains in its governed lifecycle state independently. An `UNACTIVATED` content
+ID or parent in the governance release inventory returns `DOCS_UNACTIVATED` and
+can change only through a reviewed governance release PR. A transport mismatch
+on a reviewed drifted row returns `MAPPING_CONFLICT` and must not inspect or
+write the connector. Provider status is `To Do -> In Progress` when work starts
+and `In Progress -> In Review` when a human marks the provider PR ready for
+review. `Closes #<issue>`
 normally closes the GitHub Issue. If it remains open, an agent may close it only
 after exact merge/link readback proves the delivered commit and the close write
 is authorized; otherwise report the issue as blocked. After `Closes #<issue>` automatically closes the current primary GitHub Issue,
@@ -315,7 +320,7 @@ Capability Registry reference:
 Scope: Shared | Derivatives | Underlying
 Domain: Market | User
 Transport: API | WebSocket
-Canonical contract: <repository/path, version, commit>
+Team-local artifact revision: <version | N/A>
 Document revision:
 Owner:
 Frontend consumers:
@@ -334,30 +339,31 @@ Error and reconnect behavior
 Contract version and changelog
 ```
 
-Confluence never copies an authoritative OpenAPI, JSON Schema, or event schema.
-It links the exact Backend repository artifact/version/commit.
+Team-local Backend artifacts retain their own authoritative schema. The
+consumer-facing cross-team handoff page is self-contained and records its exact
+Confluence content ID and version with complete public API/WS detail.
 
 ## Backend Capability Registry Template
 
 ```markdown
 # Backend Capability Registry
 
-| Capability ID | Scope | Domain | Transport | Canonical artifact/version/commit | Confluence content ID | Base Capability ID | Owner |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| <UPPERCASE-KEBAB-ID> | <Shared/Derivatives/Underlying> | <Market/User> | <API/WebSocket> | <repo/path, version, commit> | <content ID/URL> | <ID/N/A> | <owner> |
+| Capability ID | Scope | Domain | Transport | Confluence content ID/version | Base Capability ID | Owner |
+| --- | --- | --- | --- | --- | --- | --- |
+| <UPPERCASE-KEBAB-ID> | <Shared/Derivatives/Underlying> | <Market/User> | <API/WebSocket> | <content ID/version> | <ID/N/A> | <owner> |
 ```
 
-One Registry row maps one Capability ID to one page. Several pages may
-reference the same repository artifact version. A separately published
-WebSocket/event artifact may use another version.
+One Registry row maps one Capability ID to one page. Team-local artifacts keep
+their own revision records; the shared Registry exposes only the self-contained
+Confluence page identity.
 
 ## Frontend Capability Index Template
 
 ```markdown
 # <Module> — Capability Index
 
-| FE feature/use | Capability ID | Product scope | Transport | Canonical content ID | Artifact/version | FE owner |
-| --- | --- | --- | --- | --- | --- | --- |
+| FE feature/use | Capability ID | Product scope | Transport | Confluence content ID/page version | FE owner |
+| --- | --- | --- | --- | --- | --- |
 ```
 
 The Index may reference capabilities used by several FE modules and never
@@ -371,7 +377,7 @@ Capability ID:
 Capability Registry reference:
 Sections changed:
 Change class: docs-only | contract-compatible | contract-breaking
-Contract artifact/version/commit: <before → after | N/A>
+Team-local artifact revision: <before → after | N/A>
 Document revision: <before → after | N/A for repository files>
 Additional related Jira items:
 ```
@@ -540,7 +546,7 @@ Provider private delivery links stay in provider-owned records only.
 ### Cross-team integration
 
 - Epic Integration Hub: <URL | N/A>
-- Final contract artifact/version: <link/version | N/A>
+- Final Confluence content ID/page version: <ID/version | N/A>
 - Required BE → FE handoffs: ACKNOWLEDGED | N/A
 
 ### Final status
@@ -595,37 +601,257 @@ current-state index, not a completion document or contract copy.
 | --- | --- | --- | --- | --- |
 ```
 
-## BE → FE Handoff Block
+## BE → FE Handoff Page Template
 
-Copy this block into the BE Jira/GitHub Issue or PR when `Frontend impact != None`:
+Use this complete body for the consumer-facing Confluence page when `Frontend
+impact != None`. Keep GitHub links only in team-local Issue/PR sections.
 
 ```markdown
-## BE → FE handoff
+Handoff schema: 1
+Handoff state: READY_FOR_FE
+Provider Jira: {{PROVIDER_JIRA}}
+Consumer Jira: {{CONSUMER_JIRA}}
+Scope: {{SCOPE}}
+Domain: {{DOMAIN}}
+Confluence content ID: {{CONTENT_ID}}
+Confluence page version: {{PAGE_VERSION}}
+Owner account ID: {{OWNER_ACCOUNT_ID}}
+Effective date: {{EFFECTIVE_DATE}}
+Supersedes: {{SUPERSEDES}}
+Superseded by: {{SUPERSEDED_BY}}
+API impact: affected
+WebSocket impact: affected
+Missing sections: None
 
-- Capability ID:
-- Capability Registry reference:
-- Epic Integration Hub:
-- Paired Backend Epic:
-- Paired Frontend Epic:
-- Backend Jira/GitHub issue and merged PR:
-- Epic `Relates` readback:
-- BE-to-BF `Blocks` readback for every BF item:
-- Capability Registry row readback:
-- Integration Hub Registry-reference readback:
-- Canonical contract artifact/version/commit:
-- Behavior delivered:
-- Authentication/permissions:
-- Error and edge cases:
-- Test environment and sanitized evidence:
-- Breaking/migration impact:
-- Known limitations/unverified items:
-- State: DRAFT | READY_FOR_FE | ACKNOWLEDGED | BLOCKED | SUPERSEDED
-- Ready/acknowledged by and at:
+## Purpose and delivered behavior
+
+The quote contract supports both snapshots and live changes.
+
+## Affected user flows, assumptions, and non-goals
+
+Quote detail screens read once and then subscribe; history is unchanged.
+
+## Authentication and authorization
+
+Authenticated users with quote-read permission may use both transports.
+
+## Public data types and compatibility
+
+Both transports use the same additive quote type.
+
+## State and delivery semantics
+
+Snapshots are current and stream delivery is at least once.
+
+## Errors and edge cases
+
+Unknown symbols have stable errors on both transports.
+
+## Frontend implementation guidance
+
+Load a snapshot before subscribing for later changes.
+
+## Sanitized examples and validation evidence
+
+Public sample values were exercised by contract tests.
+
+## Known limitations and unverified items
+
+Exchange outages can delay updates.
+
+## FE acknowledgment
+
+Frontend acknowledgment is pending. Respond on {{CONSUMER_JIRA}} with Confluence content ID {{CONTENT_ID}} version {{PAGE_VERSION}}.
+
+## Affected API inventory
+
+GET /v1/quotes/{symbol}
+
+## API operation: GET /v1/quotes/{symbol}
+
+Public quote lookup.
+
+### Permissions
+
+quote-read permission is required.
+
+### Headers
+
+Accept: application/json.
+
+### Path parameters
+
+symbol is the public market symbol.
+
+### Query parameters
+
+None are accepted.
+
+### Request payload
+
+No request body is accepted.
+
+### Success status and payload
+
+200 returns a quote object.
+
+### Stable public errors
+
+404 is returned for an unknown symbol.
+
+### Pagination
+
+This single-resource operation is not paginated.
+
+### Idempotency
+
+GET is idempotent.
+
+### Retry
+
+Retry transient 503 responses with bounded backoff.
+
+### Cache
+
+Clients may cache the response for one second.
+
+### Timestamp semantics
+
+observedAt is an ISO-8601 UTC timestamp.
+
+### Sanitized request/response examples
+
+GET /v1/quotes/ABC returns {"symbol":"ABC"}.
+
+## Unaffected API inventory
+
+All other public API operations are unchanged.
+
+## Affected WebSocket inventory
+
+wss://api.example.test/v1/quotes
+
+## WebSocket contract: wss://api.example.test/v1/quotes
+
+Public quote change stream.
+
+### Public connection URL and authentication
+
+Connect with the documented user session.
+
+### Subscribe and unsubscribe requests
+
+Subscribe and unsubscribe with the public symbol.
+
+### Event envelope and affected message payloads
+
+Events contain type, eventId, observedAt, and quote payload.
+
+### Ordering
+
+Ordering is guaranteed per symbol.
+
+### Deduplication
+
+Deduplicate by eventId.
+
+### Replay/resume
+
+Resume from the last acknowledged eventId.
+
+### Reconnect
+
+Reconnect with bounded exponential backoff.
+
+### Heartbeat
+
+The server sends a heartbeat every 30 seconds.
+
+### Timeout
+
+Reconnect after 90 seconds without a heartbeat.
+
+### Backpressure
+
+Render the newest quote when behind.
+
+### Error events
+
+Invalid subscriptions emit a stable error event.
+
+### Close codes
+
+4010 indicates an expired user session.
+
+### Sanitized message examples
+
+{"type":"quote","eventId":"evt-1","symbol":"ABC"}
+
+## Unaffected WebSocket inventory
+
+All other public WebSocket streams are unchanged.
 ```
 
-`READY_FOR_FE` requires a merged BE PR, published artifact, and working test
-path. FE records `ACKNOWLEDGED` for the exact version. A version change marks
-the old handoff `SUPERSEDED`, updates the changelog, and notifies FE again.
+For an initial create, use this separate DRAFT body:
+
+```markdown
+Handoff schema: 1
+Handoff state: DRAFT
+Provider Jira: {{PROVIDER_JIRA}}
+Consumer Jira: {{CONSUMER_JIRA}}
+Scope: {{SCOPE}}
+Domain: {{DOMAIN}}
+Confluence content ID: new
+Confluence page version: pending
+Owner account ID: {{OWNER_ACCOUNT_ID}}
+Effective date: {{EFFECTIVE_DATE}}
+Supersedes: {{SUPERSEDES}}
+Superseded by: {{SUPERSEDED_BY}}
+API impact: none
+WebSocket impact: none
+Missing sections: Purpose and delivered behavior, Authentication and authorization, Public data types and compatibility, State and delivery semantics, Errors and edge cases, Frontend implementation guidance, Sanitized examples and validation evidence, Known limitations and unverified items, FE acknowledgment
+
+## Affected user flows, assumptions, and non-goals
+
+Recipient execution remains out of scope until a later verified update.
+
+## API impact rationale
+
+No public API operation changes.
+
+## WebSocket impact rationale
+
+No public WebSocket contract changes.
+```
+
+`confluence-handoff-verify` proves read capability only and prints
+`Readback: CAPABILITY_ONLY`. Until a trusted client post-tool path supplies the
+actual write and subsequent read results directly, report the handoff
+unverified and do not report `READY_FOR_FE`. FE records `ACKNOWLEDGED` only for
+the exact proven Confluence content ID and version. A
+version change marks the old handoff `SUPERSEDED`, updates the changelog, and
+notifies FE again.
+
+Resolve every `{{TOKEN}}` from exact user or readback evidence before preflight;
+never send an unresolved token. Cursor is the only trusted Confluence
+create/update boundary in this release. Codex and Claude Confluence create/update require a trusted actual-body boundary and must stop with
+`CLIENT_BODY_GATE_REQUIRED`; do not treat a temporary or caller-provided body
+file as proof of the Atlassian request. Jira operations, Confluence moves, and
+capability-only readback retain their existing governed paths. For this READY
+update, use Cursor's configured Atlassian MCP `updateConfluencePage` tool with
+the READY body, `{{CONTENT_ID}}`, and `{{ACTIVE_FOLDER_ID}}`. For a DRAFT
+create, use `createConfluencePage` with the separate DRAFT body and the
+reviewed ACTIVE Folder. The in-process Cursor hook stages the actual tool-call body and runs
+`confluence-handoff-write`; a standalone preflight cannot prove the Atlassian
+request.
+
+Before the read, prove connector capability:
+
+```sh
+beroka-governance preflight {{REPOSITORY}} --client {{CLIENT}} --operation confluence-handoff-verify --non-interactive --confluence-action update --target-content-id {{CONTENT_ID}} --expected-parent-id {{ACTIVE_FOLDER_ID}} --handoff-body-file {{HANDOFF_BODY_FILE}}
+```
+
+Verification is update-only; never use create/new options with `confluence-handoff-verify`.
 
 ## Confluence Completion Document Template
 

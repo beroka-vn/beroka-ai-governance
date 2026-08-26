@@ -80,8 +80,9 @@ agent. Repository-specific instructions and the linked issue take precedence.
   otherwise return `DOC_HIERARCHY_FAILED`.
 - For BE work consumed by FE, use one confirmed Epic Integration Hub linked
   from both Jira projects and exact Backend Capability Registry rows. Keep the
-  canonical OpenAPI/JSON Schema/event schema in the BE repository; never make
-  FE reconstruct it from issue descriptions.
+  team-local canonical OpenAPI/JSON Schema/event-schema artifact in BE. The
+  consumer contract is the self-contained Confluence handoff page; never make
+  FE reconstruct it from issue descriptions or private repository links.
 - Pair project-local BB/BF Epics with `Relates`. Map one Backend Feature to one
   or more BF items using `Blocks` plus one exact immutable Capability ID in the
   canonical Registry row; title similarity is never mapping evidence.
@@ -89,9 +90,11 @@ agent. Repository-specific instructions and the linked issue take precedence.
   and shared Hub. If FE cannot open the owning BE Folder/Hub, return
   `CROSS_SPACE_ACCESS_REQUIRED`; do not duplicate the contract in FE
   Confluence.
-- Do not report a BE → FE handoff as `READY_FOR_FE` until the BE PR is merged,
-  the exact contract artifact/version is published, the Hub is updated, and a
-  usable test path exists. Notify the linked FE issue and record acknowledgement.
+- Do not report a BE → FE handoff as `READY_FOR_FE` until the page has passed
+  post-write readback with its exact Confluence content ID/version, parent,
+  space, title, and owner. Create is `DRAFT` only; Jira stays in its own
+  governed lifecycle state. Notify the linked FE Jira item and record
+  acknowledgement.
 - Never expose credentials, tokens, private payloads, or sensitive topology.
 - Do not perform destructive or production actions without explicit authority.
 - Run relevant validation before claiming completion.
@@ -265,15 +268,14 @@ CROSS-TEAM HANDOFF
 - Epic Integration Hub: <URL | N/A>
 - Paired Backend Epic: <key/URL | N/A>
 - Paired Frontend Epic: <key/URL | Pending with owner | N/A>
-- Paired Backend Jira/GitHub issue: <links | N/A>
-- Paired Frontend Jira/GitHub issue(s): <one or more links | Pending with owner | N/A>
+- Provider Jira / Consumer Jira: <BB/BF key and URL | Pending with owner | N/A>
+- Confluence handoff content ID/version: <ID/version | Pending with owner | N/A>
 - Epic `Relates` readback: <pass | fail | N/A>
 - Child link type/readback: <Blocks | Relates | None> — <pass | fail | pending | N/A>
 - Hub mapping-row readback: <pass | fail | pending | N/A>
 - Mapping result: <PASS | NO_BACKEND_DEPENDENCY | MAPPING_INCOMPLETE | MAPPING_CONFLICT | FAILED_READBACK | N/A>
-- Canonical contract artifact/version/commit: <repo path/URL and exact version>
 - Handoff state: <DRAFT | READY_FOR_FE | ACKNOWLEDGED | BLOCKED | SUPERSEDED>
-- FE acknowledgement: <owner, exact version, timestamp | pending | N/A>
+- FE acknowledgement: <owner, exact Confluence content ID/page version, timestamp | pending | N/A>
 
 DOCUMENTATION ROUTING
 - Work area: <Frontend | Backend | Shared/cross-service>
@@ -344,32 +346,250 @@ item solely because a child implementation request was made.
 ## BE → FE Handoff Template
 
 ```text
-BE → FE handoff
-- Capability ID:
-- Epic Integration Hub:
-- Paired Backend Epic:
-- Paired Frontend Epic:
-- Backend Jira/GitHub issue and merged PR:
-- Frontend Jira/GitHub issue(s):
-- Epic `Relates` readback:
-- BE-to-BF `Blocks` readback for every BF item:
-- Integration Hub mapping-row readback:
-- Canonical contract artifact/version/commit:
-- Behavior delivered:
-- Authentication/permissions:
-- Error and edge cases:
-- Test environment and sanitized evidence:
-- Breaking/migration impact:
-- Known limitations/unverified items:
-- State: DRAFT | READY_FOR_FE | ACKNOWLEDGED | BLOCKED | SUPERSEDED
-- Ready/acknowledged by and at:
+Handoff schema: 1
+Handoff state: READY_FOR_FE
+Provider Jira: {{PROVIDER_JIRA}}
+Consumer Jira: {{CONSUMER_JIRA}}
+Scope: {{SCOPE}}
+Domain: {{DOMAIN}}
+Confluence content ID: {{CONTENT_ID}}
+Confluence page version: {{PAGE_VERSION}}
+Owner account ID: {{OWNER_ACCOUNT_ID}}
+Effective date: {{EFFECTIVE_DATE}}
+Supersedes: {{SUPERSEDES}}
+Superseded by: {{SUPERSEDED_BY}}
+API impact: affected
+WebSocket impact: affected
+Missing sections: None
+
+## Purpose and delivered behavior
+
+The quote contract supports both snapshots and live changes.
+
+## Affected user flows, assumptions, and non-goals
+
+Quote detail screens read once and then subscribe; history is unchanged.
+
+## Authentication and authorization
+
+Authenticated users with quote-read permission may use both transports.
+
+## Public data types and compatibility
+
+Both transports use the same additive quote type.
+
+## State and delivery semantics
+
+Snapshots are current and stream delivery is at least once.
+
+## Errors and edge cases
+
+Unknown symbols have stable errors on both transports.
+
+## Frontend implementation guidance
+
+Load a snapshot before subscribing for later changes.
+
+## Sanitized examples and validation evidence
+
+Public sample values were exercised by contract tests.
+
+## Known limitations and unverified items
+
+Exchange outages can delay updates.
+
+## FE acknowledgment
+
+Frontend acknowledgment is pending. Respond on {{CONSUMER_JIRA}} with Confluence content ID {{CONTENT_ID}} version {{PAGE_VERSION}}.
+
+## Affected API inventory
+
+GET /v1/quotes/{symbol}
+
+## API operation: GET /v1/quotes/{symbol}
+
+Public quote lookup.
+
+### Permissions
+
+quote-read permission is required.
+
+### Headers
+
+Accept: application/json.
+
+### Path parameters
+
+symbol is the public market symbol.
+
+### Query parameters
+
+None are accepted.
+
+### Request payload
+
+No request body is accepted.
+
+### Success status and payload
+
+200 returns a quote object.
+
+### Stable public errors
+
+404 is returned for an unknown symbol.
+
+### Pagination
+
+This single-resource operation is not paginated.
+
+### Idempotency
+
+GET is idempotent.
+
+### Retry
+
+Retry transient 503 responses with bounded backoff.
+
+### Cache
+
+Clients may cache the response for one second.
+
+### Timestamp semantics
+
+observedAt is an ISO-8601 UTC timestamp.
+
+### Sanitized request/response examples
+
+GET /v1/quotes/ABC returns {"symbol":"ABC"}.
+
+## Unaffected API inventory
+
+All other public API operations are unchanged.
+
+## Affected WebSocket inventory
+
+wss://api.example.test/v1/quotes
+
+## WebSocket contract: wss://api.example.test/v1/quotes
+
+Public quote change stream.
+
+### Public connection URL and authentication
+
+Connect with the documented user session.
+
+### Subscribe and unsubscribe requests
+
+Subscribe and unsubscribe with the public symbol.
+
+### Event envelope and affected message payloads
+
+Events contain type, eventId, observedAt, and quote payload.
+
+### Ordering
+
+Ordering is guaranteed per symbol.
+
+### Deduplication
+
+Deduplicate by eventId.
+
+### Replay/resume
+
+Resume from the last acknowledged eventId.
+
+### Reconnect
+
+Reconnect with bounded exponential backoff.
+
+### Heartbeat
+
+The server sends a heartbeat every 30 seconds.
+
+### Timeout
+
+Reconnect after 90 seconds without a heartbeat.
+
+### Backpressure
+
+Render the newest quote when behind.
+
+### Error events
+
+Invalid subscriptions emit a stable error event.
+
+### Close codes
+
+4010 indicates an expired user session.
+
+### Sanitized message examples
+
+{"type":"quote","eventId":"evt-1","symbol":"ABC"}
+
+## Unaffected WebSocket inventory
+
+All other public WebSocket streams are unchanged.
 ```
 
-The BE owner updates the Registry row, referencing Hubs, and linked FE issue
-after merge. The FE owner acknowledges the exact contract version before
-dependent implementation. A contract change after acknowledgement creates a
-new version, marks the old handoff `SUPERSEDED`, and triggers a new
-notification; never silently rewrite an acknowledged contract.
+For an initial create, use this separate DRAFT body:
+
+```text
+Handoff schema: 1
+Handoff state: DRAFT
+Provider Jira: {{PROVIDER_JIRA}}
+Consumer Jira: {{CONSUMER_JIRA}}
+Scope: {{SCOPE}}
+Domain: {{DOMAIN}}
+Confluence content ID: new
+Confluence page version: pending
+Owner account ID: {{OWNER_ACCOUNT_ID}}
+Effective date: {{EFFECTIVE_DATE}}
+Supersedes: {{SUPERSEDES}}
+Superseded by: {{SUPERSEDED_BY}}
+API impact: none
+WebSocket impact: none
+Missing sections: Purpose and delivered behavior, Authentication and authorization, Public data types and compatibility, State and delivery semantics, Errors and edge cases, Frontend implementation guidance, Sanitized examples and validation evidence, Known limitations and unverified items, FE acknowledgment
+
+## Affected user flows, assumptions, and non-goals
+
+Recipient execution remains out of scope until a later verified update.
+
+## API impact rationale
+
+No public API operation changes.
+
+## WebSocket impact rationale
+
+No public WebSocket contract changes.
+```
+
+This consumer-facing page contains Jira and Confluence references only. Keep
+GitHub URLs in team-local Issue/PR sections. The BE owner updates the Registry
+and Hub after merge; the FE owner acknowledges the exact Confluence content ID/page version.
+
+Resolve every `{{TOKEN}}` from exact user or readback evidence before preflight;
+never send an unresolved token. Cursor is the only trusted Confluence
+create/update boundary in this release. Codex and Claude Confluence create/update require a trusted actual-body boundary and must stop with
+`CLIENT_BODY_GATE_REQUIRED`; do not treat a temporary or caller-provided body
+file as proof of the Atlassian request. Jira operations, Confluence moves, and
+capability-only readback retain their existing governed paths. For this READY
+update, use Cursor's configured Atlassian MCP `updateConfluencePage` tool with
+the READY body, `{{CONTENT_ID}}`, and `{{ACTIVE_FOLDER_ID}}`. For a DRAFT
+create, use `createConfluencePage` with the separate DRAFT body and the
+reviewed ACTIVE Folder. The in-process Cursor hook stages the actual tool-call body and runs
+`confluence-handoff-write`; a standalone preflight cannot prove the Atlassian
+request.
+
+Before the read, prove connector capability. This returns
+`Readback: CAPABILITY_ONLY`, not post-write proof; without trusted client
+post-tool write/read results, report unverified and do not report
+`READY_FOR_FE`:
+
+```sh
+beroka-governance preflight {{REPOSITORY}} --client {{CLIENT}} --operation confluence-handoff-verify --non-interactive --confluence-action update --target-content-id {{CONTENT_ID}} --expected-parent-id {{ACTIVE_FOLDER_ID}} --handoff-body-file {{HANDOFF_BODY_FILE}}
+```
+
+Verification is update-only; never use create/new options with `confluence-handoff-verify`.
 
 ## Cross-Team Capability Mapping Template
 
@@ -493,7 +713,7 @@ Clarification needed
 - Unverified items and exact blockers:
 - Residual risks:
 - Frontend impact: None | Handoff required
-- Epic Integration Hub / contract version / handoff state:
+- Epic Integration Hub / Confluence content ID/page version / handoff state:
 - Linked FE issue acknowledgement:
 - Recommended next action:
 ```

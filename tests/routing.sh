@@ -660,11 +660,14 @@ case "$*" in
       healthy)
         printf '%s\n' \
           '- createJiraIssue (projectKey, issueType, summary)' \
+          '- createConfluencePage (spaceId, parentId, title, body)' \
           '- getAccessibleAtlassianResources ()' \
+          '- getConfluencePage (pageId)' \
           '- getJiraIssue (issueKey)' \
           '- getJiraIssueTypeMetaWithFields (projectKey, issueType)' \
           '- getJiraProjectIssueTypesMetadata (projectKey)' \
-          '- searchJiraIssuesUsingJql (cloudId, jql)'
+          '- searchJiraIssuesUsingJql (cloudId, jql)' \
+          '- updateConfluencePage (pageId, body)'
         ;;
       description-prefixes)
         printf '%s\n' \
@@ -985,14 +988,23 @@ assert_contains "$output" 'Result: GITHUB_ROLE_REQUIRED'
 printf '%s\n' healthy >"$XDG_CONFIG_HOME/fake-github-health"
 : >"$XDG_CONFIG_HOME/fake-codex-configured"
 printf '%s\n' healthy-all >"$XDG_CONFIG_HOME/fake-codex-health"
+jira_cross_team_body=$HOME/jira-cross-team.md
+printf '%s\n' \
+  'Work-item language: English' \
+  'GitHub: N/A' \
+  'Provider Jira: BB-42' \
+  'Consumer Jira: BF-69' \
+  'Confluence content ID: 900001' \
+  >"$jira_cross_team_body"
 
 printf '%s\n' FE >"$role_file"
 printf '%s\n' frontend >"$XDG_CONFIG_HOME/fake-github-teams"
 output=$($CLI preflight "$canonical_frontend" --client codex \
-  --operation jira-intake-write --non-interactive)
+  --operation jira-intake-write --non-interactive \
+  --handoff-body-file "$jira_cross_team_body")
 assert_contains "$output" 'Operation: jira-intake-write'
-assert_contains "$output" \
-  'Intake target repository: beroka-vn/Beroka_Backend'
+assert_not_contains "$output" 'Beroka_Backend'
+assert_contains "$output" 'Intake target profile: backend'
 assert_contains "$output" 'Intake Jira project: BB'
 assert_contains "$output" 'Capability: jira-issue-write'
 assert_contains "$output" 'Result: PASS'
@@ -1000,18 +1012,131 @@ assert_contains "$output" 'Result: PASS'
 printf '%s\n' BE >"$role_file"
 printf '%s\n' backend >"$XDG_CONFIG_HOME/fake-github-teams"
 output=$($CLI preflight "$canonical_backend" --client codex \
-  --operation jira-intake-write --non-interactive)
+  --operation jira-intake-write --non-interactive \
+  --handoff-body-file "$jira_cross_team_body")
 assert_contains "$output" 'Operation: jira-intake-write'
-assert_contains "$output" \
-  'Intake target repository: beroka-vn/Beroka_Frontend'
+assert_not_contains "$output" 'Beroka_Frontend'
+assert_contains "$output" 'Intake target profile: frontend'
 assert_contains "$output" 'Intake Jira project: BF'
 assert_contains "$output" 'Capability: jira-issue-write'
 assert_contains "$output" 'Result: PASS'
 
+for missing_jira_operation in jira-intake-write jira-handoff-write; do
+  : >"$CALLS"
+  if output=$($CLI preflight "$canonical_backend" --client codex \
+    --operation "$missing_jira_operation" --non-interactive 2>&1)
+  then
+    fail "$missing_jira_operation passed without its exact body"
+  fi
+  assert_contains "$output" 'Result: HANDOFF_BODY_REQUIRED'
+  [ ! -s "$CALLS" ] || fail 'missing cross-team Jira body inspected a client'
+done
+
+: >"$CALLS"
+if output=$($CLI preflight "$canonical_backend" --client codex \
+  --operation jira-write --non-interactive \
+  --handoff-body-file "$jira_cross_team_body" 2>&1)
+then
+  fail 'ordinary jira-write accepted cross-team body evidence'
+fi
+assert_contains "$output" 'Usage:'
+[ ! -s "$CALLS" ] || fail 'invalid jira-write option inspected a client'
+
+# Intake creation and routed-team acknowledgment updates share exact-body
+# repository isolation while ordinary jira-write remains unchanged.
+mkdir -p "$HOME/.cursor"
+printf '%s\n' \
+  '{"mcpServers":{"atlassian":{"url":"https://mcp.atlassian.com/v1/mcp/authv2"}}}' \
+  >"$HOME/.cursor/mcp.json"
+: >"$XDG_CONFIG_HOME/fake-claude-configured"
+printf '%s\n' healthy >"$XDG_CONFIG_HOME/fake-claude-health"
+printf '%s\n' healthy >"$XDG_CONFIG_HOME/fake-cursor-health"
+for jira_client in codex claude cursor; do
+  for jira_operation in jira-intake-write jira-handoff-write; do
+    output=$($CLI preflight "$canonical_backend" --client "$jira_client" \
+      --operation "$jira_operation" --non-interactive \
+      --handoff-body-file "$jira_cross_team_body")
+    assert_contains "$output" "Operation: $jira_operation"
+    assert_contains "$output" 'Capability: jira-issue-write'
+    assert_contains "$output" 'Result: PASS'
+  done
+done
+
+for jira_reference in \
+  'https://github.com/example/private' \
+  'git@github.com:example/private.git' \
+  'Repository: use the provider repository as contract evidence'
+do
+  printf '%s\n' \
+    'Work-item language: English' \
+    'GitHub: N/A' \
+    'Provider Jira: BB-42' \
+    'Consumer Jira: BF-69' \
+    'Confluence content ID: 900001' \
+    "$jira_reference" >"$HOME/jira-cross-team-forbidden.md"
+  for jira_client in codex claude cursor; do
+    for jira_operation in jira-intake-write jira-handoff-write; do
+      : >"$CALLS"
+      if output=$($CLI preflight "$canonical_backend" --client "$jira_client" \
+        --operation "$jira_operation" --non-interactive \
+        --handoff-body-file "$HOME/jira-cross-team-forbidden.md" 2>&1)
+      then
+        fail "$jira_operation accepted a cross-team repository reference"
+      fi
+      assert_contains "$output" 'Result: CROSS_TEAM_LINK_SCOPE_DENIED'
+      [ ! -s "$CALLS" ] || fail 'invalid cross-team Jira body inspected a client'
+    done
+  done
+done
+
+# Exact private repository identities are forbidden even without a URL or a
+# generic "repository" label. Exercise both routed directions and both Jira
+# handoff operations through the shared body gate.
+for jira_route in "$canonical_backend" "$canonical_frontend"; do
+  case "$jira_route" in
+    "$canonical_backend")
+      printf '%s\n' BE >"$role_file"
+      printf '%s\n' backend >"$XDG_CONFIG_HOME/fake-github-teams"
+      ;;
+    *)
+      printf '%s\n' FE >"$role_file"
+      printf '%s\n' frontend >"$XDG_CONFIG_HOME/fake-github-teams"
+      ;;
+  esac
+  for jira_private_identity in \
+    'beroka-vn/Beroka_Backend' Beroka_Backend \
+    'beroka-vn/Beroka_Frontend' Beroka_Frontend
+  do
+    printf '%s\n' \
+      'Work-item language: English' \
+      'GitHub: N/A' \
+      'Provider Jira: BB-42' \
+      'Consumer Jira: BF-69' \
+      'Confluence content ID: 900001' \
+      "Provider source: $jira_private_identity" \
+      >"$HOME/jira-private-identity.md"
+    for jira_operation in jira-intake-write jira-handoff-write; do
+      : >"$CALLS"
+      if output=$($CLI preflight "$jira_route" --client codex \
+        --operation "$jira_operation" --non-interactive \
+        --handoff-body-file "$HOME/jira-private-identity.md" 2>&1)
+      then
+        fail "$jira_operation accepted a private repository identity"
+      fi
+      assert_contains "$output" 'Result: CROSS_TEAM_LINK_SCOPE_DENIED'
+      assert_not_contains "$output" "$jira_private_identity"
+      [ ! -s "$CALLS" ] || fail 'private Jira identity inspected a client'
+    done
+  done
+done
+printf '%s\n' BE >"$role_file"
+printf '%s\n' backend >"$XDG_CONFIG_HOME/fake-github-teams"
+
 printf '%s\n' FE >"$role_file"
 : >"$CALLS"
 if output=$($CLI preflight "$frontend_repo" --client codex \
-  --operation jira-intake-write --non-interactive 2>&1)
+  --operation jira-intake-write --non-interactive \
+  --handoff-body-file "$jira_cross_team_body" 2>&1)
 then
   fail 'deprecated alias received canonical cross-team intake routing'
 fi
@@ -1021,7 +1146,8 @@ assert_contains "$output" 'Result: ROUTING_REQUIRED'
 
 : >"$CALLS"
 if output=$($CLI preflight "$consumer" --client codex \
-  --operation jira-intake-write --non-interactive 2>&1)
+  --operation jira-intake-write --non-interactive \
+  --handoff-body-file "$jira_cross_team_body" 2>&1)
 then
   fail 'explicit-only standalone route received cross-team intake routing'
 fi
@@ -1330,13 +1456,12 @@ assert_contains "$output" 'Result: MAPPING_CONFLICT'
 [ ! -s "$CALLS" ] || fail 'mapping conflict inspected a connector'
 
 set -- $(confluence_args | sed 's/^API$/WebSocket/')
-if ! output=$($CLI preflight "$canonical_backend" --client codex \
+if output=$($CLI preflight "$canonical_backend" --client codex \
   --operation confluence-write --non-interactive "$@" 2>&1)
 then
-  fail 'drifted page failed with matching transport'
+  fail 'direct Confluence update passed without a trusted body'
 fi
-assert_contains "$output" 'Capability: confluence-page-update'
-assert_contains "$output" 'Result: PASS'
+assert_contains "$output" 'Result: CLIENT_BODY_GATE_REQUIRED'
 
 : >"$CALLS"
 if output=$($CLI preflight "$canonical_backend" --client codex \
@@ -1348,22 +1473,26 @@ assert_contains "$output" 'Result: ROUTING_REQUIRED'
 [ ! -s "$CALLS" ] || fail 'missing target inspected a connector'
 
 printf '%s\n' healthy-all >"$XDG_CONFIG_HOME/fake-codex-health"
-output=$($CLI preflight "$canonical_backend" --client codex \
+if output=$($CLI preflight "$canonical_backend" --client codex \
   --operation confluence-write --non-interactive \
   --confluence-action create --target-content-id new \
   --capability-id MARKET-FU-INDEX-API --scope Shared --domain Market \
   --transport API --expected-parent-id 71237633 \
-  --registry-content-id 900003)
-assert_contains "$output" 'Capability: confluence-page-parent-write'
-assert_contains "$output" 'Result: PASS'
+  --registry-content-id 900003 2>&1)
+then
+  fail 'direct Confluence create passed without a trusted body'
+fi
+assert_contains "$output" 'Result: CLIENT_BODY_GATE_REQUIRED'
 
-# Minimal create args remain allow-by-default under a non-UNACTIVATED parent.
-output=$($CLI preflight "$canonical_backend" --client codex \
+# Minimal create args retain local validation but require a trusted body.
+if output=$($CLI preflight "$canonical_backend" --client codex \
   --operation confluence-write --non-interactive \
   --confluence-action create --target-content-id new \
-  --expected-parent-id 71237633)
-assert_contains "$output" 'Capability: confluence-page-parent-write'
-assert_contains "$output" 'Result: PASS'
+  --expected-parent-id 71237633 2>&1)
+then
+  fail 'minimal direct Confluence create passed without a trusted body'
+fi
+assert_contains "$output" 'Result: CLIENT_BODY_GATE_REQUIRED'
 
 # Issue #51: discover → plan → capture → verify on deny-only inventory.
 discover_output=$($CLI confluence-discover "$canonical_backend" \
@@ -1431,76 +1560,6 @@ printf '%b\n' \
 pin_test_release v1.1.20
 
 printf '%s\n' healthy-all >"$XDG_CONFIG_HOME/fake-codex-health"
-output=$($CLI preflight "$canonical_backend" --client codex \
-  --operation confluence-write --non-interactive \
-  --confluence-action update --target-content-id 900001 \
-  --capability-id MARKET-FU-INDEX-API --scope Shared --domain Market \
-  --transport API --expected-parent-id 900002 \
-  --registry-content-id 900003)
-assert_contains "$output" 'Target transport: API'
-assert_contains "$output" 'Capability: confluence-page-update'
-assert_contains "$output" 'Result: PASS'
-
-printf '%s\n' healthy-codex-apps-confluence \
-  >"$XDG_CONFIG_HOME/fake-codex-health"
-output=$($CLI preflight "$canonical_backend" --client codex \
-  --operation confluence-write --non-interactive \
-  --confluence-action update --target-content-id 900001 \
-  --capability-id MARKET-FU-INDEX-API --scope Shared --domain Market \
-  --transport API --expected-parent-id 900002 \
-  --registry-content-id 900003)
-assert_contains "$output" 'Capability state: SUPPORTED'
-assert_contains "$output" 'Runtime inventory: COMPLETE'
-assert_contains "$output" 'Result: PASS'
-output=$($CLI preflight "$canonical_backend" --client codex \
-  --operation confluence-write --non-interactive \
-  --confluence-action create --target-content-id new \
-  --capability-id MARKET-PLANNED-API --scope Shared --domain Market \
-  --transport API --expected-parent-id 900002 \
-  --registry-content-id 900003)
-assert_contains "$output" 'Capability state: SUPPORTED'
-assert_contains "$output" 'Runtime inventory: COMPLETE'
-assert_contains "$output" 'Result: PASS'
-
-for unauthenticated_codex_apps in \
-  codex-apps-confluence-auth-missing \
-  codex-apps-confluence-auth-unknown \
-  codex-apps-confluence-auth-not-logged-in
-do
-  printf '%s\n' "$unauthenticated_codex_apps" \
-    >"$XDG_CONFIG_HOME/fake-codex-health"
-  if output=$($CLI preflight "$canonical_backend" --client codex \
-    --operation confluence-write --non-interactive \
-    --confluence-action create --target-content-id new \
-    --capability-id MARKET-PLANNED-API --scope Shared --domain Market \
-    --transport API --expected-parent-id 900002 \
-    --registry-content-id 900003 2>&1)
-  then
-    fail "$unauthenticated_codex_apps authorized Confluence create"
-  fi
-  assert_contains "$output" 'Capability state: UNSUPPORTED'
-  assert_not_contains "$output" 'Capability state: SUPPORTED'
-  assert_contains "$output" 'Result: CONNECTOR_CAPABILITY_REQUIRED'
-done
-
-printf '%s\n' healthy-codex-apps-confluence-preview \
-  >"$XDG_CONFIG_HOME/fake-codex-health"
-if output=$($CLI preflight "$canonical_backend" --client codex \
-  --operation confluence-write --non-interactive \
-  --confluence-action create --target-content-id new \
-  --capability-id MARKET-PLANNED-API --scope Shared --domain Market \
-  --transport API --expected-parent-id 900002 \
-  --registry-content-id 900003 2>&1)
-then
-  fail 'Confluence preview alias authorized create'
-fi
-assert_contains "$output" 'Capability state: UNSUPPORTED'
-assert_contains "$output" 'Runtime inventory: COMPLETE'
-assert_contains "$output" 'Result: CONNECTOR_CAPABILITY_REQUIRED'
-printf '%s\n' healthy-all >"$XDG_CONFIG_HOME/fake-codex-health"
-
-printf '%s\n' healthy-no-confluence-update \
-  >"$XDG_CONFIG_HOME/fake-codex-health"
 if output=$($CLI preflight "$canonical_backend" --client codex \
   --operation confluence-write --non-interactive \
   --confluence-action update --target-content-id 900001 \
@@ -1508,12 +1567,9 @@ if output=$($CLI preflight "$canonical_backend" --client codex \
   --transport API --expected-parent-id 900002 \
   --registry-content-id 900003 2>&1)
 then
-  fail 'Confluence update passed without update tool'
+  fail 'direct Confluence update passed without a trusted body'
 fi
-assert_contains "$output" 'Capability: confluence-page-update'
-assert_contains "$output" 'Capability state: UNSUPPORTED'
-assert_contains "$output" 'Result: CONNECTOR_CAPABILITY_REQUIRED'
-printf '%s\n' healthy-all >"$XDG_CONFIG_HOME/fake-codex-health"
+assert_contains "$output" 'Result: CLIENT_BODY_GATE_REQUIRED'
 
 : >"$CALLS"
 if output=$($CLI preflight "$canonical_backend" --client codex \
@@ -1528,14 +1584,16 @@ fi
 assert_contains "$output" 'Result: MAPPING_CONFLICT'
 [ ! -s "$CALLS" ] || fail 'legacy parent inspected a connector'
 
-output=$($CLI preflight "$canonical_backend" --client codex \
+if output=$($CLI preflight "$canonical_backend" --client codex \
   --operation confluence-write --non-interactive \
   --confluence-action create --target-content-id new \
   --capability-id MARKET-PLANNED-API --scope Shared --domain Market \
   --transport API --expected-parent-id 900002 \
-  --registry-content-id 900003)
-assert_contains "$output" 'Capability: confluence-page-parent-write'
-assert_contains "$output" 'Result: PASS'
+  --registry-content-id 900003 2>&1)
+then
+  fail 'direct Confluence create passed without a trusted body'
+fi
+assert_contains "$output" 'Result: CLIENT_BODY_GATE_REQUIRED'
 
 output=$($CLI preflight "$canonical_backend" --client codex \
   --operation confluence-write --non-interactive \
@@ -1555,6 +1613,10 @@ printf '%b\n' \
   'beroka-vn/Beroka_Backend\tpage\tPLANNED\t-\tPlanned REST contract\tShared\tMarket\tAPI\t900002\tMARKET-PLANNED-API\t900003' \
   'beroka-vn/Beroka_Backend\tfolder\tACTIVE\t900005\tShared — Market — WebSocket\tShared\tMarket\tWebSocket\t65962274\t-\t-' \
   'beroka-vn/Beroka_Backend\tpage\tACTIVE\t900004\tDerivative quote stream\tShared\tMarket\tWebSocket\t900005\tMARKET-DERIVATIVE-QUOTE-WS\t900003' \
+  'beroka-vn/Beroka_Backend\tfolder\tACTIVE\t900006\tShared — Market — API+WebSocket\tShared\tMarket\tAPI+WebSocket\t65962274\t-\t-' \
+  'beroka-vn/Beroka_Backend\tpage\tACTIVE\t900007\tCombined quote contract\tShared\tMarket\tAPI+WebSocket\t900006\tMARKET-QUOTE-COMBINED\t900003' \
+  'beroka-vn/Beroka_Frontend\tfolder\tACTIVE\t910002\tShared — Market — API\tShared\tMarket\tAPI\t65831203\t-\t-' \
+  'beroka-vn/Beroka_Frontend\tpage\tACTIVE\t910001\tFrontend provider contract\tShared\tMarket\tAPI\t910002\tMARKET-FE-PROVIDER-API\t910003' \
   'beroka-vn/Beroka_Backend\tfolder\tUNACTIVATED\t990001\tUnactivated parent\t-\tMarket\tAPI\t-\t-\t-' \
   'beroka-vn/Beroka_Backend\tpage\tUNACTIVATED\t990002\tUnactivated page\t-\tMarket\tAPI\t-\t-\t-' \
   >"$target_file"
@@ -1595,45 +1657,80 @@ then
 fi
 assert_contains "$output" 'Result: DOCS_UNACTIVATED'
 
-output=$($CLI preflight "$canonical_backend" --client codex \
+if output=$($CLI preflight "$canonical_backend" --client codex \
   --operation confluence-write --non-interactive \
   --confluence-action update --target-content-id 900004 \
   --capability-id MARKET-DERIVATIVE-QUOTE-WS --scope Shared --domain Market \
   --transport WebSocket --expected-parent-id 900005 \
-  --registry-content-id 900003)
-assert_contains "$output" 'Target transport: WebSocket'
-assert_contains "$output" 'Result: PASS'
+  --registry-content-id 900003 2>&1)
+then
+  fail 'direct Confluence update passed without a trusted body'
+fi
+assert_contains "$output" 'Result: CLIENT_BODY_GATE_REQUIRED'
+
+handoff_verify_body=$HOME/handoff-verify.md
+sed -e 's/^Confluence page version: 1$/Confluence page version: 3/' \
+  -e 's/^Owner account ID: account-123$/Owner account ID: 712020:owner/' \
+  "$ROOT/tests/fixtures/handoffs/ready-api.md" >"$handoff_verify_body"
+
+handoff_read_capability_preflight() {
+  $CLI preflight "$canonical_backend" --client codex \
+    --operation confluence-handoff-verify --non-interactive \
+    --confluence-action update --target-content-id 900001 \
+    --capability-id MARKET-FU-INDEX-API --scope Shared --domain Market \
+    --transport API --expected-parent-id 900002 \
+    --registry-content-id 900003 --handoff-body-file "$handoff_verify_body"
+}
 
 if output=$($CLI preflight "$canonical_backend" --client codex \
   --operation confluence-handoff-verify --non-interactive \
   --confluence-action update --target-content-id 900001 \
   --capability-id MARKET-WRONG-API --scope Shared --domain Market \
   --transport API --expected-parent-id 900002 \
-  --registry-content-id 900003 2>&1)
+  --registry-content-id 900003 --handoff-body-file "$handoff_verify_body" 2>&1)
 then
   fail 'handoff accepted a conflicting Capability ID'
 fi
 assert_contains "$output" 'Result: MAPPING_CONFLICT'
 
-output=$($CLI preflight "$canonical_backend" --client codex \
+output=$(handoff_read_capability_preflight)
+assert_contains "$output" 'Capability: confluence-page-read'
+assert_contains "$output" 'Readback: CAPABILITY_ONLY'
+assert_not_contains "$output" 'Readback: VERIFIED'
+assert_contains "$output" 'Result: PASS'
+assert_not_contains "$output" '712020:owner'
+assert_not_contains "$output" 'Handoff — BB-42 — broker-account-reconnect'
+assert_not_contains "$output" 'The public quote endpoint returns the latest market quote.'
+
+# Caller assertions have no connector provenance and can never establish a
+# post-write/read proof.
+: >"$CALLS"
+if output=$($CLI preflight "$canonical_backend" --client codex \
   --operation confluence-handoff-verify --non-interactive \
   --confluence-action update --target-content-id 900001 \
   --capability-id MARKET-FU-INDEX-API --scope Shared --domain Market \
   --transport API --expected-parent-id 900002 \
-  --registry-content-id 900003)
-assert_contains "$output" 'Capability: confluence-page-read'
-assert_contains "$output" 'Result: PASS'
+  --registry-content-id 900003 --handoff-body-file "$handoff_verify_body" \
+  --readback-parent-id 900002 --readback-space-key Berokaback \
+  --readback-title 'Handoff — BB-42 — broker-account-reconnect' \
+  --readback-version 3 --readback-owner-account-id '712020:owner' 2>&1)
+then
+  fail 'caller-supplied assertions produced a verified readback'
+fi
+assert_contains "$output" 'Result: HANDOFF_READBACK_REQUIRED'
+assert_not_contains "$output" 'Readback: VERIFIED'
+[ ! -s "$CALLS" ] || fail 'untrusted readback assertions inspected a connector'
 
 if output=$($CLI preflight "$canonical_backend" --client codex \
   --operation confluence-handoff-verify --non-interactive \
   --confluence-action create --target-content-id new \
   --capability-id MARKET-PLANNED-API --scope Shared --domain Market \
   --transport API --expected-parent-id 900002 \
-  --registry-content-id 900003 2>&1)
+  --registry-content-id 900003 --handoff-body-file "$handoff_verify_body" 2>&1)
 then
-  fail 'handoff accepted a planned target without a content ID'
+  fail 'handoff read capability accepted create/new'
 fi
-assert_contains "$output" 'Result: ROUTING_REQUIRED'
+assert_contains "$output" 'Result: HANDOFF_READBACK_REQUIRED'
 
 printf '%s\n' healthy-missing-confluence-read \
   >"$XDG_CONFIG_HOME/fake-codex-health"
@@ -1642,7 +1739,7 @@ if output=$($CLI preflight "$canonical_backend" --client codex \
   --confluence-action update --target-content-id 900001 \
   --capability-id MARKET-FU-INDEX-API --scope Shared --domain Market \
   --transport API --expected-parent-id 900002 \
-  --registry-content-id 900003 2>&1)
+  --registry-content-id 900003 --handoff-body-file "$handoff_verify_body" 2>&1)
 then
   fail 'handoff passed without Confluence read capability'
 fi
@@ -1651,15 +1748,676 @@ assert_contains "$output" 'Result: CONNECTOR_CAPABILITY_REQUIRED'
 
 printf '%s\n' healthy-all >"$XDG_CONFIG_HOME/fake-codex-health"
 
+handoff_dir=$HOME/handoffs
+mkdir -p "$handoff_dir"
+for handoff_fixture in draft ready-api ready-websocket ready-api-websocket \
+  ready-no-impact incident-85360641
+do
+  cp "$ROOT/tests/fixtures/handoffs/$handoff_fixture.md" \
+    "$handoff_dir/$handoff_fixture.md"
+done
+
+handoff_preflight() {
+  handoff_file=$1 handoff_action=$2 handoff_target=$3
+  handoff_parent=${4:-900002} handoff_transport=${5:-API}
+  handoff_repo=${6:-$canonical_backend}
+  $CLI preflight "$handoff_repo" --client codex \
+    --operation confluence-handoff-write --non-interactive \
+    --confluence-action "$handoff_action" --target-content-id "$handoff_target" \
+    --scope Shared --domain Market --transport "$handoff_transport" \
+    --expected-parent-id "$handoff_parent" --handoff-body-file "$handoff_file"
+}
+
+handoff_body_preflight() {
+  hbp_file=$1 hbp_action=$2 hbp_target=$3
+  $CLI preflight "$canonical_backend" --client codex \
+    --operation confluence-handoff-write --non-interactive \
+    --confluence-action "$hbp_action" --target-content-id "$hbp_target" \
+    --expected-parent-id 900002 --handoff-body-file "$hbp_file"
+}
+
+handoff_client_preflight() {
+  hcp_client=$1 hcp_file=$2 hcp_action=$3 hcp_target=$4
+  $CLI preflight "$canonical_backend" --client "$hcp_client" \
+    --operation confluence-handoff-write --non-interactive \
+    --confluence-action "$hcp_action" --target-content-id "$hcp_target" \
+    --expected-parent-id 900002 --handoff-body-file "$hcp_file"
+}
+
+direct_confluence_preflight() {
+  dcp_client=$1 dcp_operation=$2 dcp_action=$3 dcp_target=$4 dcp_fixture=${5:-}
+  set -- --confluence-action "$dcp_action" --target-content-id "$dcp_target" \
+    --expected-parent-id 900002
+  if [ "$dcp_operation" = confluence-handoff-write ]; then
+    set -- "$@" --handoff-body-file "$handoff_dir/$dcp_fixture.md"
+  fi
+  $CLI preflight "$canonical_backend" --client "$dcp_client" \
+    --operation "$dcp_operation" --non-interactive "$@"
+}
+
+assert_direct_confluence_body_gate() {
+  adcbg_client=$1
+  for adcbg_operation in confluence-write confluence-handoff-write; do
+    for adcbg_case in 'create new draft' 'update 900001 ready-no-impact'; do
+      set -- $adcbg_case
+      : >"$CALLS"
+      if output=$(direct_confluence_preflight "$adcbg_client" \
+        "$adcbg_operation" "$1" "$2" "$3" 2>&1)
+      then
+        fail "$adcbg_client $adcbg_operation $1 passed without a trusted body"
+      fi
+      assert_contains "$output" 'Result: CLIENT_BODY_GATE_REQUIRED'
+      [ ! -s "$CALLS" ] || fail 'untrusted Confluence body gate inspected a connector'
+    done
+  done
+}
+
+handoff_parent_preflight() {
+  hpp_parent=$1
+  shift
+  $CLI preflight "$canonical_backend" --client codex \
+    --operation confluence-handoff-write --non-interactive \
+    --confluence-action create --target-content-id new \
+    --expected-parent-id "$hpp_parent" --handoff-body-file "$handoff_dir/draft.md" \
+    "$@"
+}
+
+assert_handoff_invalid() {
+  ahi_file=$1 ahi_action=$2 ahi_target=$3
+  : >"$CALLS"
+  if output=$(handoff_preflight "$ahi_file" "$ahi_action" "$ahi_target" 2>&1)
+  then
+    fail "handoff accepted invalid body: $ahi_file"
+  fi
+  assert_contains "$output" 'Result: HANDOFF_BODY_INVALID'
+  [ ! -s "$CALLS" ] || fail 'invalid handoff body inspected a connector'
+}
+
+assert_handoff_section_required() {
+  ahsr_source=$1 ahsr_heading=$2 ahsr_action=$3 ahsr_target=$4
+  ahsr_file=$handoff_dir/removed.md
+  awk -v heading="$ahsr_heading" '
+    BEGIN { match(heading, /^#+/); level=RLENGTH }
+    $0 == heading { skip=1; next }
+    skip && /^#/ { match($0, /^#+/); if (RLENGTH <= level) skip=0 }
+    !skip { print }
+  ' "$ahsr_source" >"$ahsr_file"
+  assert_handoff_invalid "$ahsr_file" "$ahsr_action" "$ahsr_target"
+}
+
+printf '%s\n' healthy-all >"$XDG_CONFIG_HOME/fake-codex-health"
+printf '%s\n' healthy >"$XDG_CONFIG_HOME/fake-claude-health"
+printf '%s\n' healthy >"$XDG_CONFIG_HOME/fake-cursor-health"
+for direct_confluence_client in codex claude cursor; do
+  assert_direct_confluence_body_gate "$direct_confluence_client"
+done
+
+for move_client in codex claude; do
+  : >"$CALLS"
+  output=$(direct_confluence_preflight "$move_client" confluence-write move 900001)
+  assert_contains "$output" 'Capability: confluence-page-parent-write'
+  assert_not_contains "$output" 'Result: CLIENT_BODY_GATE_REQUIRED'
+done
+
+for handoff_client in codex claude cursor; do
+  if output=$(handoff_client_preflight "$handoff_client" \
+    "$handoff_dir/draft.md" create new 2>&1)
+  then
+    fail "$handoff_client direct handoff create passed without a trusted body"
+  fi
+  assert_contains "$output" 'Result: CLIENT_BODY_GATE_REQUIRED'
+  cp "$handoff_dir/ready-no-impact.md" "$handoff_dir/client-forbidden.md"
+  printf '\nRepository: use the provider repository as contract evidence\n' \
+    >>"$handoff_dir/client-forbidden.md"
+  if output=$(handoff_client_preflight "$handoff_client" \
+    "$handoff_dir/client-forbidden.md" update 900001 2>&1)
+  then
+    fail "$handoff_client accepted a cross-team repository reference"
+  fi
+  assert_contains "$output" 'Result: CROSS_TEAM_LINK_SCOPE_DENIED'
+done
+
+# Handoffs require one reviewed ACTIVE Folder directly below the routed root.
+for handoff_parent in 65962274 71237633 900001 990001 999999
+do
+  : >"$CALLS"
+  if output=$(handoff_parent_preflight "$handoff_parent" 2>&1)
+  then
+    fail "handoff write passed with invalid parent: $handoff_parent"
+  fi
+  assert_contains "$output" 'Result: FOLDER_CREATION_REQUIRED'
+  [ ! -s "$CALLS" ] || fail "invalid handoff parent inspected a connector: $handoff_parent"
+done
+
+: >"$CALLS"
+if output=$(handoff_parent_preflight 900002 \
+  --scope Other --domain Other --transport Other 2>&1)
+then
+  fail 'handoff write passed with mismatched ACTIVE Folder metadata'
+fi
+assert_contains "$output" 'Result: FOLDER_CREATION_REQUIRED'
+[ ! -s "$CALLS" ] || fail 'mismatched handoff Folder metadata inspected a connector'
+
+: >"$CALLS"
+if output=$(handoff_parent_preflight 900002 2>&1); then
+  fail 'direct handoff create passed without a trusted body'
+fi
+assert_contains "$output" 'Result: CLIENT_BODY_GATE_REQUIRED'
+
+cp "$target_file" "$target_file.before-duplicate"
+printf '%b\n' \
+  'beroka-vn/Beroka_Backend\tfolder\tACTIVE\t900002\tDuplicate Shared — Market — API\tShared\tMarket\tAPI\t65962274\t-\t-' \
+  >>"$target_file"
+pin_test_release v1.1.202
+: >"$CALLS"
+if output=$(handoff_parent_preflight 900002 2>&1)
+then
+  fail 'handoff write passed with duplicate ACTIVE Folder rows in the release'
+fi
+assert_contains "$output" 'Result: VERSION_MISMATCH'
+assert_contains "$output" 'Invalid Confluence target inventory'
+[ ! -s "$CALLS" ] || fail 'duplicate handoff inventory inspected a connector'
+
+: >"$CALLS"
+if output=$($CLI preflight "$canonical_backend" --client codex \
+  --operation confluence-write --non-interactive \
+  --confluence-action create --target-content-id new \
+  --expected-parent-id 900002 2>&1)
+then
+  fail 'ordinary write passed with duplicate ACTIVE Folder rows in the release'
+fi
+assert_contains "$output" 'Result: VERSION_MISMATCH'
+assert_contains "$output" 'Invalid Confluence target inventory'
+[ ! -s "$CALLS" ] || fail 'duplicate ordinary inventory inspected a connector'
+mv "$target_file.before-duplicate" "$target_file"
+pin_test_release v1.1.203
+
+# The body is required before role or connector inspection.
+: >"$CALLS"
+if output=$($CLI preflight "$canonical_backend" --client codex \
+  --operation confluence-handoff-write --non-interactive \
+  --confluence-action create --target-content-id new \
+  --expected-parent-id 900002 2>&1)
+then
+  fail 'handoff write passed without the actual body'
+fi
+assert_contains "$output" 'Result: HANDOFF_BODY_REQUIRED'
+[ ! -s "$CALLS" ] || fail 'missing handoff body inspected a connector'
+
+ln -s "$handoff_dir/draft.md" "$handoff_dir/symlink.md"
+if output=$(handoff_preflight "$handoff_dir/symlink.md" create new 2>&1)
+then
+  fail 'handoff accepted a symlinked body'
+fi
+assert_contains "$output" 'Result: HANDOFF_BODY_REQUIRED'
+
+if output=$(handoff_preflight "$handoff_dir" create new 2>&1)
+then
+  fail 'handoff accepted a directory body'
+fi
+assert_contains "$output" 'Result: HANDOFF_BODY_REQUIRED'
+: >"$handoff_dir/empty.md"
+if output=$(handoff_preflight "$handoff_dir/empty.md" create new 2>&1)
+then
+  fail 'handoff accepted an empty body'
+fi
+assert_contains "$output" 'Result: HANDOFF_BODY_REQUIRED'
+outside_handoff=$(mktemp /var/tmp/beroka-handoff.XXXXXX)
+cp "$handoff_dir/draft.md" "$outside_handoff"
+if output=$(handoff_preflight "$outside_handoff" create new 2>&1)
+then
+  fail 'handoff accepted a body outside HOME and TMPDIR'
+fi
+assert_contains "$output" 'Result: HANDOFF_BODY_REQUIRED'
+rm -f "$outside_handoff"
+
+for handoff_link in \
+  'https://github.com/beroka-vn/Beroka_Backend' \
+  'git@github.com:beroka-vn/Beroka_Backend.git' \
+  'Repository: use the provider repository as contract evidence' \
+  'Branch: main contains the contract' \
+  'PR #81 is the contract evidence' \
+  'Pull request: 81 contains the contract' \
+  'Commit: 19f8766 contains the contract' \
+  'Canonical: artifact-81'
+do
+  cp "$handoff_dir/ready-no-impact.md" "$handoff_dir/forbidden.md"
+  printf '\n%s\n' "$handoff_link" >>"$handoff_dir/forbidden.md"
+  : >"$CALLS"
+  if output=$(handoff_preflight "$handoff_dir/forbidden.md" update 900001 2>&1)
+  then
+    fail "handoff accepted a repository reference: $handoff_link"
+  fi
+  assert_contains "$output" 'Result: CROSS_TEAM_LINK_SCOPE_DENIED'
+  [ ! -s "$CALLS" ] || fail 'repository reference inspected a connector'
+done
+
+cp "$handoff_dir/ready-no-impact.md" "$handoff_dir/malformed.md"
+sed 's/^Handoff schema: 1$/Handoff schema: 2/' "$handoff_dir/malformed.md" \
+  >"$handoff_dir/malformed-next.md"
+mv "$handoff_dir/malformed-next.md" "$handoff_dir/malformed.md"
+assert_handoff_invalid "$handoff_dir/malformed.md" update 900001
+printf 'Handoff schema: 1\n' >>"$handoff_dir/malformed.md"
+assert_handoff_invalid "$handoff_dir/malformed.md" update 900001
+
+printf 'Preface\n' >"$handoff_dir/prefaced.md"
+cat "$handoff_dir/ready-no-impact.md" >>"$handoff_dir/prefaced.md"
+assert_handoff_invalid "$handoff_dir/prefaced.md" update 900001
+
+awk 'NR != 3 { print } END { print "Provider Jira: BB-42" }' \
+  "$handoff_dir/ready-no-impact.md" >"$handoff_dir/scattered.md"
+assert_handoff_invalid "$handoff_dir/scattered.md" update 900001
+
+awk '
+  NR == 2 { saved=$0; next }
+  NR == 3 { print; print saved; next }
+  { print }
+' "$handoff_dir/ready-no-impact.md" >"$handoff_dir/reordered.md"
+assert_handoff_invalid "$handoff_dir/reordered.md" update 900001
+
+awk '{ printf "%s\r\n", $0 }' "$handoff_dir/ready-no-impact.md" \
+  >"$handoff_dir/ready-no-impact-crlf.md"
+if output=$(handoff_preflight "$handoff_dir/ready-no-impact-crlf.md" update \
+  900001 2>&1)
+then
+  fail 'CRLF handoff bypassed the trusted client body gate'
+fi
+assert_contains "$output" 'Result: CLIENT_BODY_GATE_REQUIRED'
+
+cp "$handoff_dir/ready-no-impact.md" "$handoff_dir/same-project.md"
+sed 's/^Consumer Jira: BF-69$/Consumer Jira: BB-69/' \
+  "$handoff_dir/same-project.md" >"$handoff_dir/same-project-next.md"
+mv "$handoff_dir/same-project-next.md" "$handoff_dir/same-project.md"
+assert_handoff_invalid "$handoff_dir/same-project.md" update 900001
+
+for handoff_header_case in missing-scope missing-domain scope-before-consumer \
+  domain-before-scope duplicate-scope duplicate-domain scope-mismatch domain-mismatch
+do
+  handoff_header_file=$handoff_dir/$handoff_header_case.md
+  case "$handoff_header_case" in
+    missing-scope) sed '/^Scope: Shared$/d' "$handoff_dir/ready-no-impact.md" >"$handoff_header_file" ;;
+    missing-domain) sed '/^Domain: Market$/d' "$handoff_dir/ready-no-impact.md" >"$handoff_header_file" ;;
+    scope-before-consumer)
+      awk '$0 == "Scope: Shared" { next } { print } \
+        $0 == "Provider Jira: BB-42" { print "Scope: Shared" }' \
+        "$handoff_dir/ready-no-impact.md" >"$handoff_header_file"
+      ;;
+    domain-before-scope)
+      awk '$0 == "Domain: Market" { next } { print } \
+        $0 == "Consumer Jira: BF-69" { print "Domain: Market" }' \
+        "$handoff_dir/ready-no-impact.md" >"$handoff_header_file"
+      ;;
+    duplicate-scope)
+      awk '{ print } $0 == "Domain: Market" { print "Scope: Shared" }' \
+        "$handoff_dir/ready-no-impact.md" >"$handoff_header_file"
+      ;;
+    duplicate-domain)
+      awk '{ print } $0 == "Domain: Market" { print "Domain: Market" }' \
+        "$handoff_dir/ready-no-impact.md" >"$handoff_header_file"
+      ;;
+    scope-mismatch) sed 's/^Scope: Shared$/Scope: Product/' "$handoff_dir/ready-no-impact.md" >"$handoff_header_file" ;;
+    domain-mismatch) sed 's/^Domain: Market$/Domain: Broker accounts/' "$handoff_dir/ready-no-impact.md" >"$handoff_header_file" ;;
+  esac
+  : >"$CALLS"
+  if output=$(handoff_body_preflight "$handoff_header_file" update 900001 2>&1)
+  then
+    fail "handoff accepted invalid scope/domain header: $handoff_header_case"
+  fi
+  case "$handoff_header_case" in
+    scope-mismatch|domain-mismatch) assert_contains "$output" 'Result: FOLDER_CREATION_REQUIRED' ;;
+    *) assert_contains "$output" 'Result: HANDOFF_BODY_INVALID' ;;
+  esac
+  [ ! -s "$CALLS" ] || fail 'invalid handoff scope/domain inspected a connector'
+done
+
+# Provider direction is bound to the routed team; FE -> BE uses the inverse
+# provider/consumer pair and remains a supported symmetric flow.
+sed \
+  -e 's/^Provider Jira: BB-42$/Provider Jira: BF-42/' \
+  -e 's/^Consumer Jira: BF-69$/Consumer Jira: BB-69/' \
+  -e 's/^Confluence content ID: 900001$/Confluence content ID: 910001/' \
+  "$handoff_dir/ready-api.md" >"$handoff_dir/ready-api-fe-provider.md"
+: >"$CALLS"
+if output=$(handoff_preflight "$handoff_dir/ready-api-fe-provider.md" update \
+  910001 910002 API 2>&1)
+then
+  fail 'Backend route accepted a Frontend provider handoff'
+fi
+assert_contains "$output" 'Result: HANDOFF_BODY_INVALID'
+[ ! -s "$CALLS" ] || fail 'wrong provider direction inspected a connector'
+
+printf '%s\n' FE >"$role_file"
+printf '%s\n' frontend >"$XDG_CONFIG_HOME/fake-github-teams"
+if output=$(handoff_preflight "$handoff_dir/ready-api-fe-provider.md" update \
+  910001 910002 API "$canonical_frontend" 2>&1)
+then
+  fail 'direct frontend handoff update passed without a trusted body'
+fi
+assert_contains "$output" 'Result: CLIENT_BODY_GATE_REQUIRED'
+
+for confluence_route_case in \
+  "$canonical_backend|$handoff_dir/ready-no-impact.md|900001|900002|BE|backend" \
+  "$canonical_frontend|$handoff_dir/ready-api-fe-provider.md|910001|910002|FE|frontend"
+do
+  IFS='|' read -r confluence_route confluence_source confluence_target \
+    confluence_parent confluence_role confluence_team <<EOF
+$confluence_route_case
+EOF
+  printf '%s\n' "$confluence_role" >"$role_file"
+  printf '%s\n' "$confluence_team" >"$XDG_CONFIG_HOME/fake-github-teams"
+  for confluence_private_identity in \
+    'beroka-vn/Beroka_Backend' Beroka_Backend \
+    'beroka-vn/Beroka_Frontend' Beroka_Frontend
+  do
+    cp "$confluence_source" "$handoff_dir/private-identity.md"
+    printf '\nProvider source: %s\n' "$confluence_private_identity" \
+      >>"$handoff_dir/private-identity.md"
+    : >"$CALLS"
+    if output=$($CLI preflight "$confluence_route" --client codex \
+      --operation confluence-handoff-write --non-interactive \
+      --confluence-action update --target-content-id "$confluence_target" \
+      --expected-parent-id "$confluence_parent" \
+      --handoff-body-file "$handoff_dir/private-identity.md" 2>&1)
+    then
+      fail 'Confluence handoff accepted a private repository identity'
+    fi
+    assert_contains "$output" 'Result: CROSS_TEAM_LINK_SCOPE_DENIED'
+    assert_not_contains "$output" "$confluence_private_identity"
+    [ ! -s "$CALLS" ] || fail 'private Confluence identity inspected a connector'
+  done
+done
+printf '%s\n' BE >"$role_file"
+printf '%s\n' backend >"$XDG_CONFIG_HOME/fake-github-teams"
+
+if output=$(handoff_preflight "$handoff_dir/draft.md" create new 2>&1); then
+  fail 'direct handoff create passed without a trusted body'
+fi
+assert_contains "$output" 'Result: CLIENT_BODY_GATE_REQUIRED'
+
+# Folder transport is a body contract, not optional caller guidance.
+: >"$CALLS"
+if output=$(handoff_preflight "$handoff_dir/ready-websocket.md" update 900004 \
+  900002 API 2>&1)
+then
+  fail 'WebSocket handoff passed under an API Folder'
+fi
+assert_contains "$output" 'Result: FOLDER_CREATION_REQUIRED'
+[ ! -s "$CALLS" ] || fail 'wrong-transport handoff inspected a connector'
+
+: >"$CALLS"
+if output=$(handoff_preflight "$handoff_dir/ready-api-websocket.md" update \
+  900007 900002 API 2>&1)
+then
+  fail 'combined handoff passed under an API-only Folder'
+fi
+assert_contains "$output" 'Result: FOLDER_CREATION_REQUIRED'
+[ ! -s "$CALLS" ] || fail 'wrong combined-transport handoff inspected a connector'
+
+# A tracked update remains bound to the parent recorded in the reviewed row,
+# even when the alternate ACTIVE Folder itself is otherwise valid.
+: >"$CALLS"
+if output=$(handoff_preflight "$handoff_dir/ready-no-impact.md" update 900001 \
+  900005 WebSocket 2>&1)
+then
+  fail 'tracked handoff update accepted a different parent ancestry'
+fi
+assert_contains "$output" 'Result: MAPPING_CONFLICT'
+[ ! -s "$CALLS" ] || fail 'wrong tracked parent inspected a connector'
+
+# An update cannot claim ancestry for a page absent from the reviewed target
+# inventory, even when its requested Folder is ACTIVE.
+sed 's/^Confluence content ID: 900001$/Confluence content ID: 999991/' \
+  "$handoff_dir/ready-no-impact.md" >"$handoff_dir/untracked-update.md"
+: >"$CALLS"
+if output=$(handoff_preflight "$handoff_dir/untracked-update.md" update 999991 \
+  900002 API 2>&1)
+then
+  fail 'untracked handoff update accepted caller-asserted parent ancestry'
+fi
+assert_contains "$output" 'Result: MAPPING_CONFLICT'
+[ ! -s "$CALLS" ] || fail 'untracked update parent inspected a connector'
+
+cp "$handoff_dir/draft.md" "$handoff_dir/draft-no-omissions.md"
+sed 's/^Missing sections: Errors and edge cases, FE acknowledgment$/Missing sections: None/' \
+  "$handoff_dir/draft-no-omissions.md" >"$handoff_dir/draft-no-omissions-next.md"
+mv "$handoff_dir/draft-no-omissions-next.md" "$handoff_dir/draft-no-omissions.md"
+assert_handoff_invalid "$handoff_dir/draft-no-omissions.md" create new
+assert_handoff_invalid "$handoff_dir/ready-no-impact.md" create new
+assert_handoff_invalid "$handoff_dir/draft.md" update 900001
+
+for draft_readiness_claim in \
+  'READY_FOR_FE' \
+  'Ready for FE' \
+  'ready_for_fe' \
+  '**Ready-for-FE**' \
+  'State: `ready_for_fe`'
+do
+  cp "$handoff_dir/draft.md" "$handoff_dir/draft-false-ready.md"
+  printf '\n%s\n' "$draft_readiness_claim" \
+    >>"$handoff_dir/draft-false-ready.md"
+  assert_handoff_invalid "$handoff_dir/draft-false-ready.md" create new
+done
+
+cp "$handoff_dir/ready-no-impact.md" "$handoff_dir/placeholder.md"
+printf '\n## Extra contract detail\n\nTBD\n' >>"$handoff_dir/placeholder.md"
+assert_handoff_invalid "$handoff_dir/placeholder.md" update 900001
+
+for handoff_leak in \
+  'client_secret=plain-reusable-value' \
+  '"client_secret": "plain-reusable-value"' \
+  'Password: plain-reusable-value' \
+  'Authorization: Basic Zm9vOmJhcg==' \
+  '"Authorization": "Bearer reusable-token"' \
+  'Kafka topic: broker.account.internal' \
+  '`topic`: internal.orders' \
+  'Topology: account-events -> reconnect-worker' \
+  'Adapter: brokerReconnectAdapter' \
+  'Provider credential: reusable-provider-token'
+do
+  cp "$handoff_dir/ready-no-impact.md" "$handoff_dir/leakage.md"
+  printf '\n## Extra contract detail\n\n%s\n' "$handoff_leak" \
+    >>"$handoff_dir/leakage.md"
+  assert_handoff_invalid "$handoff_dir/leakage.md" update 900001
+done
+
+# Every affected inventory entry needs its own complete contract block.
+awk '
+  { print }
+  $0 == "GET /v1/quotes/{symbol}" && !added {
+    print "POST /v1/quotes/refresh"; added=1
+  }
+' "$handoff_dir/ready-api.md" >"$handoff_dir/multi-api-missing-block.md"
+assert_handoff_invalid "$handoff_dir/multi-api-missing-block.md" update 900001
+
+awk '
+  { print }
+  $0 == "wss://api.example.test/v1/quotes" && !added {
+    print "wss://api.example.test/v1/orders"; added=1
+  }
+' "$handoff_dir/ready-websocket.md" >"$handoff_dir/multi-ws-missing-block.md"
+assert_handoff_invalid "$handoff_dir/multi-ws-missing-block.md" update 900004
+: >"$CALLS"
+if output=$(handoff_preflight "$handoff_dir/incident-85360641.md" update 85360641 2>&1)
+then
+  fail 'incident handoff fixture passed'
+fi
+assert_contains "$output" 'Result: CROSS_TEAM_LINK_SCOPE_DENIED'
+[ ! -s "$CALLS" ] || fail 'incident handoff inspected a connector'
+: >"$CALLS"
+if output=$($CLI preflight "$canonical_backend" --client codex \
+  --operation confluence-handoff-write --non-interactive \
+  --confluence-action update --target-content-id 85360641 \
+  --expected-parent-id 65962274 \
+  --handoff-body-file "$handoff_dir/incident-85360641.md" 2>&1)
+then
+  fail 'incident handoff passed under the routed root'
+fi
+assert_contains "$output" 'Result: CROSS_TEAM_LINK_SCOPE_DENIED'
+[ ! -s "$CALLS" ] || fail 'root-parent incident handoff inspected a connector'
+
+assert_handoff_section_required "$handoff_dir/ready-no-impact.md" \
+  '## API impact rationale' update 900001
+assert_handoff_section_required "$handoff_dir/ready-no-impact.md" \
+  '## WebSocket impact rationale' update 900001
+for handoff_impact in api websocket; do
+  cp "$handoff_dir/ready-no-impact.md" "$handoff_dir/relocated-$handoff_impact.md"
+  case "$handoff_impact" in
+    api)
+      sed 's/^No public API operation changes\.$/API change rationale is documented separately./' \
+        "$handoff_dir/relocated-$handoff_impact.md" >"$handoff_dir/relocated-next.md"
+      printf '\n## Extra contract detail\n\nNo public API operation changes.\n' \
+        >>"$handoff_dir/relocated-next.md"
+      ;;
+    websocket)
+      sed 's/^No public WebSocket contract changes\.$/WebSocket change rationale is documented separately./' \
+        "$handoff_dir/relocated-$handoff_impact.md" >"$handoff_dir/relocated-next.md"
+      printf '\n## Extra contract detail\n\nNo public WebSocket contract changes.\n' \
+        >>"$handoff_dir/relocated-next.md"
+      ;;
+  esac
+  mv "$handoff_dir/relocated-next.md" "$handoff_dir/relocated-$handoff_impact.md"
+  assert_handoff_invalid "$handoff_dir/relocated-$handoff_impact.md" update 900001
+done
+
+for handoff_heading in \
+  '## Purpose and delivered behavior' \
+  '## Affected user flows, assumptions, and non-goals' \
+  '## Authentication and authorization' \
+  '## Public data types and compatibility' \
+  '## State and delivery semantics' \
+  '## Errors and edge cases' \
+  '## Frontend implementation guidance' \
+  '## Sanitized examples and validation evidence' \
+  '## Known limitations and unverified items' \
+  '## FE acknowledgment'
+do
+  assert_handoff_section_required "$handoff_dir/ready-no-impact.md" \
+    "$handoff_heading" update 900001
+done
+
+for handoff_heading in \
+  '## Affected API inventory' \
+  '## API operation: GET /v1/quotes/{symbol}' \
+  '### Permissions' '### Headers' '### Path parameters' \
+  '### Query parameters' '### Request payload' \
+  '### Success status and payload' '### Stable public errors' \
+  '### Pagination' '### Idempotency' '### Retry' '### Cache' \
+  '### Timestamp semantics' '### Sanitized request/response examples' \
+  '## Unaffected API inventory'
+do
+  assert_handoff_section_required "$handoff_dir/ready-api.md" \
+    "$handoff_heading" update 900001
+done
+
+for handoff_heading in \
+  '## Affected WebSocket inventory' \
+  '## WebSocket contract: wss://api.example.test/v1/quotes' \
+  '### Public connection URL and authentication' \
+  '### Subscribe and unsubscribe requests' \
+  '### Event envelope and affected message payloads' \
+  '### Ordering' '### Deduplication' '### Replay/resume' '### Reconnect' \
+  '### Heartbeat' '### Timeout' '### Backpressure' '### Error events' \
+  '### Close codes' '### Sanitized message examples' \
+  '## Unaffected WebSocket inventory'
+do
+  assert_handoff_section_required "$handoff_dir/ready-websocket.md" \
+    "$handoff_heading" update 900004
+done
+
+extract_advertised_handoff_body() {
+  eahb_template=$1 eahb_body=$2 eahb_occurrence=${3:-1}
+  awk -v occurrence="$eahb_occurrence" '
+    $0 == "Handoff schema: 1" { seen++ }
+    seen == occurrence && $0 == "Handoff schema: 1" { copy = 1 }
+    copy && $0 == "```" { exit }
+    copy { print }
+  ' "$ROOT/$eahb_template" >"$eahb_body"
+  [ -s "$eahb_body" ] || fail "missing advertised handoff body: $eahb_template"
+}
+
+render_advertised_handoff_body() {
+  rahb_template=$1 rahb_body=$2 rahb_occurrence=${3:-1}
+  rahb_raw=$handoff_dir/raw-template.md
+  extract_advertised_handoff_body "$rahb_template" "$rahb_raw" \
+    "$rahb_occurrence"
+  sed \
+    -e 's/{{PROVIDER_JIRA}}/BB-42/g' \
+    -e 's/{{CONSUMER_JIRA}}/BF-69/g' \
+    -e 's/{{SCOPE}}/Shared/g' \
+    -e 's/{{DOMAIN}}/Market/g' \
+    -e 's/{{CONTENT_ID}}/900007/g' \
+    -e 's/{{PAGE_VERSION}}/1/g' \
+    -e 's/{{OWNER_ACCOUNT_ID}}/account-123/g' \
+    -e 's/{{EFFECTIVE_DATE}}/2026-08-25/g' \
+    -e 's/{{SUPERSEDES}}/N\/A/g' \
+    -e 's/{{SUPERSEDED_BY}}/N\/A/g' \
+    "$rahb_raw" >"$rahb_body"
+  if grep -Eq '{{[A-Z_]+}}' "$rahb_body"; then
+    fail "rendered advertised handoff has unresolved tokens: $rahb_template"
+  fi
+}
+
+# Validate every advertised READY and DRAFT body through the real runtime.
+# An exported lookalike trust flag must not authorize any direct client.
+export CONFLUENCE_BODY_TRUSTED=1
+for advertised_template in \
+  templates/ai-agent-assignment.md templates/jira-confluence.md
+do
+  for advertised_case in '1 update 900007 900006' '2 create new 900002'; do
+    set -- $advertised_case
+    advertised_body=$handoff_dir/advertised-$(basename "$advertised_template")-$1.md
+    render_advertised_handoff_body "$advertised_template" "$advertised_body" "$1"
+    for advertised_client in codex claude cursor; do
+      : >"$CALLS"
+      if output=$($CLI preflight "$canonical_backend" \
+        --client "$advertised_client" \
+        --operation confluence-handoff-write --non-interactive \
+        --confluence-action "$2" --target-content-id "$3" \
+        --expected-parent-id "$4" --handoff-body-file "$advertised_body" 2>&1)
+      then
+        fail "$advertised_client accepted an untrusted advertised body"
+      fi
+      assert_contains "$output" 'Result: CLIENT_BODY_GATE_REQUIRED'
+      [ ! -s "$CALLS" ] || fail 'advertised body inspected a connector'
+    done
+  done
+done
+unset CONFLUENCE_BODY_TRUSTED
+
+for handoff_fixture in draft ready-api ready-websocket ready-api-websocket \
+  ready-no-impact
+do
+  case "$handoff_fixture" in
+    draft) handoff_action=create handoff_target=new ;;
+    ready-websocket) handoff_action=update handoff_target=900004 ;;
+    ready-api-websocket) handoff_action=update handoff_target=900007 ;;
+    *) handoff_action=update handoff_target=900001 ;;
+  esac
+  case "$handoff_fixture" in
+    ready-websocket) handoff_parent=900005 handoff_transport=WebSocket ;;
+    ready-api-websocket) handoff_parent=900006 handoff_transport=API+WebSocket ;;
+    *) handoff_parent=900002 handoff_transport=API ;;
+  esac
+  : >"$CALLS"
+  if output=$(handoff_preflight "$handoff_dir/$handoff_fixture.md" \
+    "$handoff_action" "$handoff_target" "$handoff_parent" "$handoff_transport" 2>&1)
+  then
+    fail "direct handoff passed without a trusted body: $handoff_fixture"
+  fi
+  assert_contains "$output" 'Result: CLIENT_BODY_GATE_REQUIRED'
+  [ ! -s "$CALLS" ] || fail "direct handoff inspected a connector: $handoff_fixture"
+done
+
 mv "$target_file.deny-only" "$target_file"
 pin_test_release v1.1.21
 
-output=$($CLI preflight "$consumer" --client codex \
+if output=$($CLI preflight "$consumer" --client codex \
   --operation confluence-write --non-interactive \
-  --confluence-action update --target-content-id 123457)
-assert_contains "$output" 'Confluence root content: 123456'
-assert_contains "$output" 'Capability: confluence-page-update'
-assert_contains "$output" 'Result: PASS'
+  --confluence-action update --target-content-id 123457 2>&1)
+then
+  fail 'direct standalone Confluence update passed without a trusted body'
+fi
+assert_contains "$output" 'Result: CLIENT_BODY_GATE_REQUIRED'
 
 PUBLISH_SERIAL=0
 

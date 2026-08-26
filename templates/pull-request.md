@@ -1,6 +1,8 @@
 # Pull Request Template
 
 Use a Conventional Commit PR title: `<type>(<scope>): <imperative subject>`.
+This is a team-local GitHub Issue/PR section; GitHub links may remain here, but
+consumer-facing cross-team handoff text uses Jira and Confluence only.
 
 ```markdown
 ## Status
@@ -85,20 +87,17 @@ exact content ID rather than title similarity.
 
 - Capability ID and Registry reference:
 - Epic Integration Hub:
-- Linked Frontend Jira/GitHub issue(s):
-- Canonical contract artifact/version/commit:
-- Behavior delivered:
-- Authentication/permissions:
-- Error and edge cases:
-- Test environment and sanitized evidence:
-- Breaking/migration impact:
-- Known limitations/unverified items:
+- Provider Jira and consumer Jira:
+- Confluence content ID and version:
+- Self-contained handoff page:
+- FE acknowledgment:
 - State before merge: DRAFT | BLOCKED
 - Expected state after merge: READY_FOR_FE
 
-Do not copy a contract body into the PR. Link the exact BE artifact/version.
-After merge, update the Hub/changelog, set `READY_FOR_FE`, and notify the linked
-FE issue; the FE owner acknowledges the exact version.
+Do not place private Backend repository links in the consumer-facing handoff.
+After merge, update the self-contained Confluence page and report
+`READY_FOR_FE` only after readback; the FE owner acknowledges that exact page
+version.
 
 ## Validation
 

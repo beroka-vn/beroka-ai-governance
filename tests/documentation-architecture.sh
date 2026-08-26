@@ -10,15 +10,22 @@ fail() {
 
 require_text() {
   file=$1 text=$2
-  grep -F "$text" "$ROOT/$file" >/dev/null ||
+  grep -F -- "$text" "$ROOT/$file" >/dev/null ||
     fail "missing [$text] in $file"
 }
 
 reject_text() {
   file=$1 text=$2
-  if grep -F "$text" "$ROOT/$file" >/dev/null; then
+  if grep -F -- "$text" "$ROOT/$file" >/dev/null; then
     fail "forbidden [$text] in $file"
   fi
+}
+
+require_count() {
+  file=$1 text=$2 expected=$3
+  actual=$(grep -F -c -- "$text" "$ROOT/$file" || :)
+  [ "$actual" -eq "$expected" ] ||
+    fail "expected [$text] $expected time(s) in $file, found $actual"
 }
 
 has_repository_governance_mutation() {
@@ -87,8 +94,8 @@ for file in templates/agent-entrypoints/AGENTS.md \
   require_text "$file" 'DOCS_UNACTIVATED'
   require_text "$file" 'ASSIGNEE_CONFIRMATION_REQUIRED'
   require_text "$file" 'opposite-team private GitHub links'
-  require_text "$file" 'Handoff form: child-page'
-  require_text "$file" 'Canonical: <URL|content-id>'
+  require_text "$file" 'self-contained Jira-and-Confluence-only'
+  require_text "$file" 'confluence-handoff-verify'
 done
 for file in runtime/rules/general.md governance.md workflow.md \
   templates/jira-confluence.md; do
@@ -318,6 +325,251 @@ require_text examples/homepage-market-overview-epic-packet.md \
   'MARKET-INDEX-HISTORY'
 require_text examples/homepage-market-overview-epic-packet.md \
   'MARKET-INDEX-STREAM'
+
+DOC_TEST_TMP=$(mktemp -d)
+trap 'rm -rf "$DOC_TEST_TMP"' EXIT HUP INT TERM
+
+extract_advertised_handoff_body() {
+  template=$1 output=$2 occurrence=${3:-1}
+  awk -v occurrence="$occurrence" '
+    $0 == "Handoff schema: 1" { seen++ }
+    seen == occurrence && $0 == "Handoff schema: 1" { copy = 1 }
+    copy && $0 == "```" { exit }
+    copy { print }
+  ' "$ROOT/$template" >"$output"
+  [ -s "$output" ] || fail "missing advertised handoff body in $template"
+}
+
+render_advertised_handoff_body() {
+  template=$1 rendered=$2 occurrence=${3:-1} raw=$DOC_TEST_TMP/raw.md
+  extract_advertised_handoff_body "$template" "$raw" "$occurrence"
+  sed \
+    -e 's/{{PROVIDER_JIRA}}/BB-42/g' \
+    -e 's/{{CONSUMER_JIRA}}/BF-69/g' \
+    -e 's/{{SCOPE}}/Shared/g' \
+    -e 's/{{DOMAIN}}/Market/g' \
+    -e 's/{{CONTENT_ID}}/900001/g' \
+    -e 's/{{PAGE_VERSION}}/1/g' \
+    -e 's/{{OWNER_ACCOUNT_ID}}/account-123/g' \
+    -e 's/{{EFFECTIVE_DATE}}/2026-08-25/g' \
+    -e 's/{{SUPERSEDES}}/N\/A/g' \
+    -e 's/{{SUPERSEDED_BY}}/N\/A/g' \
+    "$raw" >"$rendered"
+  if grep -Eq '{{[A-Z_]+}}' "$rendered"; then
+    fail "rendered handoff body in $template has unresolved tokens"
+  fi
+}
+
+has_untrusted_body_file_guidance() {
+  awk '
+    {
+      text = tolower($0)
+      sentences = split(text, sentence, /[.!?][[:space:]]*/)
+      for (i = 1; i <= sentences; i++) {
+        if (sentence[i] ~ /(codex|claude)/ &&
+            sentence[i] ~ /(temporary|caller-provided)[[:space:]]+body[[:space:]]+file/ &&
+            sentence[i] ~ /(proof|prove)/ && sentence[i] ~ /atlassian/ &&
+            sentence[i] !~ /(do not|must not|never)/) {
+          found = 1
+        }
+      }
+    }
+    END { exit(found ? 0 : 1) }
+  '
+}
+
+has_untrusted_body_file_guidance_text() {
+  printf '%s\n' "$1" | has_untrusted_body_file_guidance
+}
+
+has_untrusted_body_file_guidance_file() {
+  case $1 in
+    /*) guidance_file=$1 ;;
+    *) guidance_file=$ROOT/$1 ;;
+  esac
+  has_untrusted_body_file_guidance <"$guidance_file"
+}
+
+for template in templates/ai-agent-assignment.md templates/jira-confluence.md; do
+  advertised_body=$DOC_TEST_TMP/$(basename "$template").md
+  extract_advertised_handoff_body "$template" "$advertised_body"
+  for token in PROVIDER_JIRA CONSUMER_JIRA CONTENT_ID PAGE_VERSION \
+    OWNER_ACCOUNT_ID EFFECTIVE_DATE SUPERSEDES SUPERSEDED_BY SCOPE DOMAIN
+  do
+    require_text "$template" "{{$token}}"
+  done
+  require_text "$template" 'Frontend acknowledgment is pending. Respond on {{CONSUMER_JIRA}} with Confluence content ID {{CONTENT_ID}} version {{PAGE_VERSION}}.'
+  render_advertised_handoff_body "$template" "$DOC_TEST_TMP/rendered-$(basename "$template").md"
+  grep -F -- 'Scope: Shared' "$DOC_TEST_TMP/rendered-$(basename "$template").md" >/dev/null ||
+    fail "rendered handoff body in $template lacks Scope"
+  grep -F -- 'Domain: Market' "$DOC_TEST_TMP/rendered-$(basename "$template").md" >/dev/null ||
+    fail "rendered handoff body in $template lacks Domain"
+  advertised_draft=$DOC_TEST_TMP/draft-$(basename "$template").md
+  render_advertised_handoff_body "$template" "$advertised_draft" 2
+  grep -F -- 'Handoff state: DRAFT' "$advertised_draft" >/dev/null ||
+    fail "rendered DRAFT body in $template lacks DRAFT state"
+  grep -F -- 'Confluence content ID: new' "$advertised_draft" >/dev/null ||
+    fail "rendered DRAFT body in $template lacks new content ID"
+  grep -F -- 'Confluence page version: pending' "$advertised_draft" >/dev/null ||
+    fail "rendered DRAFT body in $template lacks pending version"
+  if grep -F -- 'READY_FOR_FE' "$advertised_draft" >/dev/null; then
+    fail "rendered DRAFT body in $template claims readiness"
+  fi
+  require_text "$template" \
+    'Verification is update-only; never use create/new options with `confluence-handoff-verify`.'
+  reject_text "$template" \
+    'For a DRAFT create, use `--confluence-action create --target-content-id new`.'
+done
+
+awk '
+  /Trusted post-tool proof event: FUTURE_RUNTIME_ONLY/ { proof=NR }
+  /^## 5[.] Frontend Issue/ { execution=NR }
+  END { exit !(proof && execution && proof < execution) }
+' "$ROOT/examples/end-to-end-traceability.md" ||
+  fail 'recipient execution lacks an earlier explicit future trusted proof event'
+
+for file in runtime/rules/general.md governance.md workflow.md \
+  templates/agent-entrypoints/AGENTS.md \
+  templates/agent-entrypoints/CLAUDE.md \
+  templates/agent-entrypoints/CURSOR-USER-RULE.txt \
+  templates/ai-agent-assignment.md templates/jira-confluence.md; do
+  require_text "$file" \
+    'Codex and Claude Confluence create/update require a trusted actual-body boundary'
+done
+require_text templates/agent-entrypoints/CURSOR-USER-RULE.txt \
+  'confluence-handoff-write'
+if ! has_untrusted_body_file_guidance_text \
+  'Codex may use a caller-provided body file as proof of the Atlassian request. Never expose credentials.'
+then
+  fail 'affirmative caller-provided body-file guidance was accepted'
+fi
+if has_untrusted_body_file_guidance_text \
+  'Codex must not use a caller-provided body file as proof of the Atlassian request.'
+then
+  fail 'negative caller-provided body-file guidance was rejected'
+fi
+file_guidance_fixture=$DOC_TEST_TMP/untrusted-body-file-guidance.md
+printf '%s\n' \
+  'Codex may use a caller-provided body file as proof of the Atlassian request. Never expose credentials.' \
+  >"$file_guidance_fixture"
+if ! has_untrusted_body_file_guidance_file "$file_guidance_fixture"; then
+  fail 'affirmative caller-provided body-file file guidance was accepted'
+fi
+for file in runtime/rules/general.md governance.md workflow.md \
+  templates/agent-entrypoints/AGENTS.md \
+  templates/agent-entrypoints/CLAUDE.md \
+  templates/agent-entrypoints/CURSOR-USER-RULE.txt \
+  templates/ai-agent-assignment.md templates/jira-confluence.md; do
+  if has_untrusted_body_file_guidance_file "$file"; then
+    fail "untrusted temporary body-file guidance in $file"
+  fi
+done
+
+reject_text governance.md '`confluence-write` or `confluence-handoff-verify`'
+reject_text governance.md 'include `Jira:`, `GitHub:`, and a handoff delta'
+reject_text examples/end-to-end-traceability.md 'Repository artifact'
+reject_text examples/end-to-end-traceability.md 'Canonical contract artifact/version/commit'
+for file in runtime/rules/general.md workflow.md templates/jira-confluence.md \
+  templates/agent-entrypoints/AGENTS.md \
+  templates/agent-entrypoints/CLAUDE.md \
+  templates/agent-entrypoints/CURSOR-USER-RULE.txt; do
+  require_text "$file" 'in-process Cursor hook'
+  reject_text "$file" '--client cursor --operation confluence-handoff-write'
+  require_text "$file" '--operation confluence-handoff-verify'
+  require_text "$file" \
+    '--confluence-action update --target-content-id ID --expected-parent-id ID --handoff-body-file FILE'
+  reject_text "$file" '--readback-parent-id'
+  require_text "$file" 'read capability only'
+done
+for file in templates/ai-agent-assignment.md templates/jira-confluence.md; do
+  require_text "$file" \
+    'createConfluencePage'
+  require_text "$file" \
+    'updateConfluencePage'
+  require_text "$file" \
+    'in-process Cursor hook'
+  reject_text "$file" \
+    'beroka-governance preflight {{REPOSITORY}} --client cursor --operation confluence-handoff-write'
+  require_text "$file" \
+    '--operation confluence-handoff-verify --non-interactive --confluence-action update --target-content-id {{CONTENT_ID}} --expected-parent-id {{ACTIVE_FOLDER_ID}} --handoff-body-file {{HANDOFF_BODY_FILE}}'
+  reject_text "$file" '--readback-parent-id'
+done
+for file in workflow.md runtime/profiles/frontend.md templates/jira-confluence.md; do
+  reject_text "$file" 'artifact/version'
+  reject_text "$file" 'repository/path'
+done
+
+render_context() {
+  profile=$1 integration=${2:-none}
+  cat "$ROOT/runtime/rules/general.md" "$ROOT/runtime/profiles/$profile.md"
+  if [ "$integration" = beroka-be-fe ]; then
+    cat "$ROOT/runtime/rules/work-items.md" \
+      "$ROOT/runtime/integrations/beroka-be-fe.md"
+  fi
+}
+
+for context in standalone backend frontend integration; do
+  case "$context" in
+    standalone) render_context standalone ;;
+    backend) render_context backend ;;
+    frontend) render_context frontend ;;
+    integration) render_context backend beroka-be-fe ;;
+  esac >"$DOC_TEST_TMP/$context.md"
+  actual=$(grep -F -c 'confluence-handoff-write' "$DOC_TEST_TMP/$context.md" || :)
+  [ "$actual" -eq 1 ] || fail "$context context has $actual handoff writes"
+  actual=$(grep -F -c 'confluence-handoff-verify' "$DOC_TEST_TMP/$context.md" || :)
+  [ "$actual" -eq 1 ] || fail "$context context has $actual handoff verifies"
+  actual=$(grep -F -c -- 'Readback: CAPABILITY_ONLY' "$DOC_TEST_TMP/$context.md" || :)
+  [ "$actual" -eq 1 ] || fail "$context context has $actual capability-only readbacks"
+done
+
+# Cross-team handoffs have one universal lifecycle in generated context. Profile
+# and integration rules add ownership only, so they cannot dilute the contract.
+for file in runtime/rules/general.md; do
+  require_text "$file" 'confluence-handoff-write'
+  require_text "$file" '--handoff-body-file FILE'
+  require_text "$file" 'ACTIVE Folder'
+  require_text "$file" 'self-contained Confluence page'
+  require_text "$file" 'DRAFT-only'
+  require_text "$file" 'confluence-handoff-verify'
+  require_text "$file" 'Readback: CAPABILITY_ONLY'
+  reject_text "$file" '--readback-parent-id'
+  require_text "$file" 'Jira remains in its governed lifecycle state independently'
+  require_count "$file" 'confluence-handoff-write' 1
+done
+for file in runtime/profiles/backend.md runtime/profiles/frontend.md \
+  runtime/integrations/beroka-be-fe.md; do
+  reject_text "$file" 'confluence-handoff-write'
+done
+for file in runtime/profiles/backend.md runtime/profiles/frontend.md \
+  runtime/integrations/beroka-be-fe.md; do
+  require_text "$file" 'team-local'
+done
+
+reject_text runtime/profiles/backend.md 'Confluence never copies its schema.'
+reject_text runtime/profiles/frontend.md \
+  'they never copy request, response, command, event, or schema payloads.'
+reject_text governance.md 'Confluence does not copy it.'
+reject_text templates/jira-confluence.md \
+  'Copy this block into the BE Jira/GitHub Issue or PR'
+for file in governance.md workflow.md templates/jira-confluence.md; do
+  require_text "$file" 'self-contained Confluence page'
+  require_text "$file" 'Confluence content ID and version'
+  require_text "$file" 'GitHub: N/A'
+done
+for file in templates/ai-agent-assignment.md templates/jira-confluence.md; do
+  require_text "$file" 'Handoff schema: 1'
+  require_text "$file" 'Provider Jira:'
+  require_text "$file" 'Consumer Jira:'
+  require_text "$file" 'API operation: GET /v1/quotes/{symbol}'
+  require_text "$file" 'Affected WebSocket inventory'
+  require_text "$file" 'FE acknowledgment'
+  require_text "$file" 'Superseded by:'
+done
+for file in templates/github-issue.md templates/pull-request.md; do
+  require_text "$file" 'team-local GitHub Issue/PR section'
+done
+require_text bin/beroka-governance 'Handoff operations:'
 require_text examples/homepage-market-overview-epic-packet.md \
   'Backend Capability Registry'
 require_text examples/end-to-end-traceability.md 'PORTFOLIO-SUMMARY'

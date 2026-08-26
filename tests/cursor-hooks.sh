@@ -5,6 +5,9 @@ ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
 CLI=$ROOT/bin/beroka-governance
 TMP_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/beroka-governance-cursor-hooks.XXXXXX")
 trap 'rm -rf "$TMP_ROOT"' EXIT HUP INT TERM
+export TMPDIR=$TMP_ROOT
+CONNECTOR_CALLS=$TMP_ROOT/connector-calls
+export CONNECTOR_CALLS
 
 export HOME=$TMP_ROOT/home
 export XDG_DATA_HOME=$TMP_ROOT/data
@@ -17,6 +20,11 @@ fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 assert_contains() { case "$1" in *"$2"*) ;; *) fail "expected [$2] in [$1]" ;; esac; }
 assert_not_contains() { case "$1" in *"$2"*) fail "unexpected [$2] in [$1]" ;; esac; }
 assert_denied() { assert_contains "$1" '"permission":"deny"'; assert_contains "$1" "$2"; }
+assert_no_cursor_body_stage() {
+  stage=$(find "$TMPDIR" -maxdepth 1 -type d \
+    -name 'beroka-governance-cursor-body.*' -print -quit)
+  [ -z "$stage" ] || fail 'Cursor left a staged cross-team body behind'
+}
 
 new_repo() {
   mkdir -p "$1"
@@ -31,6 +39,17 @@ mkdir -p "$source_repo/bin"
 cp -R "$ROOT/runtime" "$source_repo/runtime"
 cp -R "$ROOT/templates" "$source_repo/templates"
 cp "$ROOT/bin/beroka-governance" "$source_repo/bin/beroka-governance"
+# The Cursor fixture uses this real ACTIVE Folder ID with Shared/Market data.
+sed 's/Derivatives — Market — API\tDerivatives\tMarket\tAPI\t65962274/Shared — Market — API\tShared\tMarket\tAPI\t65962274/' \
+  "$source_repo/runtime/integrations/beroka-be-fe.confluence-targets" \
+  >"$source_repo/runtime/integrations/beroka-be-fe.confluence-targets.next"
+mv "$source_repo/runtime/integrations/beroka-be-fe.confluence-targets.next" \
+  "$source_repo/runtime/integrations/beroka-be-fe.confluence-targets"
+# Positive Cursor update fixtures need reviewed target ancestry; production
+# inventory intentionally has no synthetic page 900001.
+printf '%b\n' \
+  'beroka-vn/Beroka_Backend\tpage\tACTIVE\t900001\tTest handoff page\tShared\tMarket\tAPI\t76808195\tMARKET-TEST-HANDOFF-API\t76808196' \
+  >>"$source_repo/runtime/integrations/beroka-be-fe.confluence-targets"
 for file in governance.md handbook.md workflow.md; do cp "$ROOT/$file" "$source_repo/$file"; done
 printf '%s\n' v1.1.0 >"$source_repo/VERSION"
 git -C "$source_repo" add .
@@ -208,7 +227,14 @@ assert_denied "$(hook beforeMCPExecution "$product_cross")" CROSS_TEAM_LINK_SCOP
 
 # Hook PATH without ~/.local/bin must still find bootstrap-installed cursor-agent.
 mkdir -p "$HOME/.local/bin"
-printf '%s\n' '#!/bin/sh' 'exit 0' >"$HOME/.local/bin/cursor-agent"
+printf '%s\n' \
+  '#!/bin/sh' \
+  'case "$*" in' \
+  '  --version) printf "cursor-agent 1.0.0\n" ;;' \
+  '  "mcp list") printf "%s\n" "$*" >>"$CONNECTOR_CALLS"; printf "atlassian: Ready\n" ;;' \
+  '  "mcp list-tools atlassian") printf "%s\n" "$*" >>"$CONNECTOR_CALLS"; printf "%s\n" "- createConfluencePage ()" "- getAccessibleAtlassianResources ()" "- getConfluencePage ()" "- updateConfluencePage ()" ;;' \
+  'esac' \
+  >"$HOME/.local/bin/cursor-agent"
 chmod 755 "$HOME/.local/bin/cursor-agent"
 path_create='gh issue create --title "Fix opaque session" --body "Work-item language: English" --label area:governance --label priority:p1 --label Task --repo beroka-vn/beroka-ai-governance'
 path_shell=$(jq -nc --arg command "$path_create" --arg a "$product_backend" --arg b "$product_frontend" \
@@ -287,7 +313,7 @@ assert_denied "$(hook beforeMCPExecution "$ordinary_unassigned")" WORK_ITEM_TEMP
 for private_repo in Beroka_Backend Beroka_Frontend; do
   private_link_intake=$(printf '%s\n' "$intake_base" | jq -c \
     --arg link "https://github.com/beroka-vn/$private_repo/issues/138" \
-    '.tool_input.github=$link')
+    '.tool_input.body += ("\n" + $link)')
   assert_denied "$(hook beforeMCPExecution "$private_link_intake")" CROSS_TEAM_LINK_SCOPE_DENIED
 done
 same_team_private_link=$(printf '%s\n' "$jira_write" | jq -c \
@@ -320,6 +346,264 @@ assert_denied "$(hook beforeMCPExecution "$jira_transition")" GITHUB_AUTH_REQUIR
 jira_cross_team_transition=$(printf '%s\n' "$jira_transition" | jq -c \
   '.tool_input.issueKey="BF-123"')
 assert_denied "$(hook beforeMCPExecution "$jira_cross_team_transition")" ROUTING_REQUIRED
+
+jira_cross_team_body=$(printf '%s\n' \
+  'Work-item language: English' \
+  'GitHub: N/A' \
+  'Provider Jira: BB-42' \
+  'Consumer Jira: BF-69' \
+  'Confluence content ID: 900001')
+cursor_intake=$(printf '%s\n' "$intake_base" | jq -c --arg body "$jira_cross_team_body" \
+  '.tool_input.body=$body | .tool_input.github="N/A"')
+cursor_handoff_update=$(printf '%s\n' "$jira_update_by_key" | jq -c \
+  --arg body "$jira_cross_team_body" '.tool_input.body=$body')
+for cursor_jira_request in "$cursor_intake" "$cursor_handoff_update"; do
+  cursor_jira_output=$(hook beforeMCPExecution "$cursor_jira_request")
+  assert_not_contains "$cursor_jira_output" CROSS_TEAM_LINK_SCOPE_DENIED
+  assert_denied "$cursor_jira_output" GITHUB_AUTH_REQUIRED
+  for forbidden_body in \
+    'https://github.com/example/private' \
+    'git@github.com:example/private.git' \
+    'Repository: use the provider repository as contract evidence'
+  do
+    assert_denied "$(hook beforeMCPExecution "$(printf '%s\n' "$cursor_jira_request" | \
+      jq -c --arg body "$forbidden_body" '.tool_input.body += ("\n" + $body)')")" \
+      CROSS_TEAM_LINK_SCOPE_DENIED
+  done
+done
+assert_no_cursor_body_stage
+
+# A malformed/empty cross-team marker still classifies the update as a
+# handoff, and every accepted text-bearing field participates in isolation.
+cursor_malformed_handoff=$(printf '%s\n' "$jira_update_by_key" | jq -c '
+  .tool_input.body="Work-item language: English\n* pRoViDeR JiRa :"
+  | .tool_input.github="https://github.com/example/private"
+')
+assert_denied "$(hook beforeMCPExecution "$cursor_malformed_handoff")" \
+  CROSS_TEAM_LINK_SCOPE_DENIED
+for jira_text_field in description comment content github summary; do
+  cursor_field_bypass=$(printf '%s\n' "$cursor_handoff_update" | jq -c \
+    --arg field "$jira_text_field" \
+    '.tool_input[$field]="Repository: use the provider repository as contract evidence"')
+  assert_denied "$(hook beforeMCPExecution "$cursor_field_bypass")" \
+    CROSS_TEAM_LINK_SCOPE_DENIED
+done
+cursor_summary_github_bypass=$(printf '%s\n' "$cursor_handoff_update" | jq -c \
+  '.tool_input.summary="https://github.com/example/private"')
+assert_denied "$(hook beforeMCPExecution "$cursor_summary_github_bypass")" \
+  CROSS_TEAM_LINK_SCOPE_DENIED
+cursor_summary_intent=$(printf '%s\n' "$jira_update_by_key" | jq -c '
+  .tool_input.summary="## Provider Jira"
+  | .tool_input.github="https://github.com/example/private"
+')
+assert_denied "$(hook beforeMCPExecution "$cursor_summary_intent")" \
+  CROSS_TEAM_LINK_SCOPE_DENIED
+cursor_github_bypass=$(printf '%s\n' "$cursor_intake" | jq -c \
+  '.tool_input.github="https://github.com/example/private"')
+assert_denied "$(hook beforeMCPExecution "$cursor_github_bypass")" \
+  CROSS_TEAM_LINK_SCOPE_DENIED
+
+# Plain acknowledgment language plus Confluence evidence is cross-team even
+# without the new handoff labels, and every textual input value is isolated.
+cursor_plain_ack=$(printf '%s\n' "$jira_update_by_key" | jq -c '
+  .tool_input.body="Work-item language: English\nAcknowledged Confluence page 900001 version 3 for review."
+  | .tool_input.metadata={evidence:"https://github.com/example/private"}
+')
+assert_denied "$(hook beforeMCPExecution "$cursor_plain_ack")" \
+  CROSS_TEAM_LINK_SCOPE_DENIED
+cursor_pair_ack=$(printf '%s\n' "$jira_update_by_key" | jq -c '
+  .tool_input.body="Work-item language: English\nBB-42 and BF-69 are aligned on Confluence content 900001."
+  | .tool_input.custom_text="Repository: use the provider repository as evidence"
+')
+assert_denied "$(hook beforeMCPExecution "$cursor_pair_ack")" \
+  CROSS_TEAM_LINK_SCOPE_DENIED
+assert_no_cursor_body_stage
+
+team_local_github=$(printf '%s\n' "$atlassian_create" | jq -c \
+  '.tool_input.description="Work-item language: English\n\nGitHub: N/A"
+   | .tool_input.github="https://github.com/beroka-vn/Beroka_Backend/issues/138"')
+team_local_output=$(hook beforeMCPExecution "$team_local_github")
+assert_not_contains "$team_local_output" CROSS_TEAM_LINK_SCOPE_DENIED
+assert_denied "$team_local_output" GITHUB_AUTH_REQUIRED
+
+# Any new handoff header routes the exact MCP body through the shared validator.
+cursor_handoff_input() {
+  chi_fixture=$1 chi_action=$2 chi_target=$3 chi_parent=$4
+  chi_body=$(cat "$chi_fixture")
+  printf '%s\n' "$base_input" | jq -c \
+    --arg body "$chi_body" --arg target "$chi_target" --arg parent "$chi_parent" \
+    --arg action "$chi_action" '
+      . + {
+        tool_name:(if $action == "create" then "createConfluencePage" else "confluence.update_page" end),
+        url:"https://beroka.atlassian.net/wiki",
+        tool_input:({parentId:$parent, body:$body} +
+          if $action == "create" then {title:"Handoff — BB-42 — quotes"}
+          else {pageId:$target} end)
+      }'
+}
+
+cursor_handoff_dir=$TMP_ROOT/cursor-handoffs
+mkdir -p "$cursor_handoff_dir"
+cp "$ROOT/tests/fixtures/handoffs/draft.md" "$cursor_handoff_dir/draft.md"
+cp "$ROOT/tests/fixtures/handoffs/ready-no-impact.md" "$cursor_handoff_dir/ready.md"
+cp "$ROOT/tests/fixtures/handoffs/ready-api.md" "$cursor_handoff_dir/ready-api.md"
+cp "$ROOT/tests/fixtures/handoffs/ready-websocket.md" "$cursor_handoff_dir/ready-websocket.md"
+cp "$ROOT/tests/fixtures/handoffs/incident-85360641.md" "$cursor_handoff_dir/incident.md"
+
+assert_denied "$(hook beforeMCPExecution "$(cursor_handoff_input \
+  "$cursor_handoff_dir/incident.md" update 85360641 76808195)")" \
+  CROSS_TEAM_LINK_SCOPE_DENIED
+printf '%s\n' 'Handoff schema: 1' >"$cursor_handoff_dir/partial.md"
+assert_denied "$(hook beforeMCPExecution "$(cursor_handoff_input \
+  "$cursor_handoff_dir/partial.md" create new 76808195)")" HANDOFF_BODY_INVALID
+assert_denied "$(hook beforeMCPExecution "$(cursor_handoff_input \
+  "$cursor_handoff_dir/draft.md" create new 65962274)")" FOLDER_CREATION_REQUIRED
+
+: >"$CONNECTOR_CALLS"
+for cursor_header_case in missing-scope missing-domain scope-before-consumer \
+  domain-before-scope duplicate-scope duplicate-domain scope-mismatch domain-mismatch
+do
+  cursor_header_file=$cursor_handoff_dir/$cursor_header_case.md
+  case "$cursor_header_case" in
+    missing-scope) sed '/^Scope: Shared$/d' "$cursor_handoff_dir/ready.md" >"$cursor_header_file" ;;
+    missing-domain) sed '/^Domain: Market$/d' "$cursor_handoff_dir/ready.md" >"$cursor_header_file" ;;
+    scope-before-consumer)
+      awk '$0 == "Scope: Shared" { next } { print } \
+        $0 == "Provider Jira: BB-42" { print "Scope: Shared" }' \
+        "$cursor_handoff_dir/ready.md" >"$cursor_header_file"
+      ;;
+    domain-before-scope)
+      awk '$0 == "Domain: Market" { next } { print } \
+        $0 == "Consumer Jira: BF-69" { print "Domain: Market" }' \
+        "$cursor_handoff_dir/ready.md" >"$cursor_header_file"
+      ;;
+    duplicate-scope)
+      awk '{ print } $0 == "Domain: Market" { print "Scope: Shared" }' \
+        "$cursor_handoff_dir/ready.md" >"$cursor_header_file"
+      ;;
+    duplicate-domain)
+      awk '{ print } $0 == "Domain: Market" { print "Domain: Market" }' \
+        "$cursor_handoff_dir/ready.md" >"$cursor_header_file"
+      ;;
+    scope-mismatch) sed 's/^Scope: Shared$/Scope: Product/' "$cursor_handoff_dir/ready.md" >"$cursor_header_file" ;;
+    domain-mismatch) sed 's/^Domain: Market$/Domain: Broker accounts/' "$cursor_handoff_dir/ready.md" >"$cursor_header_file" ;;
+  esac
+  case "$cursor_header_case" in
+    scope-mismatch|domain-mismatch) cursor_header_result=FOLDER_CREATION_REQUIRED ;;
+    *) cursor_header_result=HANDOFF_BODY_INVALID ;;
+  esac
+  assert_denied "$(hook beforeMCPExecution "$(cursor_handoff_input \
+    "$cursor_header_file" update 900001 76808195)")" "$cursor_header_result"
+done
+[ ! -s "$CONNECTOR_CALLS" ] || fail 'invalid handoff scope/domain inspected a connector'
+
+cp "$cursor_handoff_dir/ready.md" "$cursor_handoff_dir/github.md"
+printf '\nhttps://github.com/example/private\n' >>"$cursor_handoff_dir/github.md"
+assert_denied "$(hook beforeMCPExecution "$(cursor_handoff_input \
+  "$cursor_handoff_dir/github.md" update 900001 76808195)")" \
+  CROSS_TEAM_LINK_SCOPE_DENIED
+sed '/^## Affected API inventory$/d' "$cursor_handoff_dir/ready-api.md" \
+  >"$cursor_handoff_dir/missing-api.md"
+assert_denied "$(hook beforeMCPExecution "$(cursor_handoff_input \
+  "$cursor_handoff_dir/missing-api.md" update 900001 76808195)")" HANDOFF_BODY_INVALID
+sed '/^## Affected WebSocket inventory$/d' "$cursor_handoff_dir/ready-websocket.md" \
+  >"$cursor_handoff_dir/missing-websocket.md"
+assert_denied "$(hook beforeMCPExecution "$(cursor_handoff_input \
+  "$cursor_handoff_dir/missing-websocket.md" update 900001 76808195)")" HANDOFF_BODY_INVALID
+for cursor_readiness_claim in \
+  READY_FOR_FE 'Ready for FE' ready_for_fe '**Ready-for-FE**'
+do
+  cp "$cursor_handoff_dir/draft.md" "$cursor_handoff_dir/false-ready.md"
+  printf '\n%s\n' "$cursor_readiness_claim" \
+    >>"$cursor_handoff_dir/false-ready.md"
+  assert_denied "$(hook beforeMCPExecution "$(cursor_handoff_input \
+    "$cursor_handoff_dir/false-ready.md" create new 76808195)")" \
+    HANDOFF_BODY_INVALID
+done
+
+cp "$cursor_handoff_dir/ready.md" "$cursor_handoff_dir/private-identity.md"
+printf '\nProvider source: Beroka_Backend\n' \
+  >>"$cursor_handoff_dir/private-identity.md"
+cursor_private_identity_output=$(hook beforeMCPExecution "$(cursor_handoff_input \
+  "$cursor_handoff_dir/private-identity.md" update 900001 76808195)")
+assert_denied "$cursor_private_identity_output" CROSS_TEAM_LINK_SCOPE_DENIED
+assert_not_contains "$cursor_private_identity_output" Beroka_Backend
+
+assert_denied "$(hook beforeMCPExecution "$(cursor_handoff_input \
+  "$cursor_handoff_dir/ready-websocket.md" update 900004 76808195)")" \
+  FOLDER_CREATION_REQUIRED
+
+# The exact legacy incident shape must never fall back to ordinary
+# confluence-write merely because it predates the schema-1 labels.
+legacy_incident_body=$(printf '%s\n' \
+  'Jira: BB-42' \
+  'GitHub: https://github.com/beroka-vn/Beroka_Backend/issues/217' \
+  'State: READY_FOR_FE' \
+  'Provider Jira: BB-42' \
+  'Consumer Jira: BF-69' \
+  '' \
+  '## Handoff — BB-42' \
+  '' \
+  'Summary-only payload guidance.')
+legacy_incident=$(printf '%s\n' "$base_input" | jq -c --arg body "$legacy_incident_body" '. + {
+  tool_name:"confluence.update_page",
+  url:"https://beroka.atlassian.net/wiki",
+  tool_input:{pageId:"85360641",parentId:"65962274",body:$body}
+}')
+assert_denied "$(hook beforeMCPExecution "$legacy_incident")" \
+  CROSS_TEAM_LINK_SCOPE_DENIED
+
+cursor_draft_output=$(hook beforeMCPExecution "$(cursor_handoff_input \
+  "$cursor_handoff_dir/draft.md" create new 76808195)")
+assert_not_contains "$cursor_draft_output" HANDOFF_DELTA_REQUIRED
+assert_not_contains "$cursor_draft_output" HANDOFF_BODY_INVALID
+assert_not_contains "$cursor_draft_output" CLIENT_BODY_GATE_REQUIRED
+assert_denied "$cursor_draft_output" GITHUB_AUTH_REQUIRED
+cursor_ready_output=$(hook beforeMCPExecution "$(cursor_handoff_input \
+  "$cursor_handoff_dir/ready.md" update 900001 76808195)")
+assert_not_contains "$cursor_ready_output" HANDOFF_DELTA_REQUIRED
+assert_not_contains "$cursor_ready_output" HANDOFF_BODY_INVALID
+assert_not_contains "$cursor_ready_output" CLIENT_BODY_GATE_REQUIRED
+assert_denied "$cursor_ready_output" GITHUB_AUTH_REQUIRED
+assert_no_cursor_body_stage
+
+# A parser exit must not strand the already-staged body.
+cursor_parser_failure=$(cursor_handoff_input \
+  "$cursor_handoff_dir/ready.md" update --bad 76808195)
+assert_denied "$(hook beforeMCPExecution "$cursor_parser_failure")" MAPPING_CONFLICT
+assert_no_cursor_body_stage
+
+# Signal the hook after stage creation but before jq writes the body.
+slow_bin=$TMP_ROOT/slow-bin
+mkdir -p "$slow_bin"
+printf '%s\n' \
+  '#!/bin/sh' \
+  'if [ "${SLOW_STAGE_JQ:-0}" = 1 ] && [ "${1:-}" = -jr ]; then' \
+  '  : >"$STAGE_WRITE_MARKER"' \
+  '  sleep 5' \
+  'fi' \
+  'exec /usr/bin/jq "$@"' \
+  >"$slow_bin/jq"
+chmod 755 "$slow_bin/jq"
+STAGE_WRITE_MARKER=$TMP_ROOT/stage-write-started
+export STAGE_WRITE_MARKER
+SLOW_STAGE_JQ=1
+export SLOW_STAGE_JQ
+printf '%s\n' "$cursor_intake" |
+  PATH="$slow_bin:$PATH" "$CLI" cursor-hook beforeMCPExecution \
+  >"$TMP_ROOT/stage-signal-output" 2>&1 &
+stage_hook_pid=$!
+stage_waits=0
+while [ ! -f "$STAGE_WRITE_MARKER" ] && [ "$stage_waits" -lt 100 ]; do
+  sleep 0.01
+  stage_waits=$((stage_waits + 1))
+done
+[ -f "$STAGE_WRITE_MARKER" ] || fail 'Cursor did not begin staged body write'
+kill -TERM "$stage_hook_pid"
+wait "$stage_hook_pid" 2>/dev/null || :
+unset SLOW_STAGE_JQ STAGE_WRITE_MARKER
+assert_no_cursor_body_stage
+
 confluence_handoff_body=$(printf '%s\n' \
   'Jira: BB-11' \
   'GitHub: N/A' \
@@ -338,6 +622,7 @@ confluence_update=$(printf '%s\n' "$base_input" | jq -c --arg body "$confluence_
 confluence_update_out=$(hook beforeMCPExecution "$confluence_update")
 assert_not_contains "$confluence_update_out" HANDOFF_DELTA_REQUIRED
 assert_not_contains "$confluence_update_out" DOCS_UNACTIVATED
+assert_not_contains "$confluence_update_out" CLIENT_BODY_GATE_REQUIRED
 # Handoff markers clear the docs gate; harness still lacks gh auth for role check.
 assert_denied "$confluence_update_out" GITHUB_AUTH_REQUIRED
 confluence_private_link=$(printf '%s\n' "$confluence_update" | jq -c \
@@ -354,10 +639,65 @@ confluence_create=$(printf '%s\n' "$base_input" | jq -c --arg body "$confluence_
     title:"New docs page",
     body:$body
   }}')
+for malformed_handoff_marker in \
+  'Handoff schema : 1' \
+  '- handoff STATE: DRAFT' \
+  '* handoff state : DRAFT' \
+  '## Handoff schema: 1' \
+  '> Provider Jira: BB-42' \
+  '  Provider jira : BB-42' \
+  '1. Consumer Jira : BF-69' \
+  '### FE acknowledgment' \
+  '- CONSUMER JIRA:'
+do
+  confluence_marker_bypass=$(printf '%s\n' "$confluence_create" | jq -c \
+    --arg marker "$malformed_handoff_marker" \
+    '.tool_input.body += ("\n" + $marker)')
+  assert_denied "$(hook beforeMCPExecution "$confluence_marker_bypass")" \
+    HANDOFF_BODY_INVALID
+done
+for ordinary_handoff_prose in \
+  'This paragraph explains how the provider Jira remains linked.' \
+  'This paragraph discusses API impact without declaring a header.'
+do
+  confluence_prose=$(printf '%s\n' "$confluence_create" | jq -c \
+    --arg prose "$ordinary_handoff_prose" \
+    '.tool_input.body += ("\n" + $prose)')
+  confluence_prose_out=$(hook beforeMCPExecution "$confluence_prose")
+  assert_not_contains "$confluence_prose_out" HANDOFF_BODY_INVALID
+  assert_denied "$confluence_prose_out" GITHUB_AUTH_REQUIRED
+done
+for restored_handoff_marker in \
+  '> ## Confluence content ID : new' \
+  '- 1. Confluence page version : pending' \
+  '+ Owner account ID : account-123' \
+  '* Effective date : 2026-08-25' \
+  '2) Supersedes : N/A' \
+  '## > Superseded by : N/A' \
+  '> - API impact : none' \
+  '3. WebSocket impact : none' \
+  '### Missing sections : FE acknowledgment'
+do
+  confluence_restored_marker=$(printf '%s\n' "$confluence_create" | jq -c \
+    --arg marker "$restored_handoff_marker" \
+    '.tool_input.body += ("\n" + $marker)')
+  assert_denied "$(hook beforeMCPExecution "$confluence_restored_marker")" \
+    HANDOFF_BODY_INVALID
+done
+assert_no_cursor_body_stage
 confluence_create_out=$(hook beforeMCPExecution "$confluence_create")
 assert_not_contains "$confluence_create_out" HANDOFF_DELTA_REQUIRED
 assert_not_contains "$confluence_create_out" DOCS_UNACTIVATED
+assert_not_contains "$confluence_create_out" CLIENT_BODY_GATE_REQUIRED
 assert_denied "$confluence_create_out" GITHUB_AUTH_REQUIRED
+if direct_cursor_preflight=$($CLI preflight "$known_repo" --client cursor \
+  --operation confluence-write --non-interactive \
+  --confluence-action create --target-content-id new \
+  --expected-parent-id 76808195 2>&1)
+then
+  fail 'direct Cursor Confluence create passed without a trusted body'
+fi
+assert_contains "$direct_cursor_preflight" 'Result: CLIENT_BODY_GATE_REQUIRED'
 confluence_create_no_handoff=$(printf '%s\n' "$confluence_create" | jq -c \
   '.tool_input.body="create without handoff"')
 assert_denied "$(hook beforeMCPExecution "$confluence_create_no_handoff")" \
@@ -470,5 +810,26 @@ assert_contains "$(jq -r .commit "$stale_receipt_file")" "$release_commit"
 stale_read=$(printf '%s\n' "$stale_base" | jq -c \
   '. + {tool_name:"github.get_issue",url:"https://github.com",tool_input:{}}')
 assert_contains "$(hook beforeMCPExecution "$stale_read")" '"permission":"allow"'
+
+# A successful staged preflight also removes its private body directory.
+printf '%s\n' \
+  '#!/bin/sh' \
+  'case "$*" in' \
+  '  --version|"auth status --help"|"api --help") ;;' \
+  '  "auth status --hostname github.com") exit 0 ;;' \
+  '  "api --paginate /user/teams") printf "[{\"slug\":\"backend\",\"organization\":{\"login\":\"beroka-vn\"}}]\n" ;;' \
+  'esac' \
+  >"$HOME/.local/bin/gh"
+chmod 755 "$HOME/.local/bin/gh"
+mkdir -p "$HOME/.cursor"
+printf '%s\n' \
+  '{"mcpServers":{"atlassian":{"url":"https://mcp.atlassian.com/v1/mcp/authv2"}}}' \
+  >"$HOME/.cursor/mcp.json"
+hook beforeSubmitPrompt "$base_input" >/dev/null
+cursor_allow_output=$(PATH="$HOME/.local/bin:/usr/bin:/bin" \
+  hook beforeMCPExecution "$(cursor_handoff_input \
+    "$cursor_handoff_dir/draft.md" create new 76808195)")
+assert_contains "$cursor_allow_output" '"permission":"allow"'
+assert_no_cursor_body_stage
 
 printf '%s\n' 'PASS: Cursor hook runtime'

@@ -29,11 +29,18 @@ operation-specific preflight and continue only when it returns `Result: PASS`.
 Repository-specific instructions may narrow central governance. They must not
 broaden authority or bypass a central stop condition.
 
-Before a Confluence write, prefer allow-by-default create/update/move with
-handoff delta markers (`Jira:`, `GitHub:`, and either `## Handoff — <JiraKey>`
-or `Handoff form: child-page` with `Canonical: <URL|content-id>`). Targets
-listed as `UNACTIVATED` in the pinned governance release return
-`DOCS_UNACTIVATED` and can change only via a reviewed governance release PR.
+Ordinary Cursor Confluence create/update/move is allow-by-default unless the
+target is `UNACTIVATED` and returns `DOCS_UNACTIVATED`. Cursor is the only
+trusted Confluence create/update boundary in this release. Codex and Claude Confluence create/update require a trusted actual-body boundary and must stop
+with `CLIENT_BODY_GATE_REQUIRED`; do not treat a temporary or caller-provided
+body file as proof of the Atlassian request. Jira operations, Confluence moves,
+and capability-only readback retain their existing governed paths. A cross-team
+handoff is a self-contained Jira-and-Confluence-only contract: use Cursor's
+configured Atlassian MCP `createConfluencePage` or `updateConfluencePage` tool
+with the exact body and reviewed ACTIVE Folder. Its in-process Cursor hook
+stages the actual tool-call body and runs `confluence-handoff-write`; a
+standalone preflight cannot prove the Atlassian request. A fresh
+`beroka-governance preflight REPO --client CLIENT --operation confluence-handoff-verify --non-interactive --confluence-action update --target-content-id ID --expected-parent-id ID --handoff-body-file FILE` proves read capability only. Without trusted client post-tool write/read results, report unverified and do not report `READY_FOR_FE`.
 Use optional `confluence-discover` / `confluence-bootstrap-*` only as hierarchy
 guidance, never as a write gate.
 Create Jira items with Atlassian MCP `createJiraIssue` using official fields

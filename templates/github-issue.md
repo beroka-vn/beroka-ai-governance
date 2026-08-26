@@ -16,6 +16,8 @@
   create labels silently. Ask the human/manager when mapping is unclear.
 - If FE consumes BE output, link the FE issue and Hub; FE never reconstructs
   the contract from multiple issue descriptions.
+- This is a team-local GitHub Issue/PR section: GitHub links may remain here,
+  but consumer-facing handoff text uses Jira and Confluence only.
 
 ## Labels
 
@@ -29,33 +31,29 @@ State:    status:blocked (only while blocked)
 
 ## Cross-Team Dependency and Handoff Block
 
-Add this block to any Feature/Bug/Technical issue with BE → FE impact. Keep the
-canonical contract in the BE repository; record only the delta and version.
+Add this team-local reference block to any Feature/Bug/Technical issue with BE
+→ FE impact. The consumer-facing contract is a self-contained Confluence page.
 
 ```markdown
 ## Cross-team dependency
 
 - Frontend impact: None | Handoff required
 - Epic Integration Hub:
-- Paired Backend Jira/GitHub issue:
-- Paired Frontend Jira/GitHub issue(s):
+- Provider Jira:
+- Consumer Jira:
 - Dependency direction: BE blocks FE | FE blocks BE | parallel
 
 ## BE → FE handoff
 
-- Canonical contract artifact/version/commit:
-- Behavior delivered:
-- Authentication/permissions:
-- Error and edge cases:
-- Test environment and sanitized evidence:
-- Breaking/migration impact:
-- Known limitations/unverified items:
+- Confluence content ID and version:
+- Handoff page: <exact Confluence URL>
 - State: DRAFT | READY_FOR_FE | ACKNOWLEDGED | BLOCKED | SUPERSEDED
-- Ready/acknowledged by and at:
+- FE acknowledgment:
 ```
 
-`READY_FOR_FE` requires a merged BE PR, published artifact, and working test
-path. FE acknowledges the exact version. If impact is `None`, record the reason.
+`READY_FOR_FE` requires trusted post-tool Confluence write/read evidence. A
+read-capability preflight alone remains unverified. FE acknowledges the exact
+proven page version. If impact is `None`, record the reason.
 
 ## Documentation Change Block
 
