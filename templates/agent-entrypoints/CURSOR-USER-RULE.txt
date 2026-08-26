@@ -36,8 +36,12 @@ trusted Confluence create/update boundary in this release. Codex and Claude Conf
 with `CLIENT_BODY_GATE_REQUIRED`; do not treat a temporary or caller-provided
 body file as proof of the Atlassian request. Jira operations, Confluence moves,
 and capability-only readback retain their existing governed paths. A cross-team
-handoff is a self-contained Jira-and-Confluence-only contract: Cursor uses
-`beroka-governance preflight REPO --client cursor --operation confluence-handoff-write --non-interactive --confluence-action create|update --target-content-id new|ID --expected-parent-id ACTIVE_FOLDER_ID --handoff-body-file FILE` with the exact body and reviewed ACTIVE Folder. A fresh `beroka-governance preflight REPO --client CLIENT --operation confluence-handoff-verify --non-interactive --confluence-action update --target-content-id ID --expected-parent-id ID --handoff-body-file FILE` proves read capability only. Without trusted client post-tool write/read results, report unverified and do not report `READY_FOR_FE`.
+handoff is a self-contained Jira-and-Confluence-only contract: use Cursor's
+configured Atlassian MCP `createConfluencePage` or `updateConfluencePage` tool
+with the exact body and reviewed ACTIVE Folder. Its in-process Cursor hook
+stages the actual tool-call body and runs `confluence-handoff-write`; a
+standalone preflight cannot prove the Atlassian request. A fresh
+`beroka-governance preflight REPO --client CLIENT --operation confluence-handoff-verify --non-interactive --confluence-action update --target-content-id ID --expected-parent-id ID --handoff-body-file FILE` proves read capability only. Without trusted client post-tool write/read results, report unverified and do not report `READY_FOR_FE`.
 Use optional `confluence-discover` / `confluence-bootstrap-*` only as hierarchy
 guidance, never as a write gate.
 Create Jira items with Atlassian MCP `createJiraIssue` using official fields

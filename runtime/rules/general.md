@@ -42,8 +42,11 @@
   retain their own canonical artifacts and GitHub links; the consumer-facing
   page contains the complete public API and WebSocket contract, omissions,
   owner, effective date, supersession metadata, and FE acknowledgment path.
-- Before a cross-team Confluence create or update, Cursor runs
-  `beroka-governance preflight REPO --client cursor --operation confluence-handoff-write --non-interactive --confluence-action create|update --target-content-id new|ID --expected-parent-id ACTIVE_FOLDER_ID --handoff-body-file FILE`.
+- Before a cross-team Confluence create or update, use Cursor's configured
+  Atlassian MCP `createConfluencePage` or `updateConfluencePage` tool with the
+  exact body and reviewed ACTIVE Folder. Its in-process Cursor hook stages the
+  actual tool-call body and runs `confluence-handoff-write`; a standalone
+  preflight cannot prove the Atlassian request.
   The parent must be one exact reviewed `ACTIVE Folder`; root, page,
   `UNACTIVATED`, and untracked parents return `FOLDER_CREATION_REQUIRED`.
   Cross-team Jira intake or acknowledgment text uses `jira-intake-write` or

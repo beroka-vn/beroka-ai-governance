@@ -360,19 +360,21 @@ render_advertised_handoff_body() {
 }
 
 has_untrusted_body_file_guidance() {
-  awk '
-    BEGIN { RS = "" }
+  printf '%s\n' "$1" | awk '
     {
-      body = tolower($0)
-      if (body ~ /(codex|claude)/ &&
-          body ~ /(temporary|caller-provided)[[:space:]]+body[[:space:]]+file/ &&
-          body ~ /(proof|prove)/ && body ~ /atlassian/ &&
-          body !~ /(do not|must not|never)/) {
-        found = 1
+      text = tolower($0)
+      sentences = split(text, sentence, /[.!?][[:space:]]*/)
+      for (i = 1; i <= sentences; i++) {
+        if (sentence[i] ~ /(codex|claude)/ &&
+            sentence[i] ~ /(temporary|caller-provided)[[:space:]]+body[[:space:]]+file/ &&
+            sentence[i] ~ /(proof|prove)/ && sentence[i] ~ /atlassian/ &&
+            sentence[i] !~ /(do not|must not|never)/) {
+          found = 1
+        }
       }
     }
     END { exit(found ? 0 : 1) }
-  ' "$ROOT/$1"
+  '
 }
 
 for template in templates/ai-agent-assignment.md templates/jira-confluence.md; do
@@ -401,6 +403,16 @@ for file in runtime/rules/general.md governance.md workflow.md \
 done
 require_text templates/agent-entrypoints/CURSOR-USER-RULE.txt \
   'confluence-handoff-write'
+if ! has_untrusted_body_file_guidance \
+  'Codex may use a caller-provided body file as proof of the Atlassian request. Never expose credentials.'
+then
+  fail 'affirmative caller-provided body-file guidance was accepted'
+fi
+if has_untrusted_body_file_guidance \
+  'Codex must not use a caller-provided body file as proof of the Atlassian request.'
+then
+  fail 'negative caller-provided body-file guidance was rejected'
+fi
 for file in runtime/rules/general.md governance.md workflow.md \
   templates/agent-entrypoints/AGENTS.md \
   templates/agent-entrypoints/CLAUDE.md \
@@ -419,20 +431,23 @@ for file in runtime/rules/general.md workflow.md templates/jira-confluence.md \
   templates/agent-entrypoints/AGENTS.md \
   templates/agent-entrypoints/CLAUDE.md \
   templates/agent-entrypoints/CURSOR-USER-RULE.txt; do
-  require_text "$file" '--client cursor --operation confluence-handoff-write'
+  require_text "$file" 'in-process Cursor hook'
+  reject_text "$file" '--client cursor --operation confluence-handoff-write'
   require_text "$file" '--operation confluence-handoff-verify'
-  require_text "$file" \
-    '--confluence-action create|update --target-content-id new|ID --expected-parent-id ACTIVE_FOLDER_ID --handoff-body-file FILE'
   require_text "$file" \
     '--confluence-action update --target-content-id ID --expected-parent-id ID --handoff-body-file FILE'
   reject_text "$file" '--readback-parent-id'
   require_text "$file" 'read capability only'
 done
-require_text templates/jira-confluence.md \
-  'beroka-governance preflight {{REPOSITORY}} --client cursor --operation confluence-handoff-write --non-interactive --confluence-action update --target-content-id {{CONTENT_ID}} --expected-parent-id {{ACTIVE_FOLDER_ID}} --handoff-body-file {{HANDOFF_BODY_FILE}}'
 for file in templates/ai-agent-assignment.md templates/jira-confluence.md; do
   require_text "$file" \
-    'beroka-governance preflight {{REPOSITORY}} --client cursor --operation confluence-handoff-write --non-interactive --confluence-action update --target-content-id {{CONTENT_ID}} --expected-parent-id {{ACTIVE_FOLDER_ID}} --handoff-body-file {{HANDOFF_BODY_FILE}}'
+    'createConfluencePage'
+  require_text "$file" \
+    'updateConfluencePage'
+  require_text "$file" \
+    'in-process Cursor hook'
+  reject_text "$file" \
+    'beroka-governance preflight {{REPOSITORY}} --client cursor --operation confluence-handoff-write'
   require_text "$file" \
     '--operation confluence-handoff-verify --non-interactive --confluence-action update --target-content-id {{CONTENT_ID}} --expected-parent-id {{ACTIVE_FOLDER_ID}} --handoff-body-file {{HANDOFF_BODY_FILE}}'
   reject_text "$file" '--readback-parent-id'

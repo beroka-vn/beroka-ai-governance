@@ -264,9 +264,11 @@ body file as proof of the Atlassian request. Jira operations, Confluence moves,
 and capability-only readback retain their existing governed paths. Cross-team
 handoffs require an exact reviewed ACTIVE Folder and the self-contained
 Confluence page; never use an opposite-team repository link as the consumer
-contract. Before a handoff, Cursor runs
-`beroka-governance preflight REPO --client cursor --operation confluence-handoff-write --non-interactive --confluence-action create|update --target-content-id new|ID --expected-parent-id ACTIVE_FOLDER_ID --handoff-body-file FILE`.
-Create is `DRAFT` only. Run a fresh
+contract. Before a handoff, use Cursor's configured Atlassian MCP
+`createConfluencePage` or `updateConfluencePage` tool with the exact body and
+reviewed ACTIVE Folder. Its in-process Cursor hook stages the actual tool-call
+body and runs `confluence-handoff-write`; a standalone preflight cannot prove
+the Atlassian request. Create is `DRAFT` only. Run a fresh
 `beroka-governance preflight REPO --client CLIENT --operation confluence-handoff-verify --non-interactive --confluence-action update --target-content-id ID --expected-parent-id ID --handoff-body-file FILE`
 to prove read capability only. Its `Readback: CAPABILITY_ONLY` result is not
 post-write proof; without a trusted client post-tool write/read result, report

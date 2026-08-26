@@ -2246,37 +2246,6 @@ render_advertised_handoff_body() {
   fi
 }
 
-extract_advertised_prewrite_command() {
-  eapc_template=$1 eapc_command=$2
-  awk '/^beroka-governance preflight \{\{REPOSITORY\}\}/ { print; exit }' \
-    "$ROOT/$eapc_template" >"$eapc_command"
-  [ -s "$eapc_command" ] || fail "missing advertised pre-write command: $eapc_template"
-}
-
-for handoff_template in templates/ai-agent-assignment.md templates/jira-confluence.md; do
-  handoff_template_body=$handoff_dir/$(basename "$handoff_template").md
-  render_advertised_handoff_body "$handoff_template" "$handoff_template_body"
-  : >"$CALLS"
-  handoff_template_command=$handoff_dir/prewrite-command.sh
-  extract_advertised_prewrite_command "$handoff_template" "$handoff_template_command"
-  sed \
-    -e "s|beroka-governance|$CLI|" \
-    -e "s|{{REPOSITORY}}|$canonical_backend|g" \
-    -e 's/{{CLIENT}}/codex/g' \
-    -e 's/{{CONTENT_ID}}/900007/g' \
-    -e 's/{{ACTIVE_FOLDER_ID}}/900006/g' \
-    -e "s|{{HANDOFF_BODY_FILE}}|$handoff_template_body|g" \
-    "$handoff_template_command" >"$handoff_dir/prewrite-rendered.sh"
-  if grep -Eq '{{[A-Z_]+}}' "$handoff_dir/prewrite-rendered.sh"; then
-    fail 'rendered advertised pre-write command has unresolved tokens'
-  fi
-  if output=$(sh "$handoff_dir/prewrite-rendered.sh" 2>&1); then
-    fail "advertised direct pre-write command passed: $handoff_template"
-  fi
-  assert_contains "$output" 'Result: CLIENT_BODY_GATE_REQUIRED'
-  [ ! -s "$CALLS" ] || fail "advertised handoff inspected a connector: $handoff_template"
-done
-
 for handoff_fixture in draft ready-api ready-websocket ready-api-websocket \
   ready-no-impact
 do

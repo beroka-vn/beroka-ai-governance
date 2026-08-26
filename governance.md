@@ -371,9 +371,11 @@ caller-provided body file as proof of the Atlassian request. Jira operations,
 Confluence moves, and capability-only readback retain their existing governed
 paths. Cursor ordinary Confluence create, update, and move use
 `confluence-write`; they do not publish cross-team readiness. Every cross-team
-handoff uses the dedicated Cursor `confluence-handoff-write` preflight with its
-exact body and reviewed ACTIVE Folder, then a fresh
-`confluence-handoff-verify` preflight with the exact body.
+handoff uses Cursor's configured Atlassian MCP `createConfluencePage` or
+`updateConfluencePage` tool with its exact body and reviewed ACTIVE Folder. Its
+in-process Cursor hook runs `confluence-handoff-write`; a standalone preflight
+cannot prove the Atlassian request. Run a fresh `confluence-handoff-verify`
+preflight with the exact body.
 That second preflight proves read capability only, never a completed write/read;
 without trusted post-tool evidence, report the handoff unverified and do not
 report `READY_FOR_FE`. Consumer-facing content uses the provider/consumer Jira pair

@@ -806,11 +806,12 @@ create/update boundary in this release. Codex and Claude Confluence create/updat
 `CLIENT_BODY_GATE_REQUIRED`; do not treat a temporary or caller-provided body
 file as proof of the Atlassian request. Jira operations, Confluence moves, and
 capability-only readback retain their existing governed paths. For this READY
-page, Cursor runs:
-
-```sh
-beroka-governance preflight {{REPOSITORY}} --client cursor --operation confluence-handoff-write --non-interactive --confluence-action update --target-content-id {{CONTENT_ID}} --expected-parent-id {{ACTIVE_FOLDER_ID}} --handoff-body-file {{HANDOFF_BODY_FILE}}
-```
+page, use Cursor's configured Atlassian MCP `updateConfluencePage` tool with
+this complete body, `{{CONTENT_ID}}`, and `{{ACTIVE_FOLDER_ID}}`. For a DRAFT
+create, use `createConfluencePage` with this body and the reviewed ACTIVE
+Folder. The in-process Cursor hook stages the actual tool-call body and runs
+`confluence-handoff-write`; a standalone preflight cannot prove the Atlassian
+request.
 
 Before the read, prove connector capability:
 
