@@ -85,15 +85,27 @@ authentication checks fail, follow the printed remediation and rerun a fresh
 preflight. Detailed client commands, result codes, and non-interactive rules
 live in the [handbook](handbook.md).
 
-### Register a repository
+### Add or remove repository governance
 
-There is no local `register` command. Add the exact canonical GitHub slug as
-`runtime/repositories/<owner>/<repository>.conf` in this governance repository,
-with reviewed profile and routing values. Merge that change through review and
-ship it in a new immutable governance release. The repository becomes governed
-only after users upgrade their user-scoped installation to that release.
-Folder names, local paths, and unshipped catalog changes do not activate it,
-and registration never writes files to the application repository.
+Only `beroka-vn/Beroka_Backend` and `beroka-vn/Beroka_Frontend` are in the
+default repository catalog. Every other repository is optional and remains
+`NOT_GOVERNED` until a user explicitly requests enrollment.
+
+To add a repository, request a reviewed change in this governance repository
+that adds its exact canonical GitHub slug as
+`runtime/repositories/<owner>/<repository>.conf` with approved profile and
+routing values. Merge the catalog change, publish a new immutable release, and
+upgrade the user's installation. There is no local `register` command.
+
+To remove a repository, request a reviewed change that deletes its exact
+catalog record, publish a new immutable release, and upgrade the user's
+installation. Older installed releases keep their pinned catalog until they
+are upgraded. Removal only disables governance; it does not delete the GitHub
+repository or change files in the application repository. There is no local
+`unregister` command.
+
+Folder names, local paths, application-repository files, and unshipped catalog
+changes cannot add or remove governance.
 
 ## Release lifecycle
 

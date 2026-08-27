@@ -42,6 +42,11 @@ reject_text() {
 [ "$(cat "$ROOT/VERSION")" = v1.0.15 ] ||
   fail 'VERSION is not v1.0.15'
 
+default_repository_catalog=$(find "$ROOT/runtime/repositories" -type f -name '*.conf' -print | sed "s|^$ROOT/||" | sort)
+expected_repository_catalog=$(printf '%s\n%s' 'runtime/repositories/beroka-vn/Beroka_Backend.conf' 'runtime/repositories/beroka-vn/Beroka_Frontend.conf')
+[ "$default_repository_catalog" = "$expected_repository_catalog" ] ||
+  fail 'default repository catalog must contain only Beroka Backend and Frontend'
+
 require_text README.md '`v1.0.15` is the current supported capability release.'
 reject_text README.md '`v1.0.0` is the current supported capability release.'
 reject_text README.md '`v1.0.1` is the current supported capability release.'
