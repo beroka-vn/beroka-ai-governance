@@ -23,7 +23,7 @@ Legacy tracked governance files are neither parsed nor changed. They remain unti
 
 The active release record and client enrollment are the source of installation
 state. No credential is stored there.
-`v1.0.14` is the current supported capability release.
+`v1.0.15` is the current supported capability release.
 
 The release catalog is keyed by normalized canonical GitHub slug. Its reviewed
 record supplies profile, Jira project and board, Confluence root, integration
