@@ -72,6 +72,19 @@ protect a compromised user account or unrelated local processes.
 
 CLI hard-enforces installation, release integrity, catalog routing, connector, authentication, and operation preflight. Agent instructions govern workflow behavior unless CI, hooks, branch protection, or platform policy provides hard enforcement.
 
+### Modular CLI source
+
+The maintained CLI source is split by domain under `src/`.
+Source modules are concatenated in a fixed order by
+`scripts/build-cli.sh` into the committed, self-contained
+`bin/beroka-governance` artifact. Runtime installation and release
+verification continue to consume that single artifact and do not source files
+from the working tree.
+
+Run `scripts/build-cli.sh` after changing a module. CI runs
+`scripts/build-cli.sh --check` through `sh tests/build.sh` and rejects a
+stale, nondeterministic, or syntactically invalid generated artifact.
+
 ### Release launcher
 
 Each stable release publishes `bootstrap.sh` as a GitHub Release asset. `gh`
@@ -185,6 +198,7 @@ The release gate is:
 
 ```bash
 sh -n bin/beroka-governance
+sh tests/build.sh
 sh tests/smoke.sh
 sh tests/connectors.sh
 sh tests/bootstrap.sh
