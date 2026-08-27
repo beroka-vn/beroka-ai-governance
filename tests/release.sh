@@ -165,6 +165,13 @@ require_text README.md 'gh release download'
 require_text handbook.md 'AUTH_PENDING'
 require_text handbook.md 'CONNECTOR_HEALTH_UNAVAILABLE'
 require_text PACKAGE-DESIGN.md '15-second total deadline'
+[ -x "$ROOT/scripts/build-cli.sh" ] ||
+  fail 'modular CLI builder is not executable'
+[ -x "$ROOT/tests/build.sh" ] ||
+  fail 'modular CLI build test is not executable'
+require_text PACKAGE-DESIGN.md 'Source modules are concatenated in a fixed order'
+require_text PACKAGE-DESIGN.md 'scripts/build-cli.sh --check'
+require_text PACKAGE-DESIGN.md 'sh tests/build.sh'
 [ -x "$ROOT/tests/cursor-hooks.sh" ] || fail 'cursor hook runtime test is not executable'
 require_text handbook.md 'sh tests/cursor-hooks.sh'
 require_text PACKAGE-DESIGN.md 'sh tests/cursor-hooks.sh'
