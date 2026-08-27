@@ -1,9 +1,9 @@
 # Beroka Team Development AI Workflow
 
-The rules emitted by `beroka-governance context` are authoritative for this
-repository session. Read the exact assigned issue and repository-local rules
-before acting. If no exact central catalog record exists, context remains
-source-only and loads the general rules plus the standalone profile.
+An exact record in the pinned Central catalog has activated Beroka governance
+for this repository. The rules emitted by `beroka-governance context` are
+authoritative for this repository session. Read the exact assigned issue and
+repository-local rules before acting.
 After context compaction, a session resume, or a new chat, rerun
 `beroka-governance context "$PWD"` before the next governed action. Never rely
 on governance details preserved only in a conversation summary. In-progress

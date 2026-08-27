@@ -25,7 +25,18 @@ The active release record and client enrollment are the source of installation
 state. No credential is stored there.
 `v1.0.14` is the current supported capability release.
 
-The release catalog is keyed by normalized canonical GitHub slug. Its reviewed record supplies profile, Jira project and board, Confluence root, integration profile, and cross-repository policy. An unknown origin is standalone with `ROUTING_REQUIRED`: source-only work may continue, but routing-dependent writes remain blocked. Catalog changes require an explicitly authorized governance-repository task.
+The release catalog is keyed by normalized canonical GitHub slug. Its reviewed
+record supplies profile, Jira project and board, Confluence root, integration
+profile, and cross-repository policy. An unknown origin returns the compact
+`NOT_GOVERNED` result, loads no governance rules, and remains outside Cursor
+hook enforcement. Catalog changes require an explicitly authorized
+governance-repository task.
+
+Registration adds `runtime/repositories/<owner>/<repository>.conf` in this
+governance repository, passes review and release validation, and ships in a new
+immutable release. Users then upgrade their user-scoped installation. The
+retired local `register` command, application-repository files, folder names,
+paths, and unshipped catalog changes cannot activate governance.
 
 The supported BE/FE boundary contains only
 `beroka-vn/Beroka_Backend` and

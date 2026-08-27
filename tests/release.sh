@@ -128,12 +128,19 @@ require_text runtime/rules/general.md 'issueTypeName'
 require_text runtime/rules/general.md 'never tell the user raw governance codes'
 require_text runtime/rules/general.md 'never ask'
 require_text runtime/rules/general.md 'close a workspace folder'
-require_text templates/agent-entrypoints/AGENTS.md 'createJiraIssue'
-require_text templates/agent-entrypoints/AGENTS.md 'FULL_STACK Backend+Frontend multi-root'
-require_text templates/agent-entrypoints/CLAUDE.md 'FULL_STACK Backend+Frontend multi-root'
-require_text templates/agent-entrypoints/CURSOR-USER-RULE.txt 'Missing:'
-require_text templates/agent-entrypoints/CURSOR-USER-RULE.txt \
-  'close a workspace folder'
+for entrypoint in templates/agent-entrypoints/AGENTS.md \
+  templates/agent-entrypoints/CLAUDE.md \
+  templates/agent-entrypoints/CURSOR-USER-RULE.txt; do
+  require_text "$entrypoint" 'Result: NOT_GOVERNED'
+  require_text "$entrypoint" 'beroka-governance context "$PWD"'
+  reject_text "$entrypoint" 'createJiraIssue'
+  reject_text "$entrypoint" 'confluence-handoff-write'
+  reject_text "$entrypoint" 'mcp login atlassian'
+  [ "$(wc -c <"$ROOT/$entrypoint" | tr -d ' ')" -le 1024 ] ||
+    fail "$entrypoint exceeds the sentinel byte ceiling"
+  [ "$(wc -w <"$ROOT/$entrypoint" | tr -d ' ')" -le 140 ] ||
+    fail "$entrypoint exceeds the sentinel word ceiling"
+done
 require_text handbook.md 'parent/epic key'
 require_text handbook.md 'cùng một catalog slug'
 require_text handbook.md 'confluence-discover'
@@ -151,7 +158,6 @@ require_text runtime/rules/general.md 'DOCS_UNACTIVATED'
 require_text runtime/rules/general.md 'HANDOFF_DELTA_REQUIRED'
 require_text templates/jira-confluence.md 'confluence-bootstrap-plan'
 require_text templates/ai-agent-assignment.md 'confluence-discover'
-require_text templates/agent-entrypoints/AGENTS.md 'confluence-discover'
 require_text docs/superpowers/specs/2026-08-05-confluence-target-bootstrap-design.md \
   'DISCOVERY_COMPLETE'
 require_text handbook.md 'Chuyển quyết định cho developer'

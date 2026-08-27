@@ -682,6 +682,7 @@ catalog_record_for_slug() {
 }
 
 resolve_repository_context() {
+  rrc_role=${2:-require-role}
   REPO=$(canonical_repo "$1")
   resolve_canonical_remote "$REPO"
   REPOSITORY_SLUG=$(normalize_github_url "$CANONICAL_REMOTE_URL") ||
@@ -694,13 +695,20 @@ resolve_repository_context() {
     ROUTING_STATE=ROUTING_ACTIVE
   else
     clear_routing_values
-    ROUTE_PROFILE=standalone
-    ROUTE_INTEGRATION_PROFILE=none
-    ROUTE_CROSS_REPO_POLICY=explicit-only
-    DEPENDENCY_STATE=NO_DEPENDENCY_DECLARED
-    ROUTING_STATE=ROUTING_REQUIRED
+    ROUTING_STATE=NOT_GOVERNED
+    return 0
   fi
-  require_role_scope
+  [ "$rrc_role" = defer-role ] || require_role_scope
+}
+
+repository_is_governed() {
+  [ "$ROUTING_STATE" = ROUTING_ACTIVE ]
+}
+
+print_not_governed() {
+  printf '%s\n' \
+    'Result: NOT_GOVERNED' \
+    "Repository: $REPOSITORY_SLUG"
 }
 
 clear_routing_values() {
@@ -5293,11 +5301,15 @@ cmd_preflight() {
   then
     [ "$pf_operation" = confluence-handoff-verify ] || { usage >&2; exit 2; }
   fi
+  load_active_release
+  resolve_repository_context "$pf_repo" defer-role
+  if ! repository_is_governed; then
+    print_not_governed
+    return
+  fi
   [ "$pf_operation" != cross-repo-write ] ||
     require_operation_routing "$pf_operation"
-
-  load_active_release
-  resolve_repository_context "$pf_repo"
+  require_role_scope
   require_enrolled_client "$pf_client"
   verify_client_instruction "$pf_client"
   if [ "$pf_operation" = github-write ]; then
@@ -5523,6 +5535,10 @@ cmd_doctor() {
 cmd_context() {
   load_active_release
   resolve_repository_context "$1"
+  if ! repository_is_governed; then
+    print_not_governed
+    return
+  fi
   cat "$RELEASE_DIR/runtime/entrypoint.md" || die GOVERNANCE_NOT_READY 'Cannot read runtime entrypoint'
   printf '%s\n' \
     "Repository: $REPOSITORY_SLUG" \
@@ -5574,6 +5590,10 @@ cmd_show() {
   repo=$1 kind=$2 name=${3:-}
   load_active_release
   resolve_repository_context "$repo"
+  if ! repository_is_governed; then
+    print_not_governed
+    return
+  fi
   case "$kind:$name" in
     governance:) file=governance.md ;;
     handbook:) file=handbook.md ;;
@@ -5623,6 +5643,21 @@ cursor_probe_workspace_profile() {
   )
 }
 
+cursor_classify_governance() {
+  CURSOR_GOVERNANCE_STATE=NOT_GOVERNED
+  while IFS= read -r ccg_top; do
+    [ -n "$ccg_top" ] || continue
+    ccg_probe=$(cursor_probe_workspace_profile "$ccg_top") || return 1
+    ccg_state=${ccg_probe##*	}
+    [ "$ccg_state" != ROUTING_ACTIVE ] || {
+      CURSOR_GOVERNANCE_STATE=ROUTING_ACTIVE
+      return 0
+    }
+  done <<CURSOR_GOVERNANCE_EOF
+$CURSOR_WORKSPACES
+CURSOR_GOVERNANCE_EOF
+}
+
 cursor_resolve_workspaces() {
   CURSOR_WORKSPACE=
   CURSOR_WORKSPACE_MODE=single
@@ -5647,8 +5682,12 @@ $(printf '%s\n' "$CURSOR_REQUEST" | jq -r '.workspace_roots[]')
 CURSOR_ROOTS_EOF
   CURSOR_WORKSPACES=$(printf '%s\n' "$CURSOR_WORKSPACES" | sed '/^$/d')
   [ "$crr_count" -ge 1 ] || return 1
+  CURSOR_WORKSPACE=$(printf '%s\n' "$CURSOR_WORKSPACES" | sed -n '1p')
+  cursor_classify_governance || return 1
+  if [ "$CURSOR_GOVERNANCE_STATE" = NOT_GOVERNED ]; then
+    return 0
+  fi
   if [ "$crr_count" -eq 1 ]; then
-    CURSOR_WORKSPACE=$CURSOR_WORKSPACES
     CURSOR_WORKSPACE_MODE=single
     return 0
   fi
@@ -5954,6 +5993,13 @@ cursor_context() {
 cmd_cursor_session_start() {
   cursor_read_request || die GOVERNANCE_CONTEXT_REQUIRED \
     'Cursor hook input requires one Git workspace or a FULL_STACK Backend+Frontend pair.'
+  if [ "$CURSOR_GOVERNANCE_STATE" = NOT_GOVERNED ]; then
+    cursor_context_output=$(cmd_context "$CURSOR_WORKSPACE") ||
+      die GOVERNANCE_CONTEXT_REQUIRED
+    jq -nc --arg context "$cursor_context_output" \
+      '{env:{BEROKA_GOVERNANCE_CONTEXT:"NOT_GOVERNED"},additional_context:$context}'
+    return
+  fi
   if [ "$CURSOR_WORKSPACE_MODE" = be-fe ]; then
     cursor_backend_context=$(cmd_context "$CURSOR_BACKEND_WORKSPACE") ||
       die GOVERNANCE_CONTEXT_REQUIRED
@@ -5982,6 +6028,10 @@ cmd_cursor_before_submit_prompt() {
       'Cursor hook input requires one Git workspace or a FULL_STACK Backend+Frontend pair.'
     return
   }
+  if [ "$CURSOR_GOVERNANCE_STATE" = NOT_GOVERNED ]; then
+    printf '%s\n' '{}'
+    return
+  fi
   cursor_context
   cursor_prompt=$(printf '%s\n' "$CURSOR_REQUEST" | jq -er '.prompt // "" | if type == "string" then . else error("prompt") end') || {
     cursor_block_prompt WORK_ITEM_LANGUAGE_REQUIRED 'Prompt must be text.'
@@ -6003,6 +6053,10 @@ cmd_cursor_before_submit_prompt() {
 
 cmd_cursor_pre_compact() {
   cursor_read_request || die GOVERNANCE_CONTEXT_REQUIRED 'Cursor hook input requires one Git workspace'
+  if [ "$CURSOR_GOVERNANCE_STATE" = NOT_GOVERNED ]; then
+    printf '%s\n' '{}'
+    return
+  fi
   cursor_context
   cursor_receipt_matches 0 ||
     die GOVERNANCE_CONTEXT_REQUIRED 'Run cursor-hook sessionStart first'
@@ -6490,6 +6544,10 @@ cmd_cursor_before_mcp_execution() {
       'Provide one recognized Git workspace or a FULL_STACK Backend+Frontend pair and start a new governance session.'
     return
   fi
+  if [ "$CURSOR_GOVERNANCE_STATE" = NOT_GOVERNED ]; then
+    cursor_allow
+    return
+  fi
   cursor_tool_provider || {
     cursor_deny WORK_ITEM_TEMPLATE_REQUIRED 'Provide structured tool input for the governed write.'
     return
@@ -6696,6 +6754,12 @@ cmd_cursor_before_shell_execution() {
     cursor_deny GOVERNANCE_CONTEXT_REQUIRED 'Provide a shell command.'
     return
   }
+  if cursor_parse_request_fields && cursor_resolve_workspaces &&
+     [ "$CURSOR_GOVERNANCE_STATE" = NOT_GOVERNED ]
+  then
+    cursor_allow
+    return
+  fi
   case " $cursor_command " in
     *gh\ issue\ create\ *|*gh\ pr\ create\ *)
       cursor_shell_state=0

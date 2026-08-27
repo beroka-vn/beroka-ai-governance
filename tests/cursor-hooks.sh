@@ -80,8 +80,65 @@ git -C "$other_repo" add README.md
 git -C "$other_repo" commit -qm 'test: initialize other repository'
 git -C "$other_repo" remote add origin https://github.com/beroka-vn/Beroka_Frontend.git
 
+unknown_repo=$TMP_ROOT/unknown-repository
+new_repo "$unknown_repo"
+printf '%s\n' '# unknown' >"$unknown_repo/README.md"
+git -C "$unknown_repo" add README.md
+git -C "$unknown_repo" commit -qm 'test: initialize unknown repository'
+git -C "$unknown_repo" remote add origin https://github.com/example/unknown.git
+
+second_unknown_repo=$TMP_ROOT/second-unknown-repository
+new_repo "$second_unknown_repo"
+printf '%s\n' '# second unknown' >"$second_unknown_repo/README.md"
+git -C "$second_unknown_repo" add README.md
+git -C "$second_unknown_repo" commit -qm 'test: initialize second unknown repository'
+git -C "$second_unknown_repo" remote add origin \
+  https://github.com/example/second-unknown.git
+
 base_input=$(jq -nc --arg workspace "$known_repo" '{conversation_id:"conversation-1",generation_id:"generation-1",workspace_roots:[$workspace]}')
 hook() { printf '%s\n' "$2" | "$CLI" cursor-hook "$1"; }
+
+unknown_base=$(jq -nc --arg workspace "$unknown_repo" \
+  '{conversation_id:"unknown",generation_id:"unknown",workspace_roots:[$workspace]}')
+unknown_session=$(hook sessionStart "$unknown_base")
+assert_contains "$unknown_session" 'Result: NOT_GOVERNED'
+assert_not_contains "$unknown_session" '# General Repository Governance'
+unknown_receipt=$(printf '%s' unknown | shasum -a 256 | awk '{print $1}')
+unknown_receipt=$XDG_STATE_HOME/beroka-ai-governance/cursor/$unknown_receipt.json
+[ ! -e "$unknown_receipt" ] || fail 'unregistered session wrote a governed receipt'
+
+unknown_prompt=$(printf '%s\n' "$unknown_base" | jq -c \
+  '.prompt="create a Jira issue"')
+[ "$(hook beforeSubmitPrompt "$unknown_prompt")" = '{}' ] ||
+  fail 'unregistered prompt did not pass through'
+[ "$(hook preCompact "$unknown_base")" = '{}' ] ||
+  fail 'unregistered compaction did not pass through'
+[ ! -e "$unknown_receipt" ] ||
+  fail 'unregistered prompt lifecycle wrote a governed receipt'
+
+unknown_mcp=$(printf '%s\n' "$unknown_base" | jq -c '. + {
+  tool_name:"jira.create_issue",
+  url:"https://example.atlassian.net",
+  tool_input:{description:"not governed"}
+}')
+assert_contains "$(hook beforeMCPExecution "$unknown_mcp")" \
+  '"permission":"allow"'
+
+unknown_shell=$(printf '%s\n' "$unknown_base" | jq -c \
+  '.command="gh issue create --title test"')
+assert_contains "$(hook beforeShellExecution "$unknown_shell")" \
+  '"permission":"allow"'
+
+unknown_roots=$(jq -nc --arg a "$unknown_repo" --arg b "$second_unknown_repo" \
+  '{conversation_id:"unknown-roots",generation_id:"unknown-roots",workspace_roots:[$a,$b],tool_name:"jira.create_issue",url:"https://example.atlassian.net",tool_input:{}}')
+assert_contains "$(hook beforeMCPExecution "$unknown_roots")" \
+  '"permission":"allow"'
+
+mixed_roots=$(jq -nc --arg a "$known_repo" --arg b "$unknown_repo" \
+  '{conversation_id:"mixed-roots",generation_id:"mixed-roots",workspace_roots:[$a,$b],tool_name:"jira.create_issue",url:"https://example.atlassian.net",tool_input:{}}')
+assert_denied "$(hook beforeMCPExecution "$mixed_roots")" \
+  GOVERNANCE_CONTEXT_REQUIRED
+[ ! -s "$CONNECTOR_CALLS" ] || fail 'unregistered hooks inspected a connector'
 
 session=$(hook sessionStart "$base_input")
 assert_contains "$session" '"additional_context"'

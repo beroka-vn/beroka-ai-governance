@@ -85,6 +85,16 @@ authentication checks fail, follow the printed remediation and rerun a fresh
 preflight. Detailed client commands, result codes, and non-interactive rules
 live in the [handbook](handbook.md).
 
+### Register a repository
+
+There is no local `register` command. Add the exact canonical GitHub slug as
+`runtime/repositories/<owner>/<repository>.conf` in this governance repository,
+with reviewed profile and routing values. Merge that change through review and
+ship it in a new immutable governance release. The repository becomes governed
+only after users upgrade their user-scoped installation to that release.
+Folder names, local paths, and unshipped catalog changes do not activate it,
+and registration never writes files to the application repository.
+
 ## Release lifecycle
 
 ### Upgrade
