@@ -3,6 +3,8 @@ set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
 TEST_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/beroka-confluence-hooks.XXXXXX")
 trap 'rm -rf "$TEST_ROOT"' EXIT HUP INT TERM
+# macOS TMPDIR may start with /var -> /private/var; use the physical fixture root.
+TEST_ROOT=$(CDPATH= cd -- "$TEST_ROOT" && pwd -P)
 export HOME=$TEST_ROOT/home XDG_CONFIG_HOME=$TEST_ROOT/home/config
 export XDG_DATA_HOME=$TEST_ROOT/home/data XDG_STATE_HOME=$TEST_ROOT/home/state
 export TMPDIR=$TEST_ROOT/tmp BEROKA_GOV_BIN_DIR=$TEST_ROOT/home/bin
