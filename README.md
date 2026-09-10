@@ -7,7 +7,7 @@ Beroka governance is a verified, user-scoped release for Codex, Claude, and
 Cursor. It supplies workflow context and routes external operations from the
 Central repository catalog; it never configures an application repository.
 
-`v1.0.15` is the current supported capability release. Published tags are
+`v1.0.16` is the current supported capability release. Published tags are
 immutable.
 
 `Application repository changes: NONE`

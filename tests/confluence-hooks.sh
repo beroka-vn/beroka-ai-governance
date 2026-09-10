@@ -92,7 +92,8 @@ export PATH=$BEROKA_GOV_BIN_DIR:$PATH
 body='Jira: BB-64
 GitHub: N/A
 ## Handoff — BB-64
-PPSE documentation.'
+PPSE documentation.
+Owner: BE_Cuong'
 envelope() {
   jq -nc --arg client "$client" --arg repo "$repo" --arg session "$session" \
     --arg tool "$1" --arg id "$2" --argjson args "$3" --argjson response "${4:-null}" '
@@ -101,7 +102,7 @@ envelope() {
     {tool_use_id:$id,tool_input:$args} +
     if $client == "cursor" then
       {conversation_id:$session,generation_id:"generation",workspace_roots:[$repo],tool_name:("MCP:"+$tool),tool_output:($result|tojson)}
-    else {cwd:$repo,session_id:$session,tool_name:(if $client == "codex" then "mcp__codex_apps__atlassian_rovo_"+($tool|ascii_downcase) else "mcp__atlassian__"+$tool end),tool_response:$result} end'
+    else {cwd:$repo,session_id:$session,tool_name:(if $client == "codex" then "mcp__codex_apps__atlassian_rovo__"+($tool|ascii_downcase) else "mcp__atlassian__"+$tool end),tool_response:$result} end'
 }
 hook() {
   case "$client" in
@@ -127,7 +128,7 @@ seed_space() {
   hook post "$(envelope getConfluenceSpaces spaces "$space_args" '{"results":[{"id":"123","key":"Berokaback"}]}')" >/dev/null
 }
 page_result() {
-  jq -nc --arg body "$1" '{id:"900001",parentId:"76808195",spaceId:"123",status:"current",version:{number:3},body:{markdown:{value:$body}}}'
+  jq -nc --arg body "$1" '{id:"900001",parentId:"76808195",spaceId:"123",status:"current",version:{number:3},body:{markdown:{value:($body|gsub("BE_Cuong"; "BE\\_Cuong"))}}}'
 }
 verify_write() {
   write_tool=$1

@@ -32,7 +32,10 @@ Restart with native hooks enabled. Codex uses `$CODEX_HOME/hooks.json` (default
    readback or readiness proof.
 5. Call `getConfluencePage` for that ID, same cloud and Markdown format. The read
    must start after the write response. Its post-tool event compares content ID,
-   parent, space, version and exact body. Only `READBACK_VERIFIED` proves the
+   parent, space, version and body. Confluence-added intraword underscore escapes
+   are accepted only in a conservative plain-prose subset; code and all other
+   bytes remain exact, and ambiguous Markdown stays unverified. The original
+   outbound argument/body hashes remain unchanged. Only `READBACK_VERIFIED` proves the
    sequence completed.
 
 Ordinary documentation still needs the existing Jira/GitHub handoff delta
@@ -57,7 +60,8 @@ attempt. Text-only errors and timeouts retain the slot because execution may
 have occurred. Failed readback can be retried as a read; never repeat its write.
 
 This adapter supports native MCP hooks with tool-use IDs and structured results.
-Codex Apps uses the exact `mcp__codex_apps__atlassian_rovo_*` names; direct
+Codex Apps uses `mcp__codex_apps__atlassian_rovo__*` in native CLI hooks
+and `mcp__codex_apps__atlassian_rovo_*` in flattened hosts; direct
 Atlassian MCP uses `mcp__atlassian__*`; Cursor generic hooks use `MCP:<tool_name>`.
 ADF, preview tools, other connector aliases and hosts that do not deliver native
 pre/post events need a reviewed adapter. `CLIENT_BODY_GATE_REQUIRED` describes
@@ -83,8 +87,9 @@ Local Linux validation on 2026-09-10 passed all ten shell suites: bootstrap,
 build, confluence-hooks, connectors, cursor-hooks, documentation-architecture,
 launcher, release, routing and smoke (`sh tests/<name>.sh`).
 `scripts/build-cli.sh --check` and `git diff --check` also passed.
-The native client applications themselves were not launched to perform sandbox
-writes; fresh client-session evidence remains a release gate.
+Subsequent live-client checks are recorded in
+[the live validation record](confluence-native-hooks-live-validation.md).
+The record separates real write/readback evidence from simulation and unavailable clients.
 
 Native contracts checked during implementation:
 [Codex hooks](https://developers.openai.com/codex/hooks),
