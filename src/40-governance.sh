@@ -3,10 +3,12 @@
 require_trusted_confluence_body_gate() {
   rtcbg_client=$1 rtcbg_action=$2
   [ "$rtcbg_action" = move ] && return 0
+  [ -n "$CONFLUENCE_HOOK_CLIENT" ] &&
+    [ "$CONFLUENCE_HOOK_CLIENT" = "$rtcbg_client" ] && return 0
   [ "$rtcbg_client" = cursor ] &&
     [ "$CONFLUENCE_BODY_TRUSTED" -eq 1 ] && return 0
   die CLIENT_BODY_GATE_REQUIRED \
-    'Confluence create/update requires a trusted actual-body client boundary'
+    "Use native Confluence tool hooks: beroka-governance setup-documentation-hooks --client $rtcbg_client; restart the client with hooks enabled. Standalone preflight and body files cannot prove a tool call."
 }
 
 handoff_body_is_safe() {
@@ -1466,7 +1468,8 @@ cmd_preflight() {
     require_operation_routing "$pf_operation"
   require_role_scope
   require_enrolled_client "$pf_client"
-  verify_client_instruction "$pf_client"
+  # Instruction verification has its own temporary staging lifecycle.
+  (verify_client_instruction "$pf_client")
   if [ "$pf_operation" = github-write ]; then
     github_preflight "$pf_client" "$pf_non_interactive"
     return

@@ -210,8 +210,8 @@ squash merge. GitHub đóng `#121` qua `Closes #121`.
 
 Sau merge, Nam tạo DRAFT từ exact template, hoàn thiện toàn bộ common/API/no-WS
 sections trong chính Confluence page, rồi chạy read-capability preflight. Vì
-runtime chưa có trusted post-tool hook nhận trực tiếp write receipt và kết quả
-read sau đó, Hub và linked FE Jira chưa nhận record này:
+chưa quan sát đủ write receipt và kết quả read sau đó qua native post-tool hook,
+Hub và linked FE Jira chưa nhận record này:
 
 ```markdown
 Provider Jira: BB-120
@@ -232,11 +232,11 @@ khi trusted post-tool evidence chứng minh exact Confluence content ID/version.
 FE không tự tổng hợp contract từ repository, Issue hoặc PR của Backend.
 
 The remaining recipient-execution example is conditional on this explicit
-future trusted proof event; the current release cannot produce it:
+native trusted proof event; this illustrative record is not live publication evidence:
 
 ```text
-Trusted post-tool proof event: FUTURE_RUNTIME_ONLY
-Write receipt and subsequent read response: exact content 900001, parent 900002, version 3, owner, title, space, and body verified
+Trusted post-tool proof event: NATIVE_HOOK_READBACK_VERIFIED
+Write receipt and subsequent read response: exact content 900001, parent 900002, version 3, space, and body verified
 Readback: VERIFIED
 State transition: DRAFT -> READY_FOR_FE
 Provider action: comment exact content 900001 version 3 on BF-87

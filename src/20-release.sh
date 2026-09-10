@@ -1191,6 +1191,7 @@ cmd_bootstrap() {
       client_list_contains "$ENABLED_CLIENTS" "$bs_enabled_client" ||
         continue
       install_client_instruction "$bs_enabled_client" "$bs_interactive"
+      install_documentation_hooks "$bs_enabled_client"
       [ "$bs_enabled_client" != "$bs_client" ] ||
         bs_selected_instruction_installed=1
     done
@@ -1202,6 +1203,7 @@ cmd_bootstrap() {
     verify_cursor_hooks || die GOVERNANCE_NOT_READY 'Cursor hooks installation verification failed'
     printf '%s\n' 'Runtime hook: INSTALLED'
   fi
+  install_documentation_hooks "$bs_client"
   enable_client "$bs_client"
   printf '%s\n' \
     'Release: PASS' \
@@ -1276,6 +1278,7 @@ cmd_uninstall() {
   done
   cleanup_personal_stage ||
     die GOVERNANCE_NOT_READY 'Cannot remove uninstall stage'
+  remove_documentation_hooks
   rm -f "$BIN_DIR/$PROGRAM" || die GOVERNANCE_NOT_READY 'Cannot remove the user CLI'
   rm -rf "$DATA_ROOT" || die GOVERNANCE_NOT_READY 'Cannot remove package data'
   rm -f "$ACTIVE_RELEASE" "$CLIENTS_FILE" "$CURSOR_ACK_FILE" \

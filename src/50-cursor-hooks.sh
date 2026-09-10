@@ -753,6 +753,7 @@ cursor_confluence_handoff_ok() {
 }
 
 cursor_confluence_preflight() {
+  ccp_client=${1:-cursor}
   ccp_action=update
   case "$CURSOR_TOOL_TEXT" in
     *create*) ccp_action=create ;;
@@ -780,7 +781,7 @@ cursor_confluence_preflight() {
     }
     set -- --confluence-action move --target-content-id "$ccp_target" \
       --expected-parent-id "$ccp_parent"
-    cmd_preflight "$CURSOR_WORKSPACE" --client cursor \
+    cmd_preflight "$CURSOR_WORKSPACE" --client "$ccp_client" \
       --operation confluence-write --non-interactive "$@"
     return $?
   fi
@@ -805,7 +806,7 @@ cursor_confluence_preflight() {
       set -- "$@" --expected-parent-id "$ccp_parent"
     fi
     CONFLUENCE_BODY_TRUSTED=1
-    cursor_staged_preflight "$CURSOR_WORKSPACE" --client cursor \
+    cursor_staged_preflight "$CURSOR_WORKSPACE" --client "$ccp_client" \
       --operation confluence-handoff-write --non-interactive "$@" \
       --handoff-body-file "$CURSOR_EXACT_BODY_FILE"
     ccp_status=$?
@@ -823,7 +824,7 @@ cursor_confluence_preflight() {
     set -- "$@" --expected-parent-id "$ccp_parent"
   fi
   CONFLUENCE_BODY_TRUSTED=1
-  cmd_preflight "$CURSOR_WORKSPACE" --client cursor \
+  cmd_preflight "$CURSOR_WORKSPACE" --client "$ccp_client" \
     --operation confluence-write --non-interactive "$@"
   ccp_status=$?
   CONFLUENCE_BODY_TRUSTED=0

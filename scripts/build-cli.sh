@@ -10,6 +10,7 @@ src/20-release.sh
 src/30-clients.sh
 src/40-governance.sh
 src/50-cursor-hooks.sh
+src/55-confluence-hooks.sh
 src/90-main.sh
 '
 

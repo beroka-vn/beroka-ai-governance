@@ -256,17 +256,18 @@ references exact Registry rows. Durable Frontend pages use
 versions without copying payloads. Create pages only when content and an owner
 exist.
 
-Ordinary Cursor page writes remain allow-by-default unless the target is
-`UNACTIVATED` in the governance release (`DOCS_UNACTIVATED`). Cursor is the
-only trusted Confluence create/update boundary in this release. Codex and Claude Confluence create/update require a trusted actual-body boundary and must stop
-with `CLIENT_BODY_GATE_REQUIRED`; do not treat a temporary or caller-provided
+Ordinary page writes remain allow-by-default unless the target is
+`UNACTIVATED` in the governance release (`DOCS_UNACTIVATED`). Codex, Claude and Cursor use native Confluence tool hooks.
+Codex and Claude Confluence create/update require a trusted actual-body boundary,
+provided by the installed native pre/post hooks; missing hooks return
+`CLIENT_BODY_GATE_REQUIRED` with setup instructions; do not treat a temporary or caller-provided
 body file as proof of the Atlassian request. Jira operations, Confluence moves,
 and capability-only readback retain their existing governed paths. Cross-team
 handoffs require an exact reviewed ACTIVE Folder and the self-contained
 Confluence page; never use an opposite-team repository link as the consumer
-contract. Before a handoff, use Cursor's configured Atlassian MCP
+contract. Before a handoff, use the selected client's configured Atlassian MCP
 `createConfluencePage` or `updateConfluencePage` tool with the exact body and
-reviewed ACTIVE Folder. Its in-process Cursor hook stages the actual tool-call
+reviewed ACTIVE Folder. Its in-process native tool hook stages the actual tool-call
 body and runs `confluence-handoff-write`; a standalone preflight cannot prove
 the Atlassian request. Create is `DRAFT` only. Run a fresh
 `beroka-governance preflight REPO --client CLIENT --operation confluence-handoff-verify --non-interactive --confluence-action update --target-content-id ID --expected-parent-id ID --handoff-body-file FILE`

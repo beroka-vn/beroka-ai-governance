@@ -428,11 +428,11 @@ for template in templates/ai-agent-assignment.md templates/jira-confluence.md; d
 done
 
 awk '
-  /Trusted post-tool proof event: FUTURE_RUNTIME_ONLY/ { proof=NR }
+  /Trusted post-tool proof event: NATIVE_HOOK_READBACK_VERIFIED/ { proof=NR }
   /^## 5[.] Frontend Issue/ { execution=NR }
   END { exit !(proof && execution && proof < execution) }
 ' "$ROOT/examples/end-to-end-traceability.md" ||
-  fail 'recipient execution lacks an earlier explicit future trusted proof event'
+  fail 'recipient execution lacks an earlier explicit native trusted proof event'
 
 for file in runtime/rules/general.md governance.md workflow.md \
   templates/ai-agent-assignment.md templates/jira-confluence.md; do
@@ -471,7 +471,7 @@ reject_text governance.md 'include `Jira:`, `GitHub:`, and a handoff delta'
 reject_text examples/end-to-end-traceability.md 'Repository artifact'
 reject_text examples/end-to-end-traceability.md 'Canonical contract artifact/version/commit'
 for file in runtime/rules/general.md workflow.md templates/jira-confluence.md; do
-  require_text "$file" 'in-process Cursor hook'
+  require_text "$file" 'in-process native tool hook'
   reject_text "$file" '--client cursor --operation confluence-handoff-write'
   require_text "$file" '--operation confluence-handoff-verify'
   require_text "$file" \
@@ -485,7 +485,7 @@ for file in templates/ai-agent-assignment.md templates/jira-confluence.md; do
   require_text "$file" \
     'updateConfluencePage'
   require_text "$file" \
-    'in-process Cursor hook'
+    'in-process native tool hook'
   reject_text "$file" \
     'beroka-governance preflight {{REPOSITORY}} --client cursor --operation confluence-handoff-write'
   require_text "$file" \
