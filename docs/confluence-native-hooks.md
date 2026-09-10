@@ -57,7 +57,8 @@ attempt. Text-only errors and timeouts retain the slot because execution may
 have occurred. Failed readback can be retried as a read; never repeat its write.
 
 This adapter supports native MCP hooks with tool-use IDs and structured results.
-Codex Apps uses the exact `mcp__codex_apps__atlassian_rovo_*` names; direct
+Codex Apps uses `mcp__codex_apps__atlassian_rovo__*` in native CLI hooks
+and `mcp__codex_apps__atlassian_rovo_*` in flattened hosts; direct
 Atlassian MCP uses `mcp__atlassian__*`; Cursor generic hooks use `MCP:<tool_name>`.
 ADF, preview tools, other connector aliases and hosts that do not deliver native
 pre/post events need a reviewed adapter. `CLIENT_BODY_GATE_REQUIRED` describes

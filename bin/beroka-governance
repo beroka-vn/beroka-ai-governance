@@ -6973,6 +6973,7 @@ confluence_hook_run() {
     mcp__atlassian__*|mcp__codex_apps__atlassian_rovo_*|MCP:*)
       case "$dh_tool" in
         mcp__atlassian__*) dh_name=${dh_tool#mcp__atlassian__} ;;
+        mcp__codex_apps__atlassian_rovo__*) dh_name=${dh_tool#mcp__codex_apps__atlassian_rovo__} ;;
         mcp__codex_apps__atlassian_rovo_*) dh_name=${dh_tool#mcp__codex_apps__atlassian_rovo_} ;;
         MCP:*) dh_name=${dh_tool#MCP:} ;;
       esac

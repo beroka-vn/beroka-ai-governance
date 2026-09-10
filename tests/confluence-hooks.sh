@@ -101,7 +101,7 @@ envelope() {
     {tool_use_id:$id,tool_input:$args} +
     if $client == "cursor" then
       {conversation_id:$session,generation_id:"generation",workspace_roots:[$repo],tool_name:("MCP:"+$tool),tool_output:($result|tojson)}
-    else {cwd:$repo,session_id:$session,tool_name:(if $client == "codex" then "mcp__codex_apps__atlassian_rovo_"+($tool|ascii_downcase) else "mcp__atlassian__"+$tool end),tool_response:$result} end'
+    else {cwd:$repo,session_id:$session,tool_name:(if $client == "codex" then "mcp__codex_apps__atlassian_rovo__"+($tool|ascii_downcase) else "mcp__atlassian__"+$tool end),tool_response:$result} end'
 }
 hook() {
   case "$client" in
