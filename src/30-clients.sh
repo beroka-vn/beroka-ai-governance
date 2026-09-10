@@ -1467,6 +1467,9 @@ codex_canonical_tool_names() {
   LC_ALL=C awk -v mode="$cctn_mode" '
     BEGIN {
       canonical["mcp__codex_apps__atlassian_rovo_createjiraissue"]="createJiraIssue"
+      canonical["mcp__codex_apps__atlassian_rovo_createconfluencepage"]="createConfluencePage"
+      canonical["mcp__codex_apps__atlassian_rovo_updateconfluencepage"]="updateConfluencePage"
+      canonical["mcp__codex_apps__atlassian_rovo_getconfluencepage"]="getConfluencePage"
       canonical["mcp__codex_apps__atlassian_rovo_getaccessibleatla_4b5564c6c5e4"]="getAccessibleAtlassianResources"
       canonical["mcp__codex_apps__atlassian_rovo_getjiraissue"]="getJiraIssue"
       canonical["mcp__codex_apps__atlassian_rovo_getjiraissuetypemetawithfields"]="getJiraIssueTypeMetaWithFields"

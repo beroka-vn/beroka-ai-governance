@@ -568,15 +568,16 @@ GitHub URLs in team-local Issue/PR sections. The BE owner updates the Registry
 and Hub after merge; the FE owner acknowledges the exact Confluence content ID/page version.
 
 Resolve every `{{TOKEN}}` from exact user or readback evidence before preflight;
-never send an unresolved token. Cursor is the only trusted Confluence
-create/update boundary in this release. Codex and Claude Confluence create/update require a trusted actual-body boundary and must stop with
-`CLIENT_BODY_GATE_REQUIRED`; do not treat a temporary or caller-provided body
+never send an unresolved token. Codex, Claude and Cursor use native Confluence tool hooks.
+Codex and Claude Confluence create/update require a trusted actual-body boundary,
+provided by the installed native pre/post hooks; missing hooks return
+`CLIENT_BODY_GATE_REQUIRED` with setup instructions; do not treat a temporary or caller-provided body
 file as proof of the Atlassian request. Jira operations, Confluence moves, and
 capability-only readback retain their existing governed paths. For this READY
-update, use Cursor's configured Atlassian MCP `updateConfluencePage` tool with
+update, use the selected client's configured Atlassian MCP `updateConfluencePage` tool with
 the READY body, `{{CONTENT_ID}}`, and `{{ACTIVE_FOLDER_ID}}`. For a DRAFT
 create, use `createConfluencePage` with the separate DRAFT body and the
-reviewed ACTIVE Folder. The in-process Cursor hook stages the actual tool-call body and runs
+reviewed ACTIVE Folder. The in-process native tool hook stages the actual tool-call body and runs
 `confluence-handoff-write`; a standalone preflight cannot prove the Atlassian
 request.
 

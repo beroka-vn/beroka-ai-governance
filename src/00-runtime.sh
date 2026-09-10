@@ -49,6 +49,7 @@ CAPABILITY_STATE= PREFLIGHT_CAPABILITY=
 SUPPRESS_PASS_RESULT=0
 PERSONAL_STAGE_ROOT=
 CONFLUENCE_BODY_TRUSTED=0
+CONFLUENCE_HOOK_CLIENT=
 
 cleanup_personal_stage() {
   CONFLUENCE_BODY_TRUSTED=0
@@ -111,6 +112,15 @@ assert_safe_user_path() {
     ancestor_parent=$(dirname -- "$ancestor")
     physical_ancestor=$(CDPATH= cd -- "$ancestor_parent" && pwd -P) || die GOVERNANCE_NOT_READY "Cannot resolve $label path parent"
   fi
+  # Explicit Codex configuration may live outside HOME/TMPDIR. The component
+  # walk above still rejects traversal and symlinks; allow only managed files.
+  case "${CODEX_HOME:-}" in
+    /*)
+      [ "$CODEX_HOME" != / ] || die GOVERNANCE_NOT_READY 'CODEX_HOME cannot be the filesystem root'
+      case "$candidate" in
+        "$CODEX_HOME/hooks.json"|"$CODEX_HOME/AGENTS.md"|"$CODEX_HOME/AGENTS.override.md") return 0 ;;
+      esac ;;
+  esac
   case "$physical_ancestor" in
     "$physical_home"|"$physical_home"/*|"$physical_tmp"|"$physical_tmp"/*) ;;
     *) die GOVERNANCE_NOT_READY "$label path is outside HOME and TMPDIR: $candidate" ;;

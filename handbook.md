@@ -243,9 +243,13 @@ sh tests/release.sh
 sh tests/bootstrap.sh
 sh tests/connectors.sh
 sh tests/cursor-hooks.sh
+sh tests/confluence-hooks.sh
 ```
 
 Release gate cũng cần evidence fresh sessions cho Codex, Claude Code, và Cursor trên supported environments. Việc publish catalog/release là central governance-repository work và cần authorization riêng.
+
+Luồng ghi Confluence dùng native pre/post hooks cho cả ba client; xem
+[cài đặt, readback và giới hạn kiểm chứng](docs/confluence-native-hooks.md).
 
 ## Tài liệu chính thức
 

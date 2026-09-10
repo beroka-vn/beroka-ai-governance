@@ -40,11 +40,13 @@
   created content and parent. Ordinary create/move use
   `confluence-page-parent-write`. Targets not listed as `UNACTIVATED` in the
   governance release are writable by default.
-- Cursor is the only trusted Confluence create/update boundary in this release.
-  Codex and Claude Confluence create/update require a trusted actual-body boundary and must stop with `CLIENT_BODY_GATE_REQUIRED`; do not treat a temporary or
+- Codex, Claude and Cursor use native Confluence tool hooks.
+  Codex and Claude Confluence create/update require a trusted actual-body boundary,
+  provided by the installed native pre/post hooks; missing hooks return
+  `CLIENT_BODY_GATE_REQUIRED` with setup instructions; do not treat a temporary or
   caller-provided body file as proof of the Atlassian request. Jira operations,
   Confluence moves, and capability-only readback retain their existing governed
-  paths. Cursor ordinary Confluence create, update, or move uses
+  paths. Ordinary Confluence create, update, or move uses
   `confluence-write` and cannot publish cross-team readiness. Missing its
   existing Jira/GitHub handoff delta markers returns `HANDOFF_DELTA_REQUIRED`.
 - A cross-team handoff is a self-contained Confluence page, not a link to an
@@ -52,11 +54,17 @@
   retain their own canonical artifacts and GitHub links; the consumer-facing
   page contains the complete public API and WebSocket contract, omissions,
   owner, effective date, supersession metadata, and FE acknowledgment path.
-- Before a cross-team Confluence create or update, use Cursor's configured
+- Before a cross-team Confluence create or update, use the selected client's configured
   Atlassian MCP `createConfluencePage` or `updateConfluencePage` tool with the
-  exact body and reviewed ACTIVE Folder. Its in-process Cursor hook stages the
+  exact body and reviewed ACTIVE Folder. Its in-process native tool hook stages the
   actual tool-call body and runs `confluence-handoff-write`; a standalone
   preflight cannot prove the Atlassian request.
+  Install with `beroka-governance setup-documentation-hooks --client CLIENT`
+  and restart with native hooks enabled. First call `getConfluenceSpaces` for
+  the exact routed space key; include its `spaceId`, exact `cloudId`, numeric
+  `parentId` and `contentFormat: markdown` in the write. After writing, call
+  `getConfluencePage` for the returned ID in the same cloud and Markdown format.
+  Report completion only after the native hook returns `READBACK_VERIFIED`.
   The parent must be one exact reviewed `ACTIVE Folder`; root, page,
   `UNACTIVATED`, and untracked parents return `FOLDER_CREATION_REQUIRED`.
   Cross-team Jira intake or acknowledgment text uses `jira-intake-write` or
@@ -65,8 +73,7 @@
 - Create is DRAFT-only. `READY_FOR_FE` is update-only. A fresh
   `beroka-governance preflight REPO --client CLIENT --operation confluence-handoff-verify --non-interactive --confluence-action update --target-content-id ID --expected-parent-id ID --handoff-body-file FILE`
   proves read capability only and prints `Readback: CAPABILITY_ONLY`; it never
-  proves that a write or subsequent read occurred. Until a trusted client
-  post-tool path supplies both results directly, report readback as unverified
+  proves that a write or subsequent read occurred. Unless the installed native post-tool hook has observed both results directly, report readback as unverified
   and do not report `READY_FOR_FE`. Caller-supplied readback assertions return
   `HANDOFF_READBACK_REQUIRED`. Jira remains in its governed lifecycle state independently.
 - A content ID or parent ID listed as `UNACTIVATED` in the pinned release

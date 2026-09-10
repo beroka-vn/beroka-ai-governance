@@ -1,5 +1,8 @@
 # Development Team and AI Agent Collaboration Workflow
 
+Confluence writes on Codex, Claude and Cursor use native pre/post tool hooks.
+See [setup, publication and readback validation](docs/confluence-native-hooks.md).
+
 Beroka governance is a verified, user-scoped release for Codex, Claude, and
 Cursor. It supplies workflow context and routes external operations from the
 Central repository catalog; it never configures an application repository.

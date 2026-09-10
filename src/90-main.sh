@@ -7,6 +7,8 @@ usage() {
     '  beroka-governance install VERSION' \
     '  beroka-governance uninstall [--force]' \
     '  beroka-governance setup-connectors [--client codex|claude|cursor] [--non-interactive]' \
+    '  beroka-governance setup-documentation-hooks --client codex|claude|cursor' \
+    '  beroka-governance confluence-hook codex|claude|cursor pre|post|stop' \
     '  beroka-governance doctor REPO [--client codex|claude|cursor]' \
     '  beroka-governance preflight REPO --client codex|claude|cursor --operation OPERATION [--non-interactive] [CONFLUENCE-TARGET-OPTIONS]' \
     '  Handoff operations: confluence-handoff-write | confluence-handoff-verify | jira-handoff-write' \
@@ -37,6 +39,14 @@ main() {
     register|update|rollback|unregister) retired_command "$command" ;;
     uninstall) [ "$#" -le 2 ] || { usage >&2; exit 2; }; cmd_uninstall "${2:-}" ;;
     setup-connectors) shift; cmd_setup_connectors "$@" ;;
+    setup-documentation-hooks)
+      [ "$#" -eq 3 ] && [ "$2" = --client ] || { usage >&2; exit 2; }
+      install_documentation_hooks "$3"
+      ;;
+    confluence-hook)
+      [ "$#" -eq 3 ] || { usage >&2; exit 2; }
+      cmd_confluence_hook "$2" "$3"
+      ;;
     doctor)
       { [ "$#" -eq 2 ] || [ "$#" -eq 4 ]; } || { usage >&2; exit 2; }
       cmd_doctor "$2" "${3:-}" "${4:-}"

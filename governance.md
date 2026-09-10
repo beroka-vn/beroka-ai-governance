@@ -365,15 +365,17 @@ updates. Cross-team Jira or handoff text containing opposite-team private
 GitHub links returns `CROSS_TEAM_LINK_SCOPE_DENIED`; use the exact accessible
 Confluence page instead.
 
-Cursor is the only trusted Confluence create/update boundary in this release.
-Codex and Claude Confluence create/update require a trusted actual-body boundary and must stop with `CLIENT_BODY_GATE_REQUIRED`; do not treat a temporary or
+Codex, Claude and Cursor use native Confluence tool hooks.
+Codex and Claude Confluence create/update require a trusted actual-body boundary,
+provided by the installed native pre/post hooks; missing hooks return
+`CLIENT_BODY_GATE_REQUIRED` with setup instructions; do not treat a temporary or
 caller-provided body file as proof of the Atlassian request. Jira operations,
 Confluence moves, and capability-only readback retain their existing governed
-paths. Cursor ordinary Confluence create, update, and move use
+paths. Ordinary Confluence create, update, and move use
 `confluence-write`; they do not publish cross-team readiness. Every cross-team
-handoff uses Cursor's configured Atlassian MCP `createConfluencePage` or
+handoff uses the selected client's configured Atlassian MCP `createConfluencePage` or
 `updateConfluencePage` tool with its exact body and reviewed ACTIVE Folder. Its
-in-process Cursor hook runs `confluence-handoff-write`; a standalone preflight
+in-process native tool hook runs `confluence-handoff-write`; a standalone preflight
 cannot prove the Atlassian request. Run a fresh `confluence-handoff-verify`
 preflight with the exact body.
 That second preflight proves read capability only, never a completed write/read;
