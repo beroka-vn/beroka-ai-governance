@@ -87,8 +87,9 @@ Local Linux validation on 2026-09-10 passed all ten shell suites: bootstrap,
 build, confluence-hooks, connectors, cursor-hooks, documentation-architecture,
 launcher, release, routing and smoke (`sh tests/<name>.sh`).
 `scripts/build-cli.sh --check` and `git diff --check` also passed.
-The native client applications themselves were not launched to perform sandbox
-writes; fresh client-session evidence remains a release gate.
+Subsequent live-client checks are recorded in
+[the live validation record](confluence-native-hooks-live-validation.md).
+The record separates real write/readback evidence from simulation and unavailable clients.
 
 Native contracts checked during implementation:
 [Codex hooks](https://developers.openai.com/codex/hooks),
