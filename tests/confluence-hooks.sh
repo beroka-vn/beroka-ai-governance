@@ -92,7 +92,8 @@ export PATH=$BEROKA_GOV_BIN_DIR:$PATH
 body='Jira: BB-64
 GitHub: N/A
 ## Handoff — BB-64
-PPSE documentation.'
+PPSE documentation.
+Owner: BE_Cuong'
 envelope() {
   jq -nc --arg client "$client" --arg repo "$repo" --arg session "$session" \
     --arg tool "$1" --arg id "$2" --argjson args "$3" --argjson response "${4:-null}" '
@@ -127,7 +128,7 @@ seed_space() {
   hook post "$(envelope getConfluenceSpaces spaces "$space_args" '{"results":[{"id":"123","key":"Berokaback"}]}')" >/dev/null
 }
 page_result() {
-  jq -nc --arg body "$1" '{id:"900001",parentId:"76808195",spaceId:"123",status:"current",version:{number:3},body:{markdown:{value:$body}}}'
+  jq -nc --arg body "$1" '{id:"900001",parentId:"76808195",spaceId:"123",status:"current",version:{number:3},body:{markdown:{value:($body|gsub("BE_Cuong"; "BE\\_Cuong"))}}}'
 }
 verify_write() {
   write_tool=$1

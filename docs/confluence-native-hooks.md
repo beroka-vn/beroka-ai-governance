@@ -32,7 +32,10 @@ Restart with native hooks enabled. Codex uses `$CODEX_HOME/hooks.json` (default
    readback or readiness proof.
 5. Call `getConfluencePage` for that ID, same cloud and Markdown format. The read
    must start after the write response. Its post-tool event compares content ID,
-   parent, space, version and exact body. Only `READBACK_VERIFIED` proves the
+   parent, space, version and body. Confluence-added intraword underscore escapes
+   are accepted only in a conservative plain-prose subset; code and all other
+   bytes remain exact, and ambiguous Markdown stays unverified. The original
+   outbound argument/body hashes remain unchanged. Only `READBACK_VERIFIED` proves the
    sequence completed.
 
 Ordinary documentation still needs the existing Jira/GitHub handoff delta

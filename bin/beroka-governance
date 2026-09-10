@@ -6939,6 +6939,37 @@ confluence_hook_message() {
 
 confluence_hook_hash() { git --git-dir=/dev/null hash-object --stdin; }
 
+# Confluence escapes intraword underscores in prose. Accept that spelling only
+# in a conservative Markdown subset; code and every other byte stay exact.
+# ponytail: unfamiliar Markdown stays unverified; use a full parser if broader normalization is needed.
+confluence_hook_prose_hash() {
+  dh_prose=$(jq -Rsc '
+    def balanced_brackets:
+      [scan("[\\[\\]]")] | reduce .[] as $b ({depth:0,safe:true};
+        .depth += (if $b == "[" then 1 else -1 end) |
+        if .depth < 0 then .safe=false else . end) | .safe and .depth == 0;
+    split("\n") | reduce .[] as $line
+      ({lines:[],fence:false,safe:true};
+       if $line == "```" then .fence = (.fence|not) | .lines += [$line]
+       elif .fence then
+         if ($line|test("^[[:space:]]*`{3,}[[:space:]]*$")) then .safe=false else . end |
+         .lines += [$line]
+       elif ($line|test("^```[A-Za-z0-9_-]+$")) then .fence=true | .lines += [$line]
+       elif ($line|test("[<~$]|^[[:space:]>]")) then .safe=false | .lines += [$line]
+       elif ($line|balanced_brackets|not) then .safe=false | .lines += [$line]
+       elif ($line|test("([A-Za-z][A-Za-z0-9+.-]*://|www\\.)[^[:space:]]*\\\\_|\\[[^\\]]*\\\\_"; "i")) or
+            (($line|contains("@")) and ($line|contains("\\_"))) then
+         .safe=false | .lines += [$line]
+       elif ($line|contains("`")) then
+         if ($line|test("``|\\\\`")) or ([$line|scan("`")]|length) % 2 != 0
+         then .safe=false else . end | .lines += [$line]
+       elif ($line|gsub("\\\\_"; "")|contains("\\")) then .safe=false | .lines += [$line]
+       else .lines += [($line|gsub("(?<=[A-Za-z0-9])\\\\_(?=[A-Za-z0-9])"; "_"))] end) |
+    if .safe and (.fence|not) then .lines|join("\n") else error("unsupported Markdown") end
+  ' 2>/dev/null) || return 1
+  printf '%s\n' "$dh_prose" | jq -j . | confluence_hook_hash
+}
+
 # Only documented structured MCP result wrappers are decoded. Never search
 # arbitrary nested objects for a plausible success ID.
 confluence_hook_result() {
@@ -7200,6 +7231,10 @@ CONFLUENCE_STOP_ROOTS
     elif .body.representation == "markdown" and (.body.value|type) == "string" then .body.value
     else error("Markdown body required") end') || die HANDOFF_READBACK_REQUIRED 'Readback must include the full Markdown body'
   dh_read_body=$(printf '%s\n' "$dh_read_body_json" | jq -j . | confluence_hook_hash)
+  if [ "$dh_read_body" != "$(jq -r .body "$dh_pending")" ]; then
+    dh_prose_hash=$(printf '%s\n' "$dh_read_body_json" | jq -j . | confluence_hook_prose_hash) || dh_prose_hash=
+    [ -z "$dh_prose_hash" ] || dh_read_body=$dh_prose_hash
+  fi
   printf '%s\n' "$dh_result" | jq -e --argjson pending "$(cat "$dh_pending")" --argjson args "$dh_args" \
     --arg hash "$dh_read_body" '
       .id == $pending.target and $args.pageId == $pending.target and
