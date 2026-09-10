@@ -112,6 +112,15 @@ assert_safe_user_path() {
     ancestor_parent=$(dirname -- "$ancestor")
     physical_ancestor=$(CDPATH= cd -- "$ancestor_parent" && pwd -P) || die GOVERNANCE_NOT_READY "Cannot resolve $label path parent"
   fi
+  # Explicit Codex configuration may live outside HOME/TMPDIR. The component
+  # walk above still rejects traversal and symlinks; allow only managed files.
+  case "${CODEX_HOME:-}" in
+    /*)
+      [ "$CODEX_HOME" != / ] || die GOVERNANCE_NOT_READY 'CODEX_HOME cannot be the filesystem root'
+      case "$candidate" in
+        "$CODEX_HOME/hooks.json"|"$CODEX_HOME/AGENTS.md"|"$CODEX_HOME/AGENTS.override.md") return 0 ;;
+      esac ;;
+  esac
   case "$physical_ancestor" in
     "$physical_home"|"$physical_home"/*|"$physical_tmp"|"$physical_tmp"/*) ;;
     *) die GOVERNANCE_NOT_READY "$label path is outside HOME and TMPDIR: $candidate" ;;
@@ -7002,9 +7011,20 @@ $(printf '%s\n' "$dh_request" | jq -r '[.cwd?, .workspace_roots[]?] | map(select
 CONFLUENCE_STOP_ROOTS
     confluence_hook_message ''; return
   fi
-  dh_cwd=$(printf '%s\n' "$dh_request" | jq -er '.cwd | strings | select(length > 0)') ||
-    die CLIENT_BODY_GATE_REQUIRED 'Native hooks must supply the exact working repository'
   load_active_release
+  if [ "$dh_client" = cursor ]; then
+    CURSOR_REQUEST=$dh_request
+    cursor_parse_request_fields && cursor_resolve_workspaces ||
+      die CLIENT_BODY_GATE_REQUIRED 'Native Cursor hooks require unambiguous workspace_roots'
+    if [ "$CURSOR_WORKSPACE_MODE" = be-fe ]; then
+      CURSOR_TOOL_INPUT=$(printf '%s\n' "$dh_request" | jq -c '.tool_input')
+      cursor_select_be_fe_workspace || die ROUTING_REQUIRED 'Select an exact repository in the BE/FE workspace'
+    fi
+    dh_cwd=$CURSOR_WORKSPACE
+  else
+    dh_cwd=$(printf '%s\n' "$dh_request" | jq -er '.cwd | strings | select(length > 0)') ||
+      die CLIENT_BODY_GATE_REQUIRED 'Native hooks must supply the exact working repository'
+  fi
   resolve_repository_context "$dh_cwd" defer-role
   if ! repository_is_governed; then confluence_hook_message 'Result: NOT_GOVERNED'; return; fi
   [ "$dh_unsupported" -eq 0 ] || die CLIENT_BODY_GATE_REQUIRED 'Unsupported Confluence tool boundary; use the configured Atlassian createConfluencePage/updateConfluencePage native tool'
@@ -7025,6 +7045,10 @@ CONFLUENCE_STOP_ROOTS
   dh_space_file=$dh_dir/space-$dh_cloud_key.json
   assert_safe_user_path "$dh_space_file" 'Confluence space receipt'
 
+  dh_page_key=$(printf '%s\n' "$dh_cloud" "$(printf '%s\n' "$dh_args" | jq -r '.pageId // ""')" | confluence_hook_hash)
+  dh_page_file=$dh_dir/page-$dh_page_key.json
+  assert_safe_user_path "$dh_page_file" 'Confluence page metadata'
+
   if [ "$dh_event" = pre ]; then
     case "$dh_action" in
       spaces|read)
@@ -7041,26 +7065,36 @@ CONFLUENCE_STOP_ROOTS
     verify_documentation_hooks "$dh_client" || die CLIENT_BODY_GATE_REQUIRED \
       "Run beroka-governance setup-documentation-hooks --client $dh_client and restart with hooks enabled"
     [ ! -d "$dh_dir/write" ] || die HANDOFF_READBACK_REQUIRED 'Resolve the previous write and readback before another write'
-    printf '%s\n' "$dh_args" | jq -e '
+    printf '%s\n' "$dh_args" | jq -e --arg action "$dh_action" '
       def id: type == "string" and test("^[1-9][0-9]*$");
-      (.parentId|id) and (.spaceId|id) and
+      (if $action == "create" then (.parentId|id) and (.spaceId|id)
+       else (if has("parentId") then (.parentId|id) else true end) and
+            (if has("spaceId") then (.spaceId|id) else true end) end) and
       (.body|type == "string" and length > 0 and (contains("\u0000")|not)) and
       ((.contentFormat // "markdown") == "markdown") and
       ((.title // "")|type == "string") and
       ((keys - ["cloudId","spaceId","parentId","pageId","title","body","contentFormat","includeBody","status","versionMessage","isPrivate"])|length == 0)
-    ' >/dev/null 2>&1 || die CLIENT_BODY_GATE_REQUIRED 'Use one Markdown body and explicit numeric spaceId/parentId; unsupported fields or formats require a reviewed adapter'
-    dh_space=$(printf '%s\n' "$dh_args" | jq -r .spaceId)
+    ' >/dev/null 2>&1 || die CLIENT_BODY_GATE_REQUIRED 'Use one Markdown body; create requires numeric spaceId/parentId and update permits their omission'
+    dh_space=$(printf '%s\n' "$dh_args" | jq -r '.spaceId // ""')
+    dh_parent=$(printf '%s\n' "$dh_args" | jq -r '.parentId // ""')
+    if [ "$dh_action" = update ] && { [ -z "$dh_space" ] || [ -z "$dh_parent" ]; }; then
+      [ -f "$dh_page_file" ] || die ROUTING_REQUIRED 'First read the exact page with getConfluencePage to observe its space and parent'
+      [ -n "$dh_space" ] || dh_space=$(jq -r .space "$dh_page_file")
+      [ -n "$dh_parent" ] || dh_parent=$(jq -r .parent "$dh_page_file")
+    fi
     [ -f "$dh_space_file" ] && jq -e --arg space "$dh_space" --arg key "$ROUTE_CONFLUENCE_SPACE_KEY" \
       '.id == $space and .key == $key' "$dh_space_file" >/dev/null ||
       die ROUTING_REQUIRED 'First call getConfluenceSpaces for the routed space key in this cloud; the hook must observe its real result'
-    dh_parent=$(printf '%s\n' "$dh_args" | jq -r .parentId)
     dh_target=new
     if [ "$dh_action" = update ]; then
       dh_target=$(printf '%s\n' "$dh_args" | jq -er '.pageId | strings | select(test("^[1-9][0-9]*$"))') || die ROUTING_REQUIRED
     elif printf '%s\n' "$dh_args" | jq -e 'has("pageId")' >/dev/null; then
       die ROUTING_REQUIRED 'Create cannot supply an existing pageId'
     fi
-    CURSOR_WORKSPACE=$dh_repo CURSOR_TOOL_INPUT=$dh_args CURSOR_TOOL_TEXT=$dh_action
+    CURSOR_WORKSPACE=$dh_repo CURSOR_TOOL_TEXT=$dh_action
+    # Validation-only parent from native read metadata; fingerprint/body still
+    # bind the original outbound arguments, without synthesizing a tool request.
+    CURSOR_TOOL_INPUT=$(printf '%s\n' "$dh_args" | jq -c --arg parent "$dh_parent" '.parentId=$parent')
     # Internal state only: initialized empty at process startup, never a CLI flag.
     CONFLUENCE_HOOK_CLIENT=$dh_client
     CURSOR_REQUEST=$dh_request
@@ -7122,6 +7156,17 @@ CONFLUENCE_STOP_ROOTS
       if length == 1 then .[0] else error("space") end') || die ROUTING_REQUIRED 'No exact routed space in native tool result'
     confluence_hook_save "$dh_space_file" "$dh_space_record"
     confluence_hook_message 'Confluence space identity observed'; return
+  fi
+  if [ "$dh_action" = read ]; then
+    if dh_page_record=$(printf '%s\n' "$dh_result" | jq -ce --argjson args "$dh_args" '
+      def id: type == "string" and test("^[1-9][0-9]*$");
+      select(.id == $args.pageId and (.id|id)) |
+      {space:(.spaceId // .space.id),parent:(.parentId // .ancestors[-1].id)} |
+      select((.space|id) and (.parent|id))'); then
+      confluence_hook_save "$dh_page_file" "$dh_page_record"
+    else
+      rm -f "$dh_page_file"
+    fi
   fi
   if [ ! -f "$dh_pending" ]; then
     case "$dh_action" in create|update) die CLIENT_BODY_GATE_REQUIRED 'No matching native pre-tool receipt for the executed write' ;; esac

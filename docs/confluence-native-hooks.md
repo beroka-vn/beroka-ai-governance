@@ -20,10 +20,13 @@ Restart with native hooks enabled. Codex uses `$CODEX_HOME/hooks.json` (default
    must have the existing repository role and Atlassian write permissions.
 2. Call the configured Atlassian `getConfluenceSpaces` tool for the routed space
    key and exact cloud. Its native post-tool event records the returned space ID.
-3. Call `createConfluencePage` or `updateConfluencePage` with `cloudId`, `spaceId`,
-   numeric `parentId`, one `body`, and `contentFormat: markdown`. Updates also
-   require `pageId`. The native pre-tool event validates those actual arguments
-   through the existing role, OAuth, capability, routing and content checks.
+3. Create with `cloudId`, numeric `spaceId`/`parentId`, one `body`, and
+   `contentFormat: markdown`. Update requires `cloudId`, `pageId` and `body`;
+   `spaceId`/`parentId` are optional. If omitted, first call `getConfluencePage`
+   for that page in the same cloud/session so the hook observes its current
+   space and parent. These IDs are used only for validation and readback;
+   the outbound arguments remain unchanged. The native pre-tool event applies
+   the existing role, OAuth, capability, routing and content checks.
 4. The post-tool event checks the executed arguments against the pre-tool
    receipt and records the returned ID/version. This is `WRITE_RECORDED`, not
    readback or readiness proof.

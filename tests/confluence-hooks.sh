@@ -3,9 +3,11 @@ set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
 TEST_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/beroka-confluence-hooks.XXXXXX")
 trap 'rm -rf "$TEST_ROOT"' EXIT HUP INT TERM
-export HOME=$TEST_ROOT/home XDG_CONFIG_HOME=$TEST_ROOT/config
-export XDG_DATA_HOME=$TEST_ROOT/data XDG_STATE_HOME=$TEST_ROOT/state
-export TMPDIR=$TEST_ROOT BEROKA_GOV_BIN_DIR=$TEST_ROOT/bin
+export HOME=$TEST_ROOT/home XDG_CONFIG_HOME=$TEST_ROOT/home/config
+export XDG_DATA_HOME=$TEST_ROOT/home/data XDG_STATE_HOME=$TEST_ROOT/home/state
+export TMPDIR=$TEST_ROOT/tmp BEROKA_GOV_BIN_DIR=$TEST_ROOT/home/bin
+export CODEX_HOME=$TEST_ROOT/codex-config
+mkdir -p "$TMPDIR" "$CODEX_HOME"
 mkdir -p "$HOME" "$XDG_CONFIG_HOME/beroka-ai-governance" "$BEROKA_GOV_BIN_DIR"
 CLI=$BEROKA_GOV_BIN_DIR/beroka-governance
 cp "$ROOT/bin/beroka-governance" "$CLI"
@@ -37,8 +39,8 @@ git -C "$release" remote set-url origin https://github.com/beroka-vn/beroka-ai-g
 printf 'VERSION=v1.1.0\nCOMMIT=%s\n' "$(git -C "$source_repo" rev-parse HEAD)" >"$XDG_CONFIG_HOME/beroka-ai-governance/active-release"
 printf '%s\n' BE >"$XDG_CONFIG_HOME/beroka-ai-governance/github-role"
 printf '%s\n' codex,claude,cursor >"$XDG_CONFIG_HOME/beroka-ai-governance/clients"
-mkdir -p "$HOME/.codex" "$HOME/.claude" "$HOME/.cursor"
-cp "$ROOT/templates/agent-entrypoints/AGENTS.md" "$HOME/.codex/AGENTS.md"
+mkdir -p "$CODEX_HOME" "$HOME/.claude" "$HOME/.cursor"
+cp "$ROOT/templates/agent-entrypoints/AGENTS.md" "$CODEX_HOME/AGENTS.md"
 cp "$ROOT/templates/agent-entrypoints/CLAUDE.md" "$HOME/.claude/CLAUDE.md"
 git --git-dir=/dev/null hash-object --no-filters "$ROOT/templates/agent-entrypoints/CURSOR-USER-RULE.txt" >"$XDG_CONFIG_HOME/beroka-ai-governance/cursor-user-rule.sha256"
 printf '%s\n' '{"mcpServers":{"atlassian":{"url":"https://mcp.atlassian.com/v1/mcp/authv2"}}}' >"$HOME/.cursor/mcp.json"
@@ -94,14 +96,14 @@ envelope() {
     --arg tool "$1" --arg id "$2" --argjson args "$3" --argjson response "${4:-null}" '
     (if $response == null or $response.isError == true then $response
       else {content:[{type:"text",text:($response|tojson)}]} end) as $result |
-    {cwd:$repo,tool_use_id:$id,tool_input:$args} +
+    {tool_use_id:$id,tool_input:$args} +
     if $client == "cursor" then
       {conversation_id:$session,generation_id:"generation",workspace_roots:[$repo],tool_name:("MCP:"+$tool),tool_output:($result|tojson)}
-    else {session_id:$session,tool_name:(if $client == "codex" then "mcp__codex_apps__atlassian_rovo_"+($tool|ascii_downcase) else "mcp__atlassian__"+$tool end),tool_response:$result} end'
+    else {cwd:$repo,session_id:$session,tool_name:(if $client == "codex" then "mcp__codex_apps__atlassian_rovo_"+($tool|ascii_downcase) else "mcp__atlassian__"+$tool end),tool_response:$result} end'
 }
 hook() {
   case "$client" in
-    codex) hook_config=$HOME/.codex/hooks.json ;;
+    codex) hook_config=$CODEX_HOME/hooks.json ;;
     claude) hook_config=$HOME/.claude/settings.json ;;
     cursor) hook_config=$HOME/.cursor/hooks.json ;;
   esac
@@ -146,7 +148,13 @@ for client in codex claude cursor; do
     seed_space
     args=$ordinary_args expected_body=$body write_tool=createConfluencePage
     case "$scenario" in
-      ordinary-update) write_tool=updateConfluencePage; args=$(printf '%s\n' "$args" | jq -c '.pageId="900001"') ;;
+      ordinary-update)
+        write_tool=updateConfluencePage
+        args=$(printf '%s\n' "$args" | jq -c '.pageId="900001" | del(.parentId,.spaceId)')
+        denied pre "$(envelope "$write_tool" write-1 "$args")" ROUTING_REQUIRED
+        read_args='{"cloudId":"https://beroka.atlassian.net","pageId":"900001","contentFormat":"markdown"}'
+        hook post "$(envelope getConfluencePage initial-read "$read_args" "$(page_result "$body")")" >/dev/null
+        ;;
       draft|ready)
         fixture=draft
         [ "$scenario" != ready ] || { fixture=ready-no-impact; write_tool=updateConfluencePage; }
@@ -156,7 +164,19 @@ for client in codex claude cursor; do
         ;;
     esac
     verify_write "$write_tool"
+    if [ "$scenario" = ordinary-update ]; then
+      # Root reads without parents remain readable, but cannot seed an update.
+      hook post "$(envelope getConfluencePage root-read "$read_args" '{"id":"900001","spaceId":"123"}')" >/dev/null
+      denied pre "$(envelope "$write_tool" write-2 "$args")" ROUTING_REQUIRED
+    fi
   done
+  if [ "$client" = cursor ]; then
+    session=cursor-workspaces
+    seed_space
+    args=$ordinary_args
+    contains "$(hook pre "$(envelope createConfluencePage write-1 "$args" | jq -c '.workspace_roots += .workspace_roots')")" WRITE_VALIDATED
+    denied pre "$(envelope createConfluencePage write-2 "$args" | jq -c --arg root "$source_repo" '.workspace_roots += [$root]')" CLIENT_BODY_GATE_REQUIRED
+  fi
   session=$client-bad
   args=$ordinary_args
   denied pre "$(envelope createConfluencePage write-1 "$args")" ROUTING_REQUIRED
@@ -216,6 +236,15 @@ for client in codex claude cursor; do
   contains "$(hook pre "$(envelope updateConfluencePage write-1 "$crlf_args")")" WRITE_VALIDATED
   denied post "$(envelope updateConfluencePage write-1 "$crlf_args" '{"id":"900001","version":{"number":99}}')" CREATION_STATUS_UNKNOWN
 done
+# Custom CODEX_HOME remains confined to managed files and rejects symlinks.
+mv "$CODEX_HOME/hooks.json" "$CODEX_HOME/hooks.saved"
+ln -s "$CODEX_HOME/hooks.saved" "$CODEX_HOME/hooks.json"
+if "$CLI" setup-documentation-hooks --client codex >"$TEST_ROOT/unsafe.log" 2>&1; then
+  fail 'accepted symlinked custom Codex hook config'
+fi
+contains "$(cat "$TEST_ROOT/unsafe.log")" 'Symlinked'
+rm "$CODEX_HOME/hooks.json"
+mv "$CODEX_HOME/hooks.saved" "$CODEX_HOME/hooks.json"
 # Hooks must never persist staged body text after preflight.
 [ -z "$(find "$TMPDIR" -maxdepth 1 -type d -name 'beroka-governance-cursor-body.*' -print)" ] || fail 'staged body leaked'
 printf '%s\n' 'PASS: native Confluence hooks (simulated connectors)'
